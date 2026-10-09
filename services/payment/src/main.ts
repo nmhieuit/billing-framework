@@ -2,7 +2,7 @@ import { ConfigError } from '@billing/database';
 import { createLogger } from '@billing/observability';
 import { startService } from './bootstrap.js';
 import { loadConfig, type PaymentConfig } from './config.js';
-import { createShutdownHandler } from './lifecycle.js';
+import { createShutdownHandler, startOrExit } from './lifecycle.js';
 
 const log = createLogger('payment');
 
@@ -17,8 +17,13 @@ try {
   throw error;
 }
 
-const service = await startService(config);
-await service.app.listen({ port: config.port, host: '0.0.0.0' });
+const service = await startOrExit({
+  start: () => startService(config),
+  listen: (running) => running.app.listen({ port: config.port, host: '0.0.0.0' }).then(() => {}),
+  log,
+  exit: (code) => process.exit(code),
+});
+if (!service) process.exit(1);
 log.info({ port: config.port }, 'payment service listening');
 
 const shutdown = createShutdownHandler({

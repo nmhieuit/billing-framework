@@ -44,3 +44,36 @@ export function createShutdownHandler(options: ShutdownOptions): (signal: string
     );
   };
 }
+
+export interface StartupOptions<S extends { stop(): Promise<void> }> {
+  start: () => Promise<S>;
+  listen: (service: S) => Promise<void>;
+  log: ShutdownLogger;
+  exit: (code: number) => void;
+}
+
+/**
+ * Khởi động service rồi lắng nghe. Nếu bước nào lỗi: dừng service (nếu đã tạo; bỏ qua lỗi khi dừng),
+ * ghi log có cấu trúc rồi thoát với mã 1, để worker và pool DB không bị bỏ lại.
+ */
+export async function startOrExit<S extends { stop(): Promise<void> }>(
+  options: StartupOptions<S>,
+): Promise<S | undefined> {
+  let service: S | undefined;
+  try {
+    service = await options.start();
+    await options.listen(service);
+    return service;
+  } catch (error) {
+    if (service) {
+      try {
+        await service.stop();
+      } catch {
+        // Lỗi khi dừng không được che mất lỗi khởi động gốc.
+      }
+    }
+    options.log.error({ err: error }, 'failed to start');
+    options.exit(1);
+    return undefined;
+  }
+}

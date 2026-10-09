@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createShutdownHandler, once, runAll } from './lifecycle.js';
+import { createShutdownHandler, once, runAll, startOrExit } from './lifecycle.js';
 
 const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
@@ -48,6 +48,75 @@ describe('once', () => {
     await expect(stop()).rejects.toThrow('boom');
     await expect(stop()).rejects.toThrow('boom');
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('startOrExit', () => {
+  function setup() {
+    const log = { info: vi.fn(), error: vi.fn() };
+    const exit = vi.fn();
+    const service = { stop: vi.fn(async () => undefined) };
+    return { log, exit, service };
+  }
+
+  it('returns the service and neither stops nor exits when startup succeeds', async () => {
+    const { log, exit, service } = setup();
+    const listen = vi.fn(async () => undefined);
+    const result = await startOrExit({ start: async () => service, listen, log, exit });
+    expect(result).toBe(service);
+    expect(listen).toHaveBeenCalledWith(service);
+    expect(service.stop).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it('stops the service, logs and exits 1 when listen fails', async () => {
+    const { log, exit, service } = setup();
+    const error = new Error('EADDRINUSE');
+    await startOrExit({
+      start: async () => service,
+      listen: async () => {
+        throw error;
+      },
+      log,
+      exit,
+    });
+    expect(service.stop).toHaveBeenCalledTimes(1);
+    expect(log.error).toHaveBeenCalledWith({ err: error }, 'failed to start');
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it('still logs and exits 1 when stop also fails', async () => {
+    const { log, exit, service } = setup();
+    service.stop.mockRejectedValueOnce(new Error('stop failed'));
+    const error = new Error('EADDRINUSE');
+    await startOrExit({
+      start: async () => service,
+      listen: async () => {
+        throw error;
+      },
+      log,
+      exit,
+    });
+    expect(log.error).toHaveBeenCalledWith({ err: error }, 'failed to start');
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it('logs and exits 1 without stopping when the service could not be created', async () => {
+    const { log, exit, service } = setup();
+    const error = new Error('db unreachable');
+    const listen = vi.fn(async () => undefined);
+    await startOrExit({
+      start: async () => {
+        throw error;
+      },
+      listen,
+      log,
+      exit,
+    });
+    expect(listen).not.toHaveBeenCalled();
+    expect(service.stop).not.toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith({ err: error }, 'failed to start');
+    expect(exit).toHaveBeenCalledWith(1);
   });
 });
 
