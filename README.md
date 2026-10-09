@@ -46,3 +46,35 @@ JSON Schema nằm ở `packages/contracts`. Xuất ra file để team ecommerce 
 ```bash
 corepack pnpm --filter @billing/contracts emit    # → packages/contracts/dist/schemas/
 ```
+
+## Payment simulator
+
+Cổng thanh toán giả lập. Thiết kế: [`docs/superpowers/specs/2026-10-09-payment-simulator-design.md`](docs/superpowers/specs/2026-10-09-payment-simulator-design.md).
+
+```bash
+# 1. Tạo schema (DB billing_payment phải tồn tại; xem deploy/compose.billing.yml)
+PAYMENT_DB_HOST=... PAYMENT_DB_NAME=billing_payment PAYMENT_DB_USER=... PAYMENT_DB_PASSWORD=... \
+  corepack pnpm db:migrate:payment
+
+# 2. Chạy service (biến môi trường: services/payment/.env.example)
+corepack pnpm --filter @billing/payment-service start
+```
+
+Gọi thử:
+
+```bash
+curl -s -X POST localhost:3002/charges \
+  -H 'content-type: application/json' -H 'idempotency-key: demo-1' -H 'x-simulate: fail=card_declined' \
+  -d '{"amount":150000,"currency":"VND","reference":"topup-1"}'
+```
+
+`X-Simulate`: `fail=<code>`, `delay=<giây>`, `webhook=drop|duplicate`, `response=timeout` (kết hợp bằng dấu phẩy).
+
+### Test
+
+```bash
+corepack pnpm test               # unit, không cần Docker
+corepack pnpm test:integration   # cần Docker: chạy SQL Server 2022 bằng testcontainers (lần đầu kéo image)
+```
+
+Nếu testcontainers báo lỗi khởi động container "reaper" (Ryuk), đặt `TESTCONTAINERS_RYUK_DISABLED=true`.

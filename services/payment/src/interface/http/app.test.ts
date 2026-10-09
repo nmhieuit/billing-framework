@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { getCorrelationId } from '@billing/observability';
 import { buildApp } from './app.js';
+import { stubDeps } from './stub-deps.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 let app: FastifyInstance;
 
 beforeEach(async () => {
-  app = await buildApp();
+  app = await buildApp(stubDeps());
 });
 afterEach(async () => {
   await app.close();

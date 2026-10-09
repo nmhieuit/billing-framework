@@ -38,6 +38,13 @@ pipeline {
             }
         }
 
+        stage('Integration tests') {
+            steps {
+                // Cần Docker daemon: testcontainers khởi động SQL Server 2022.
+                sh 'corepack pnpm test:integration'
+            }
+        }
+
         stage('SonarQube') {
             steps {
                 withSonarQubeEnv(params.SONARQUBE_SERVER) {

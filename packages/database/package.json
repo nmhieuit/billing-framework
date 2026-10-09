@@ -1,0 +1,14 @@
+{
+  "name": "@billing/database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "kysely": "^0.29.6",
+    "tarn": "^3.1.2",
+    "tedious": "^20.3.3"
+  }
+}
