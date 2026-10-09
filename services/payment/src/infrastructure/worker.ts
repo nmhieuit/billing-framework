@@ -17,7 +17,11 @@ export class Worker {
       try {
         await task();
       } catch (error) {
-        this.options.onError(error);
+        try {
+          this.options.onError(error);
+        } catch {
+          // Bộ xử lý lỗi hỏng không được phép làm chết vòng lặp.
+        }
       }
     }
   }

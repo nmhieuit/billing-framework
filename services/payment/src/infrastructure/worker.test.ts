@@ -90,4 +90,52 @@ describe('Worker', () => {
     await worker.stop();
     expect(maxActive).toBe(1);
   });
+
+  it('survives an onError that throws: later tasks still run and tick() resolves', async () => {
+    let ran = false;
+    const worker = new Worker({
+      intervalMs: 1000,
+      tasks: [
+        async () => {
+          throw new Error('task failed');
+        },
+        async () => {
+          ran = true;
+        },
+      ],
+      onError: () => {
+        throw new Error('handler failed');
+      },
+    });
+    await expect(worker.tick()).resolves.toBeUndefined();
+    expect(ran).toBe(true);
+  });
+
+  it('keeps looping when both the task and onError throw, with no unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const listener = (reason: unknown): void => void unhandled.push(reason);
+    process.on('unhandledRejection', listener);
+    try {
+      let runs = 0;
+      const worker = new Worker({
+        intervalMs: 5,
+        tasks: [
+          async () => {
+            runs++;
+            throw new Error('task failed');
+          },
+        ],
+        onError: () => {
+          throw new Error('handler failed');
+        },
+      });
+      worker.start();
+      await waitFor(() => runs >= 3, { timeoutMs: 2000, intervalMs: 5 });
+      await expect(worker.stop()).resolves.toBeUndefined();
+      await sleep(20);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', listener);
+    }
+  });
 });
