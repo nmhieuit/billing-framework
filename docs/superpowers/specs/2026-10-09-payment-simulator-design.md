@@ -68,7 +68,7 @@ Giá trị là danh sách `khóa=giá trị` ngăn cách bằng dấu phẩy, v�
 
 - **Sự kiện:** `charge.succeeded`, `charge.failed`, gửi bằng `POST` tới `WEBHOOK_URL`.
 - **Payload:** `{ eventId, type, createdAt, data: { chargeId, reference, amount, currency, status, completedAt, failureCode? } }`. `eventId` ổn định cho mỗi sự kiện, kể cả khi gửi lại.
-- **Chữ ký:** header `X-Signature: t=<unix>,v1=<hex>` với `v1 = HMAC-SHA256(WEBHOOK_SECRET, "<t>.<body thô>")`. Người nhận kiểm tra chữ ký bằng so sánh thời gian hằng và từ chối nếu `t` lệch quá `WEBHOOK_TOLERANCE_SECONDS` (chống replay).
+- **Chữ ký:** header `X-Signature: t=<unix>,v1=<hex>` với `v1 = HMAC-SHA256(WEBHOOK_SECRET, "<t>.<body thô>")`. Người nhận kiểm tra chữ ký bằng so sánh thời gian hằng và từ chối nếu `t` lệch quá dung sai (tham số `verifyWebhook` của bên nhận, mặc định 300 giây, xem `@billing/contracts`) (chống replay).
 - **Giao hàng:** `2xx` là thành công; mọi trường hợp khác (kể cả lỗi mạng và timeout phía gửi) là thất bại và được retry theo backoff `WEBHOOK_BACKOFF` (mặc định `1,5,30,120,600` giây): gửi lần đầu ngay khi charge hoàn tất, sau đó tối đa 5 lần retry (tổng tối đa 6 lần gửi). Hết lượt thì sự kiện chuyển `FAILED` và được giữ lại. Charge vẫn ở trạng thái cuối đã hoàn tất.
 - **Bền vững:** sự kiện được ghi trong cùng transaction với việc hoàn tất charge; worker lấy ra gửi. Restart không làm mất sự kiện chưa gửi.
 - **Schema:** payload webhook được định nghĩa trong `@billing/contracts` (HTTP, tách khỏi envelope RabbitMQ) để wallet validate bằng cùng nguồn sự thật. Đây là hợp đồng mới cần thêm vào package.
@@ -124,7 +124,7 @@ Migration đầu tiên của billing nằm ở `db/payment/`, chạy bằng scri
 | `WORKER_INTERVAL_MS` | Chu kỳ poll của worker | `500` |
 | `RESPONSE_TIMEOUT_MS` | Thời gian giữ phản hồi cho `response=timeout` | `30000` |
 
-`PAYMENT_DB_PORT` mặc định `1433`. Dung sai thời gian khi kiểm chữ ký là tham số phía nhận (`verifyWebhook`, mặc định 300 giây, trong `@billing/contracts`) nên payment không có biến này. Mỗi sự kiện được "chiếm" riêng bằng lease 60 giây ngay trước khi gửi (lease chỉ cần phủ một lần gửi) để không gửi trùng giữa hai worker; nếu tiến trình chết, sự kiện tự đến hạn lại sau lease (xem ADR-0005).
+`PAYMENT_DB_PORT` mặc định `1433`. Dung sai thời gian khi kiểm chữ ký là tham số phía nhận (`verifyWebhook`, mặc định 300 giây, trong `@billing/contracts`) nên payment không có biến này. Mỗi sự kiện được "chiếm" riêng bằng lease 60 giây ngay trước khi gửi (lease chỉ cần phủ một lần gửi; vòng lặp tối đa `limit` sự kiện mỗi tick) để không gửi trùng giữa hai worker; nếu tiến trình chết, sự kiện tự đến hạn lại sau lease (xem ADR-0005).
 
 Thiếu biến bắt buộc thì service từ chối khởi động. Không có giá trị mặc định cho bí mật.
 
