@@ -82,6 +82,9 @@ importers:
 
   services/payment:
     dependencies:
+      '@billing/money':
+        specifier: workspace:^
+        version: link:../../packages/money
       '@billing/observability':
         specifier: workspace:^
         version: link:../../packages/observability

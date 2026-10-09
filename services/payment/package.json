@@ -8,6 +8,7 @@
     "start": "tsx src/main.ts"
   },
   "dependencies": {
+    "@billing/money": "workspace:^",
     "@billing/observability": "workspace:^",
     "fastify": "^5.12.5"
   }
