@@ -3,3 +3,4 @@ docs/
 coverage/
 dist/
 *.sql
+.superpowers/

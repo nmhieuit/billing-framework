@@ -1,0 +1,16 @@
+{
+  "name": "@billing/testing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./sql-server.global-setup": "./src/sql-server.global-setup.ts"
+  },
+  "dependencies": {
+    "@billing/database": "workspace:^",
+    "@testcontainers/mssqlserver": "^12.2.0",
+    "kysely": "^0.29.6",
+    "testcontainers": "^12.2.0"
+  }
+}
