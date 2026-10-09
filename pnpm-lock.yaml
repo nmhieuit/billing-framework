@@ -8,6 +8,12 @@ importers:
 
   .:
     devDependencies:
+      '@billing/database':
+        specifier: workspace:^
+        version: link:packages/database
+      '@billing/testing':
+        specifier: workspace:^
+        version: link:packages/testing
       '@types/node':
         specifier: ^26.6.4
         version: 26.6.4
@@ -17,6 +23,9 @@ importers:
       eslint:
         specifier: ^10.12.0
         version: 10.12.0
+      kysely:
+        specifier: ^0.29.6
+        version: 0.29.6
       prettier:
         specifier: ^3.9.9
         version: 3.9.9
@@ -82,6 +91,12 @@ importers:
 
   services/payment:
     dependencies:
+      '@billing/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
+      '@billing/database':
+        specifier: workspace:^
+        version: link:../../packages/database
       '@billing/money':
         specifier: workspace:^
         version: link:../../packages/money
@@ -91,6 +106,13 @@ importers:
       fastify:
         specifier: ^5.12.5
         version: 5.12.5
+      kysely:
+        specifier: ^0.29.6
+        version: 0.29.6
+    devDependencies:
+      '@billing/testing':
+        specifier: workspace:^
+        version: link:../../packages/testing
 
   services/wallet:
     dependencies:
