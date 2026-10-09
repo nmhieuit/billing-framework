@@ -61,6 +61,10 @@ function post(
   });
 }
 
+/** Database dùng chung giữa các test, nên chỉ xét webhook của đúng charge đang kiểm tra. */
+const deliveredFor = (chargeId: string) =>
+  receiver.received.filter((r) => (r.body ?? '').includes(chargeId));
+
 const body = (reference: string) => ({ amount: 150000, currency: 'VND', reference });
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -72,8 +76,8 @@ describe('payment service, end to end', () => {
     const { chargeId } = res.json();
     expect(res.json().status).toBe('PENDING');
 
-    await waitFor(() => receiver.received.length >= 1);
-    const [request] = receiver.received;
+    await waitFor(() => deliveredFor(chargeId).length >= 1);
+    const [request] = deliveredFor(chargeId);
     expect(
       verifyWebhook({
         secret,
@@ -116,11 +120,12 @@ describe('payment service, end to end', () => {
     const res = await post(service, 'e2e-fail', body('topup-fail'), {
       'x-simulate': 'fail=card_declined',
     });
-    await waitFor(() => receiver.received.length >= 1);
-    const payload = JSON.parse(receiver.received[0]?.body ?? '');
+    const { chargeId } = res.json();
+    await waitFor(() => deliveredFor(chargeId).length >= 1);
+    const payload = JSON.parse(deliveredFor(chargeId)[0]?.body ?? '');
     expect(payload).toMatchObject({
       type: 'charge.failed',
-      data: { chargeId: res.json().chargeId, status: 'FAILED', failureCode: 'card_declined' },
+      data: { chargeId, status: 'FAILED', failureCode: 'card_declined' },
     });
   });
 
@@ -129,23 +134,25 @@ describe('payment service, end to end', () => {
     const res = await post(service, 'e2e-drop', body('topup-drop'), {
       'x-simulate': 'webhook=drop',
     });
+    const { chargeId } = res.json();
     await waitFor(async () => {
-      const charge = await service.app.inject({
-        method: 'GET',
-        url: `/charges/${res.json().chargeId}`,
-      });
+      const charge = await service.app.inject({ method: 'GET', url: `/charges/${chargeId}` });
       return charge.json().status === 'SUCCEEDED';
     });
     await sleep(200);
-    expect(receiver.received).toHaveLength(0);
+    expect(deliveredFor(chargeId)).toHaveLength(0);
   });
 
   it('retries a failing receiver after the backoff', async () => {
     receiver.respondWith(500);
     const service = await start();
-    await post(service, 'e2e-retry', body('topup-retry'));
-    await waitFor(() => receiver.received.length >= 2, { timeoutMs: 8000 });
-    expect(receiver.received[0]?.body).toBe(receiver.received[1]?.body);
+    const res = await post(service, 'e2e-retry', body('topup-retry'));
+    const { chargeId } = res.json();
+    await waitFor(() => deliveredFor(chargeId).length >= 2, { timeoutMs: 8000 });
+    const [first, second] = deliveredFor(chargeId);
+    expect(JSON.parse(first?.body ?? '')).toMatchObject({ data: { chargeId } });
+    expect(first?.body).toBe(second?.body);
+    expect(first?.headers['x-webhook-event-id']).toBe(second?.headers['x-webhook-event-id']);
   });
 
   it('holds the first response of response=timeout but answers the replay immediately', async () => {
@@ -184,10 +191,6 @@ describe('payment service, end to end', () => {
     const res = await post(before, 'e2e-restart', body('topup-restart'));
     expect(res.statusCode).toBe(202);
     await running.pop()?.stop();
-    // Database dùng chung giữa các test nên webhook tồn đọng của test trước có thể được gửi ở đây;
-    // chỉ xét webhook của charge này.
-    const deliveredFor = (chargeId: string) =>
-      receiver.received.filter((r) => (r.body ?? '').includes(chargeId));
     const { chargeId } = res.json();
     expect(deliveredFor(chargeId)).toHaveLength(0);
 
