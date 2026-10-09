@@ -42,6 +42,15 @@ describe('verifyWebhook', () => {
     });
   });
 
+  it.each([
+    ['NaN nowSeconds', { nowSeconds: Number.NaN }],
+    ['NaN toleranceSeconds', { toleranceSeconds: Number.NaN }],
+    ['Infinity toleranceSeconds', { toleranceSeconds: Number.POSITIVE_INFINITY }],
+    ['negative toleranceSeconds', { toleranceSeconds: -1 }],
+  ])('fails closed (EXPIRED) on %s', (_name, overrides) => {
+    expect(verify(overrides)).toEqual({ ok: false, reason: 'EXPIRED' });
+  });
+
   it('rejects a tampered body and a wrong secret', () => {
     expect(verify({ body: `${body} ` })).toEqual({ ok: false, reason: 'MISMATCH' });
     expect(verify({ secret: 'other' })).toEqual({ ok: false, reason: 'MISMATCH' });
