@@ -5,6 +5,7 @@ import { createHarness, createWebhookSender, resetTables, type Harness } from '.
 import { CompleteDueCharges } from './complete-due-charges.js';
 import { CreateCharge } from './create-charge.js';
 import { DeliverDueWebhooks } from './deliver-due-webhooks.js';
+import type { WebhookSender } from './ports.js';
 
 const secret = 'test-secret';
 const T0 = '2026-10-09T10:00:00.000Z';
@@ -169,5 +170,46 @@ describe('DeliverDueWebhooks', () => {
     for (const key of ['a', 'b', 'c']) await seed(key);
     expect(await deliver.execute(2)).toMatchObject({ delivered: 2 });
     expect(await deliver.execute(2)).toMatchObject({ delivered: 1 });
+  });
+
+  it('claims one event at a time, right before sending it', async () => {
+    for (const key of ['a', 'b', 'c']) await seed(key);
+    const original = await events();
+    const snapshots: Awaited<ReturnType<typeof events>>[] = [];
+    const sender: WebhookSender = {
+      async send() {
+        snapshots.push(await events());
+        return { ok: true, statusCode: 200 };
+      },
+    };
+    const lazy = new DeliverDueWebhooks({
+      uow: h.uow,
+      sender,
+      clock: h.clock,
+      backoffSeconds: [1, 5],
+      leaseSeconds: 60,
+    });
+
+    expect(await lazy.execute()).toEqual({ delivered: 3, retrying: 0, failed: 0 });
+
+    const [duringFirst] = snapshots;
+    expect(duringFirst?.[0]?.next_attempt_at).toEqual(plus(60));
+    expect(duringFirst?.[1]?.next_attempt_at).toEqual(original[1]?.next_attempt_at);
+    expect(duringFirst?.[2]?.next_attempt_at).toEqual(original[2]?.next_attempt_at);
+  });
+
+  it('never delivers more than the limit and leaves the rest untouched', async () => {
+    for (const key of ['a', 'b', 'c']) await seed(key);
+    const original = await events();
+
+    expect(await deliver.execute(1)).toEqual({ delivered: 1, retrying: 0, failed: 0 });
+
+    const after = await events();
+    expect(after[0]?.status).toBe('DELIVERED');
+    for (const i of [1, 2]) {
+      expect(after[i]).toMatchObject({ status: 'PENDING', attempts: 0 });
+      expect(after[i]?.next_attempt_at).toEqual(original[i]?.next_attempt_at);
+    }
+    expect(receiver.received).toHaveLength(1);
   });
 });

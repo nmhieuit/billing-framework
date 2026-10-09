@@ -25,20 +25,24 @@ export class DeliverDueWebhooks {
   }
 
   /**
-   * 1) Trong một transaction: chọn sự kiện đến hạn rồi "chiếm" chúng bằng cách đẩy `next_attempt_at`
-   *    thêm một lease. 2) Gửi HTTP NGOÀI transaction (không giữ khóa DB trong lúc chờ mạng).
+   * Lặp tối đa `limit` lần, mỗi lần xử lý MỘT sự kiện:
+   * 1) Trong một transaction: chọn sự kiện đến hạn kế tiếp rồi "chiếm" nó bằng cách đẩy `next_attempt_at`
+   *    thêm một lease (chỉ cần phủ một lần gửi, nên các sự kiện còn lại chưa bị giữ).
+   * 2) Gửi HTTP NGOÀI transaction (không giữ khóa DB trong lúc chờ mạng).
    * 3) Ghi kết quả. Nếu tiến trình chết giữa chừng, sự kiện tự đến hạn lại khi lease hết.
    */
   async execute(limit = DEFAULT_BATCH): Promise<DeliveryReport> {
-    const claimed = await this.deps.uow.run(async ({ webhooks }) => {
-      const now = this.deps.clock.now();
-      const due = await webhooks.lockDue(now, limit);
-      for (const event of due) await webhooks.save(event.claim(now, this.leaseSeconds));
-      return due;
-    });
-
     const report: DeliveryReport = { delivered: 0, retrying: 0, failed: 0 };
-    for (const event of claimed) {
+    for (let i = 0; i < limit; i += 1) {
+      const event = await this.deps.uow.run(async ({ webhooks }) => {
+        const now = this.deps.clock.now();
+        const [due] = await webhooks.lockDue(now, 1);
+        if (!due) return undefined;
+        await webhooks.save(due.claim(now, this.leaseSeconds));
+        return due;
+      });
+      if (!event) break;
+
       const result = await this.deps.sender.send(event, this.deps.clock.now());
 
       const status = await this.deps.uow.run(async ({ webhooks }) => {
