@@ -14,6 +14,7 @@ import { KyselyUnitOfWork } from './infrastructure/kysely/unit-of-work.js';
 import { RandomIdGenerator, SystemClock } from './infrastructure/system.js';
 import { Worker } from './infrastructure/worker.js';
 import { buildApp } from './interface/http/app.js';
+import { once, runAll } from './lifecycle.js';
 
 export interface StartOverrides {
   clock?: Clock;
@@ -62,10 +63,6 @@ export async function startService(
 
   return {
     app,
-    async stop() {
-      await worker.stop();
-      await app.close();
-      await db.destroy();
-    },
+    stop: once(() => runAll([() => worker.stop(), () => app.close(), () => db.destroy()])),
   };
 }
