@@ -16,10 +16,12 @@ afterEach(async () => {
 describe('emitSchemas', () => {
   it('writes the envelope and one file per event type', async () => {
     const written = await emitSchemas(dir);
-    expect(written).toHaveLength(1 + Object.keys(eventSchemas).length);
+    expect(written).toHaveLength(2 + Object.keys(eventSchemas).length);
     const paid = JSON.parse(await readFile(join(dir, 'billing.order-paid.v1.json'), 'utf8'));
     expect(paid).toEqual(eventSchemas['billing.order-paid.v1']);
     const envelope = JSON.parse(await readFile(join(dir, 'envelope.v1.json'), 'utf8'));
     expect(envelope.$id).toBe('urn:billing:schema:envelope:v1');
+    const webhook = JSON.parse(await readFile(join(dir, 'payment.charge-event.v1.json'), 'utf8'));
+    expect(webhook.$id).toBe('urn:billing:schema:payment.charge-event:v1');
   });
 });
