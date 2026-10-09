@@ -8,9 +8,10 @@ export async function emitSchemas(dir: string): Promise<string[]> {
   await mkdir(dir, { recursive: true });
   const files: Array<[string, unknown]> = [
     ['envelope.v1.json', envelopeSchema],
-    ...Object.entries(eventSchemas).map(
-      ([type, schema]): [string, unknown] => [`${type}.json`, schema],
-    ),
+    ...Object.entries(eventSchemas).map(([type, schema]): [string, unknown] => [
+      `${type}.json`,
+      schema,
+    ]),
   ];
   const written: string[] = [];
   for (const [name, schema] of files) {

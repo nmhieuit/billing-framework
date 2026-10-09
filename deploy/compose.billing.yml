@@ -15,9 +15,9 @@ services:
   billing-sql-init:
     image: mcr.microsoft.com/mssql/server:2022-latest
     networks: [ecommerce]
-    restart: "no"
+    restart: 'no'
     environment:
-      ACCEPT_EULA: "Y"
+      ACCEPT_EULA: 'Y'
       SA_PASSWORD: ${BILLING_SQLSERVER_SA_PASSWORD:?set in deploy/.env}
       WALLET_DB_PASSWORD: ${BILLING_WALLET_DB_PASSWORD:?set in deploy/.env}
       PAYMENT_DB_PASSWORD: ${BILLING_PAYMENT_DB_PASSWORD:?set in deploy/.env}
@@ -36,7 +36,7 @@ services:
   billing-rabbitmq-init:
     image: curlimages/curl:8.10.1
     networks: [ecommerce]
-    restart: "no"
+    restart: 'no'
     environment:
       RABBITMQ_HOST: ${BILLING_RABBITMQ_HOST:-rabbitmq}
       RABBITMQ_MGMT_PORT: ${BILLING_RABBITMQ_MGMT_PORT:-15672}
@@ -46,4 +46,4 @@ services:
       PAYMENT_MQ_PASSWORD: ${BILLING_PAYMENT_MQ_PASSWORD:?set in deploy/.env}
     volumes:
       - ./scripts/init-rabbitmq.sh:/init/init-rabbitmq.sh:ro
-    entrypoint: ["/bin/sh", "/init/init-rabbitmq.sh"]
+    entrypoint: ['/bin/sh', '/init/init-rabbitmq.sh']

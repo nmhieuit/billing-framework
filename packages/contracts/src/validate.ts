@@ -20,8 +20,7 @@ const validateData = new Map<EventType, ValidateFunction>(
 );
 
 export type ValidationResult =
-  | { ok: true; type: EventType; message: Envelope<unknown> }
-  | { ok: false; errors: string[] };
+  { ok: true; type: EventType; message: Envelope<unknown> } | { ok: false; errors: string[] };
 
 const describe = (fn: ValidateFunction): string[] =>
   (fn.errors ?? []).map((e) => `${e.instancePath || '/'} ${e.message ?? 'invalid'}`);
