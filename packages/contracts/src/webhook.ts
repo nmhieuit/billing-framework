@@ -96,6 +96,11 @@ export function verifyWebhook(input: VerifyWebhookInput): VerifyWebhookResult {
   if (!timingSafeEqual(actual, expected)) return { ok: false, reason: 'MISMATCH' };
 
   const tolerance = input.toleranceSeconds ?? DEFAULT_TOLERANCE_SECONDS;
-  if (Math.abs(input.nowSeconds - parsed.t) > tolerance) return { ok: false, reason: 'EXPIRED' };
-  return { ok: true };
+  // Fail CLOSED: NaN/Infinity/negative inputs must never disable replay protection.
+  const withinTolerance =
+    Number.isFinite(input.nowSeconds) &&
+    Number.isFinite(tolerance) &&
+    tolerance >= 0 &&
+    Math.abs(input.nowSeconds - parsed.t) <= tolerance;
+  return withinTolerance ? { ok: true } : { ok: false, reason: 'EXPIRED' };
 }
