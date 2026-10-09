@@ -1,0 +1,49 @@
+# Overlay cho hạ tầng DÙNG CHUNG với stack ecommerce: chỉ chạy các job khởi tạo (DB, vhost, user)
+# trên network external của ecommerce. Không tham chiếu file nào của repo ecommerce.
+#
+#   cp deploy/.env.example deploy/.env   # điền mật khẩu
+#   docker compose -f deploy/compose.billing.yml --env-file deploy/.env run --rm billing-sql-init
+#   docker compose -f deploy/compose.billing.yml --env-file deploy/.env run --rm billing-rabbitmq-init
+name: billing
+
+networks:
+  ecommerce:
+    external: true
+    name: ${ECOMMERCE_NETWORK:-ecomerce-stack_backbone}
+
+services:
+  billing-sql-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    networks: [ecommerce]
+    restart: "no"
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: ${BILLING_SQLSERVER_SA_PASSWORD:?set in deploy/.env}
+      WALLET_DB_PASSWORD: ${BILLING_WALLET_DB_PASSWORD:?set in deploy/.env}
+      PAYMENT_DB_PASSWORD: ${BILLING_PAYMENT_DB_PASSWORD:?set in deploy/.env}
+    volumes:
+      - ./sql/init.sql:/init/init.sql:ro
+    # $$ để shell trong container mở rộng biến, giữ mật khẩu khỏi `docker inspect`.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - >-
+        /opt/mssql-tools18/bin/sqlcmd -S ${BILLING_SQLSERVER_HOST:-sqlserver}
+        -U ${BILLING_SQLSERVER_SA_USER:-sa} -P "$$SA_PASSWORD" -C -b
+        -v WALLET_DB_PASSWORD="$$WALLET_DB_PASSWORD" PAYMENT_DB_PASSWORD="$$PAYMENT_DB_PASSWORD"
+        -i /init/init.sql
+
+  billing-rabbitmq-init:
+    image: curlimages/curl:8.10.1
+    networks: [ecommerce]
+    restart: "no"
+    environment:
+      RABBITMQ_HOST: ${BILLING_RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_MGMT_PORT: ${BILLING_RABBITMQ_MGMT_PORT:-15672}
+      RABBITMQ_ADMIN_USER: ${BILLING_RABBITMQ_ADMIN_USER:-guest}
+      RABBITMQ_ADMIN_PASSWORD: ${BILLING_RABBITMQ_ADMIN_PASSWORD:?set in deploy/.env}
+      WALLET_MQ_PASSWORD: ${BILLING_WALLET_MQ_PASSWORD:?set in deploy/.env}
+      PAYMENT_MQ_PASSWORD: ${BILLING_PAYMENT_MQ_PASSWORD:?set in deploy/.env}
+    volumes:
+      - ./scripts/init-rabbitmq.sh:/init/init-rabbitmq.sh:ro
+    entrypoint: ["/bin/sh", "/init/init-rabbitmq.sh"]
