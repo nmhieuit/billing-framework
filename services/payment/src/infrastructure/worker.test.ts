@@ -70,6 +70,54 @@ describe('Worker', () => {
     expect(finished).toBe(true);
   });
 
+  it('passes an AbortSignal to every task, aborted by stop(), which unblocks a waiting task', async () => {
+    const signals: AbortSignal[] = [];
+    let unblocked = false;
+    const worker = new Worker({
+      intervalMs: 1000,
+      tasks: [
+        async (signal) => {
+          signals.push(signal);
+          await new Promise<void>((resolve) =>
+            signal.addEventListener('abort', () => resolve(), { once: true }),
+          );
+          unblocked = true;
+        },
+      ],
+      onError: () => undefined,
+    });
+    worker.start();
+    await waitFor(() => signals.length === 1, { timeoutMs: 2000, intervalMs: 5 });
+    expect(signals[0]?.aborted).toBe(false);
+    await worker.stop();
+    expect(signals[0]?.aborted).toBe(true);
+    expect(unblocked).toBe(true);
+  });
+
+  it('does not run the remaining tasks of a tick once the signal is aborted', async () => {
+    const order: string[] = [];
+    let release: () => void = () => undefined;
+    const worker = new Worker({
+      intervalMs: 1000,
+      tasks: [
+        async () => {
+          order.push('a');
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        },
+        async () => void order.push('b'),
+      ],
+      onError: () => undefined,
+    });
+    worker.start();
+    await waitFor(() => order.length === 1, { timeoutMs: 2000, intervalMs: 5 });
+    const stopping = worker.stop();
+    release();
+    await stopping;
+    expect(order).toEqual(['a']);
+  });
+
   it('never overlaps two ticks', async () => {
     let active = 0;
     let maxActive = 0;

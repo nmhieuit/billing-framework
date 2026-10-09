@@ -56,7 +56,10 @@ export async function startService(
 
   const worker = new Worker({
     intervalMs: config.workerIntervalMs,
-    tasks: [() => completeDue.execute(), () => deliver.execute()],
+    tasks: [
+      () => completeDue.execute(),
+      (signal) => deliver.execute(undefined, { shouldContinue: () => !signal.aborted }),
+    ],
     onError: (error) => log.error({ err: error }, 'worker task failed'),
   });
   worker.start();

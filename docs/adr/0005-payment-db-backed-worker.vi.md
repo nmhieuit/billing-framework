@@ -22,7 +22,9 @@ ngoài transaction, rồi ghi kết quả trong một transaction mới; mỗi c
 
 ## Hệ quả
 
-Charge hoàn tất trễ tối đa một chu kỳ worker (mặc định 500 ms). Retry gồm lần gửi đầu cộng tối đa
+Charge hoàn tất trễ tối đa một chu kỳ worker (mặc định 500 ms) cộng thời lượng của lô gửi webhook đang chạy dở
+(mỗi lần gửi tối đa 10 giây, tối đa `limit` sự kiện mỗi tick). Dừng worker sẽ ngắt lô giữa các sự kiện: sự kiện đã
+được chiếm vẫn được gửi xong, sự kiện chưa chiếm thì không bị đụng tới. Retry gồm lần gửi đầu cộng tối đa
 `len(WEBHOOK_BACKOFF)` lần thử lại. Vì mỗi sự kiện được chiếm riêng ngay trước khi gửi, lease chỉ cần phủ một lần gửi
 chứ không phải cả lô. Nếu tiến trình chết khi đang gửi, sự kiện tự đến hạn lại sau lease (60 giây) và có thể được gửi
 lặp; người nhận phải khử trùng theo `eventId`. `Worker.tick()` nuốt lỗi do chính `onError` ném ra để vòng lặp và

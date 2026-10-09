@@ -31,9 +31,15 @@ export class DeliverDueWebhooks {
    * 2) Gửi HTTP NGOÀI transaction (không giữ khóa DB trong lúc chờ mạng).
    * 3) Ghi kết quả. Nếu tiến trình chết giữa chừng, sự kiện tự đến hạn lại khi lease hết.
    */
-  async execute(limit = DEFAULT_BATCH): Promise<DeliveryReport> {
+  async execute(
+    limit = DEFAULT_BATCH,
+    options: { shouldContinue?: () => boolean } = {},
+  ): Promise<DeliveryReport> {
+    const shouldContinue = options.shouldContinue ?? (() => true);
     const report: DeliveryReport = { delivered: 0, retrying: 0, failed: 0 };
     for (let i = 0; i < limit; i += 1) {
+      // Kiểm tra TRƯỚC khi chiếm: sự kiện đã chiếm vẫn được gửi xong, nhưng không chiếm thêm khi đang dừng.
+      if (!shouldContinue()) break;
       const event = await this.deps.uow.run(async ({ webhooks }) => {
         const now = this.deps.clock.now();
         const [due] = await webhooks.lockDue(now, 1);

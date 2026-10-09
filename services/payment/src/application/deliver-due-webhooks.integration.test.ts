@@ -198,6 +198,38 @@ describe('DeliverDueWebhooks', () => {
     expect(duringFirst?.[2]?.next_attempt_at).toEqual(original[2]?.next_attempt_at);
   });
 
+  it('stops claiming new events once shouldContinue turns false, leaving the rest untouched', async () => {
+    for (const key of ['a', 'b', 'c']) await seed(key);
+    const original = await events();
+    let keepGoing = true;
+    let sent = 0;
+    const sender: WebhookSender = {
+      async send() {
+        sent += 1;
+        keepGoing = false;
+        return { ok: true, statusCode: 200 };
+      },
+    };
+    const interruptible = new DeliverDueWebhooks({
+      uow: h.uow,
+      sender,
+      clock: h.clock,
+      backoffSeconds: [1, 5],
+      leaseSeconds: 60,
+    });
+
+    const report = await interruptible.execute(50, { shouldContinue: () => keepGoing });
+
+    expect(report).toEqual({ delivered: 1, retrying: 0, failed: 0 });
+    expect(sent).toBe(1);
+    const after = await events();
+    expect(after[0]?.status).toBe('DELIVERED');
+    for (const i of [1, 2]) {
+      expect(after[i]).toMatchObject({ status: 'PENDING', attempts: 0 });
+      expect(after[i]?.next_attempt_at).toEqual(original[i]?.next_attempt_at);
+    }
+  });
+
   it('never delivers more than the limit and leaves the rest untouched', async () => {
     for (const key of ['a', 'b', 'c']) await seed(key);
     const original = await events();
