@@ -137,6 +137,27 @@ describe('POST /charges', () => {
   });
 
   it.each([
+    ['leading whitespace', ' key-1'],
+    ['trailing whitespace', 'key-1 '],
+    ['surrounding whitespace', '\tkey-1 '],
+  ])(
+    'rejects an Idempotency-Key with %s as INVALID_IDEMPOTENCY_KEY without calling the use case',
+    async (_name, headerValue) => {
+      const execute = vi.fn<(input: CreateChargeInput) => Promise<CreateChargeResult>>(
+        async () => created,
+      );
+      const server = await start({ createCharge: { execute } });
+      const res = await post(server, {
+        headers: { 'idempotency-key': headerValue },
+        payload: JSON.stringify(validBody),
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('INVALID_IDEMPOTENCY_KEY');
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
     ['malformed JSON', '{bad'],
     ['an array', '[]'],
     ['null', 'null'],

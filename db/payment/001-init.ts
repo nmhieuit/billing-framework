@@ -2,6 +2,9 @@ import { sql, type Kysely } from 'kysely';
 
 // Index (status, due_at, id) và (status, next_attempt_at, event_id) là BẮT BUỘC: không có chúng,
 // `top (n) ... order by ... with (updlock, readpast)` quét và khóa mọi hàng nên worker thứ hai nhận về rỗng.
+// idempotency_key dùng collation nhị phân để `ABC` và `abc` là hai khóa khác nhau (collation mặc định của DB không phân
+// biệt hoa thường). Migration 001 sửa tại chỗ vì CHƯA từng được triển khai ở đâu; sau khi triển khai thì phải thêm
+// migration mới. Lưu ý: SQL Server vẫn bỏ qua khoảng trắng cuối khi so sánh, nên route từ chối khóa có khoảng trắng đầu/cuối.
 export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`
     create table charges (
@@ -24,7 +27,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 
   await sql`
     create table idempotency_keys (
-      idempotency_key nvarchar(255) not null primary key,
+      idempotency_key nvarchar(255) collate Latin1_General_100_BIN2 not null primary key,
       request_hash nvarchar(64) not null,
       response_status int not null,
       response_body nvarchar(max) not null,

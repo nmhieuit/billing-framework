@@ -24,6 +24,12 @@ export const chargesRoutes: FastifyPluginAsync<ChargesRoutesOptions> = async (ap
         'Idempotency-Key header is required',
       );
     }
+    if (key !== key.trim()) {
+      throw new RequestValidationError(
+        'INVALID_IDEMPOTENCY_KEY',
+        'Idempotency-Key must not have leading or trailing whitespace',
+      );
+    }
     if (key.length > MAX_KEY_LENGTH) {
       throw new RequestValidationError(
         'INVALID_IDEMPOTENCY_KEY',
