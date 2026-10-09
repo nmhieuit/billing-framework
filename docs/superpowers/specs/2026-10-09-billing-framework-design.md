@@ -45,7 +45,7 @@ billing-framework/
 │  └─ testing/           # testcontainers, fake gateway, helper contract test
 ├─ db/                   # migration Kysely theo từng service
 ├─ deploy/               # compose overlay, manifest K8s
-├─ docs/                 # adr/, architecture/, runbooks/ (song ngữ .md / .vi.md)
+├─ docs/                 # adr/, architecture/, runbooks/ (tiếng Việt, đuôi .vi.md)
 ├─ pacts/                # contract test với ecommerce
 └─ Jenkinsfile
 ```
