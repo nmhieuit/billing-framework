@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely';
 import { paymentMigrations } from '../../../db/payment/migrations.js';
 import type { IdGenerator } from './application/ports.js';
 import type { PaymentDatabase } from './infrastructure/kysely/schema.js';
+import { HttpWebhookSender } from './infrastructure/http-webhook-sender.js';
 import { KyselyUnitOfWork } from './infrastructure/kysely/unit-of-work.js';
 
 /** Mã định danh tất định để test so sánh được: ch_000001, evt_000001, ... */
@@ -43,6 +44,11 @@ export async function createHarness(start = '2026-10-09T10:00:00.000Z'): Promise
       await testDb.drop();
     },
   };
+}
+
+/** Test trong thư mục application/ không được import infrastructure trực tiếp nên đi qua đây. */
+export function createWebhookSender(url: string, secret: string): HttpWebhookSender {
+  return new HttpWebhookSender({ url, secret, timeoutMs: 2000 });
 }
 
 /** Xóa sạch dữ liệu theo đúng thứ tự khóa ngoại. */
