@@ -1,8 +1,9 @@
-import { ConfigError, createDatabase, databaseConfigFromEnv, migrate } from '@billing/database';
+import { ConfigError, createDatabase, migrate, migratorConfigFromEnv } from '@billing/database';
 import { paymentMigrations } from './migrations.js';
 
 try {
-  const config = databaseConfigFromEnv('PAYMENT_DB', process.env);
+  // Migrator của Kysely cần tài khoản thuộc db_owner; tài khoản ứng dụng chỉ cần DML.
+  const config = migratorConfigFromEnv('PAYMENT_DB', 'PAYMENT_MIGRATOR_DB', process.env);
   const db = createDatabase<unknown>(config);
   try {
     const applied = await migrate(db, paymentMigrations);

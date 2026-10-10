@@ -49,8 +49,23 @@ Các điểm sau đã được kiểm chứng trên SQL Server 2022 và là ngu�
   khi có index hỗ trợ đúng `ORDER BY` (ví dụ `(status, due_at, id)`). Thiếu index thì mọi hàng bị khóa và worker thứ
   hai nhận về rỗng.
 - **Vi phạm khóa duy nhất:** nhận biết bằng `isUniqueViolation(error)` (số lỗi 2627/2601).
-- **Migration:** `Migrator` nằm ở `kysely/migration`; dùng `migrate(db, migrations)` của `@billing/database`.
+- **Migration:** `Migrator` nằm ở `kysely/migration`; dùng `migrate(db, migrations, { migrationTableSchema? })` của
+  `@billing/database`. `Migrator` dùng `sp_getapplock` nên **phải chạy bằng tài khoản thuộc `db_owner`** (login
+  `*_migrator`, biến `*_MIGRATOR_DB_USER/PASSWORD`, đọc bằng `migratorConfigFromEnv`); service chạy bằng login chỉ có
+  DML. Lúc khởi động chỉ kiểm tra bằng `pendingMigrations`/`assertMigrated` (chỉ đọc).
 - **Từ khóa T-SQL:** tránh đặt tên cột như `key`, `type`, `error`, `at`, `duplicate`.
+
+## Đa tenant (wallet)
+
+Mỗi tenant một schema `t_<tenant>`. Tenant chỉ đến từ header do gateway đặt (API) hoặc từ metadata đã được ký
+(webhook), qua `TenantRegistry`; không bao giờ từ body hay query. Mọi truy cập DB đi qua
+`TenantUnitOfWork.run(tenant, …)`; Kysely dùng `withSchema`, SQL thô dùng `sql.id(schema, tên)` và tên schema luôn
+dựng từ `TenantId` đã kiểm tra. Test tích hợp luôn dựng ít nhất hai tenant để bắt rò rỉ chéo tenant.
+
+## `@billing/runtime`
+
+`Worker` (vòng lặp nền có `AbortSignal`), `runAll`, `once`, `createShutdownHandler`, `startOrExit` dùng chung cho cả
+hai service: dừng worker → đóng app → chờ việc đang chạy → đóng DB, luôn chạy hết các bước.
 
 ## Kiểm thử
 

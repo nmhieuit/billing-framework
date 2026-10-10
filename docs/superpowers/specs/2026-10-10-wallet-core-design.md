@@ -35,7 +35,7 @@ Wallet giữ số dư của khách (ví nạp trước) và chứng minh đượ
 
 | Endpoint | Hành vi |
 |---|---|
-| `POST /wallets` | Body `{ currency }` (`VND`\|`USD`). Chưa có ví → `201`; đã có cùng đồng tiền → `200` trả ví đó; khác đồng tiền → `409 WALLET_CURRENCY_CONFLICT` |
+| `POST /wallets` | Body `{ currency }` (`VND`\|`USD`). Chưa có ví → `201`; đã có cùng đồng tiền → `200` trả ví đó; khác đồng tiền → `409 WALLET_CURRENCY_CONFLICT`; khách sai dạng → `400 INVALID_REQUEST`; `currency` không hỗ trợ → `400 INVALID_REQUEST` |
 | `GET /wallet` | Ví của khách gọi: `{ customerId, currency, balance, createdAt }`; chưa có → `404 WALLET_NOT_FOUND` |
 | `POST /topups` | Header `Idempotency-Key` bắt buộc (1..255 ký tự, không có khoảng trắng đầu/cuối, thiếu → `400 MISSING_IDEMPOTENCY_KEY`, sai dạng → `400 INVALID_IDEMPOTENCY_KEY`). Body `{ amount }`: số nguyên minor unit `>= 1`; đồng tiền lấy từ ví. Chưa có ví → `404 WALLET_NOT_FOUND`. Luôn trả `202 { topupId, status: "REQUESTED", amount, currency, createdAt }`. Cùng key + cùng nội dung → trả lại đúng phản hồi đã lưu; cùng key + nội dung khác → `422 IDEMPOTENCY_KEY_REUSED` |
 | `GET /topups/{id}` | Lần nạp của chính khách: `{ topupId, status, amount, currency, failureCode?, createdAt, completedAt? }`; của khách/tenant khác → `404 TOPUP_NOT_FOUND` |
@@ -135,6 +135,7 @@ Bốn lớp theo quy ước repo; NestJS luôn tiêm phụ thuộc bằng `@Inje
 | `PAYMENT_TIMEOUT_MS` | Timeout mỗi lần gọi payment | `5000` |
 | `TOPUP_SUBMIT_BACKOFF` | Các mốc retry gọi payment (giây) | `1,5,30,120,600` |
 | `WORKER_INTERVAL_MS` | Chu kỳ poll của worker | `500` |
+| `WALLET_MIGRATOR_DB_USER`, `WALLET_MIGRATOR_DB_PASSWORD` | Tài khoản `db_owner` chỉ dùng cho `db:migrate:wallet` (đặt cả hai hoặc không đặt); service không đọc | không có (tùy chọn) |
 
 Thiếu hoặc sai thì service từ chối khởi động và liệt kê mọi vấn đề cùng lúc. Không có giá trị mặc định cho bí mật.
 
@@ -154,8 +155,6 @@ Thiếu hoặc sai thì service từ chối khởi động và liệt kê mọi 
 
 ## 11. Rủi ro cần kiểm chứng sớm và câu hỏi mở
 
-- Lấy body thô của NestJS + Fastify để kiểm chữ ký webhook (cần chứng minh trước khi viết controller).
-- `withSchema` của Kysely với câu SQL thô và với `Migrator` (`migrationTableSchema`).
-- Quyền `CREATE SCHEMA` của user `billing_wallet_app` (nhóm `db_ddladmin`) trong overlay `deploy/`; có thể phải bổ sung quyền trong `deploy/sql/init.sql`.
-- Instance SQL Server dùng chung cho DB billing chưa chốt (ADR-0004); không chặn bước này vì test dùng container tạm.
-- Đồng bộ danh sách tenant giữa gateway của ecommerce và `WALLET_TENANTS`: cần thống nhất với team ecommerce trước khi chạy thật.
+- **Đã kiểm chứng:** lấy body thô của NestJS + Fastify (`rawBody: true`, byte gốc được giữ nguyên); `withSchema` và `sql.id(schema, tên)` với SQL thô; `Migrator` với `migrationTableSchema`; `CREATE SCHEMA` bằng quyền `db_ddladmin`.
+- **Phát hiện khi kiểm chứng:** `Migrator` của Kysely cần `db_owner` (`sp_getapplock`), nên có login migrator riêng cho cả hai DB (xem ADR-0006 và `deploy/sql/init.sql`); `db:migrate:payment` của Bước 2 cũng được sửa theo.
+- **Còn mở:** instance SQL Server dùng chung cho DB billing (ADR-0004, không chặn bước này); đồng bộ danh sách tenant giữa gateway của ecommerce và `WALLET_TENANTS` trước khi chạy thật.
