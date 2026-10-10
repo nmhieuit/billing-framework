@@ -1,0 +1,83 @@
+{
+  "consumer": { "name": "orders" },
+  "provider": { "name": "wallet" },
+  "messages": [
+    {
+      "description": "an OrderPaidV1 event",
+      "contents": {
+        "eventId": "3f1f3c6e-6a4e-4d0f-8a4b-9f1d7b6f0c02",
+        "occurredAtUtc": "2026-10-10T10:00:01Z",
+        "tenantId": "acme",
+        "correlationId": "corr-1",
+        "orderId": "0b1f3c6e-6a4e-4d0f-8a4b-9f1d7b6f0c11",
+        "walletTransactionId": "tx_1",
+        "amount": 150000,
+        "currency": "VND",
+        "paidAtUtc": "2026-10-10T10:00:01Z"
+      },
+      "matchingRules": {
+        "body": {
+          "$.eventId": { "matchers": [{ "match": "type" }] },
+          "$.occurredAtUtc": {
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+              }
+            ]
+          },
+          "$.tenantId": { "matchers": [{ "match": "type" }] },
+          "$.correlationId": { "matchers": [{ "match": "type" }] },
+          "$.orderId": { "matchers": [{ "match": "type" }] },
+          "$.walletTransactionId": { "matchers": [{ "match": "type" }] },
+          "$.amount": { "matchers": [{ "match": "integer" }] },
+          "$.currency": { "matchers": [{ "match": "regex", "regex": "^(VND|USD)$" }] },
+          "$.paidAtUtc": {
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "description": "an OrderPaymentFailedV1 event",
+      "contents": {
+        "eventId": "3f1f3c6e-6a4e-4d0f-8a4b-9f1d7b6f0c03",
+        "occurredAtUtc": "2026-10-10T10:00:01Z",
+        "tenantId": "acme",
+        "correlationId": "corr-2",
+        "orderId": "0b1f3c6e-6a4e-4d0f-8a4b-9f1d7b6f0c12",
+        "reason": "INSUFFICIENT_FUNDS"
+      },
+      "matchingRules": {
+        "body": {
+          "$.eventId": { "matchers": [{ "match": "type" }] },
+          "$.occurredAtUtc": {
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+              }
+            ]
+          },
+          "$.tenantId": { "matchers": [{ "match": "type" }] },
+          "$.correlationId": { "matchers": [{ "match": "type" }] },
+          "$.orderId": { "matchers": [{ "match": "type" }] },
+          "$.reason": {
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "^(INSUFFICIENT_FUNDS|WALLET_NOT_FOUND|CURRENCY_MISMATCH|CONFLICT)$"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "metadata": { "pactSpecification": { "version": "3.0.0" } }
+}

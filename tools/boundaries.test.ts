@@ -34,7 +34,7 @@ describe('architecture boundaries', () => {
   it('forbids domain from importing shared packages other than money', async () => {
     const bad = await violations(
       'services/wallet/src/domain/wallet.ts',
-      "import { validateMessage } from '@billing/contracts';\nexport const y = validateMessage;\n",
+      "import { validateEvent } from '@billing/contracts';\nexport const y = validateEvent;\n",
     );
     expect(bad).toHaveLength(1);
     const ok = await violations(

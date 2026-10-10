@@ -1,18 +1,16 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { envelopeSchema } from './envelope.js';
-import { eventSchemas } from './events.js';
+import { eventCatalog } from './events.js';
 import { chargeWebhookSchema } from './webhook.js';
 
 /** Ghi JSON Schema thành file để các bên (kể cả team ecommerce, C#) lấy làm hợp đồng. */
 export async function emitSchemas(dir: string): Promise<string[]> {
   await mkdir(dir, { recursive: true });
   const files: Array<[string, unknown]> = [
-    ['envelope.v1.json', envelopeSchema],
     ['payment.charge-event.v1.json', chargeWebhookSchema],
-    ...Object.entries(eventSchemas).map(([type, schema]): [string, unknown] => [
-      `${type}.json`,
-      schema,
+    ...Object.values(eventCatalog).map((entry): [string, unknown] => [
+      entry.schemaFile,
+      entry.schema,
     ]),
   ];
   const written: string[] = [];

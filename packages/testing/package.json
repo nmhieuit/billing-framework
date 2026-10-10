@@ -5,11 +5,12 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./sql-server.global-setup": "./src/sql-server.global-setup.ts"
+    "./containers.global-setup": "./src/containers.global-setup.ts"
   },
   "dependencies": {
     "@billing/database": "workspace:^",
     "@testcontainers/mssqlserver": "^12.2.0",
+    "@testcontainers/rabbitmq": "^12.2.0",
     "kysely": "^0.29.6",
     "testcontainers": "^12.2.0"
   }

@@ -6,7 +6,7 @@ export interface LedgerEntry {
   readonly amount: Money;
 }
 
-export type LedgerTransactionKind = 'TOPUP';
+export type LedgerTransactionKind = 'TOPUP' | 'ORDER_PAYMENT';
 
 export interface LedgerTransactionProps {
   readonly id: string;
@@ -86,6 +86,30 @@ export class LedgerTransaction {
       entries: [
         { accountId: input.walletAccountId, amount: input.amount },
         { accountId: input.gatewayAccountId, amount: input.amount.negate() },
+      ],
+      now: input.now,
+    });
+  }
+
+  /** Trả order: ví `−amount`, MERCHANT `+amount`, khóa nghiệp vụ `order:<orderId>`. */
+  static orderPayment(input: {
+    id: string;
+    orderId: string;
+    walletAccountId: string;
+    merchantAccountId: string;
+    amount: Money;
+    now: Date;
+  }): LedgerTransaction {
+    if (!input.amount.isPositive()) {
+      throw new InvalidLedgerTransactionError('an order payment amount must be positive');
+    }
+    return LedgerTransaction.create({
+      id: input.id,
+      businessKey: `order:${input.orderId}`,
+      kind: 'ORDER_PAYMENT',
+      entries: [
+        { accountId: input.walletAccountId, amount: input.amount.negate() },
+        { accountId: input.merchantAccountId, amount: input.amount },
       ],
       now: input.now,
     });

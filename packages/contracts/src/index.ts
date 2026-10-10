@@ -1,18 +1,17 @@
-export { envelopeSchema } from './envelope.js';
-export type { Envelope } from './envelope.js';
 export {
-  eventSchemas,
+  eventCatalog,
   orderPaidV1,
   orderPaymentFailedV1,
   orderReadyForPaymentV1,
 } from './events.js';
 export type {
-  EventType,
+  EventName,
+  EventPayloads,
   OrderPaidV1,
   OrderPaymentFailedV1,
   OrderReadyForPaymentV1,
 } from './events.js';
-export { validateMessage } from './validate.js';
+export { validateEvent } from './validate.js';
 export type { ValidationResult } from './validate.js';
 export {
   DEFAULT_TOLERANCE_SECONDS,

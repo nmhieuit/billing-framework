@@ -2,8 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { eventSchemas } from './events.js';
-import { emitSchemas } from './index.js';
+import { eventCatalog, emitSchemas } from './index.js';
 
 let dir: string;
 beforeEach(async () => {
@@ -14,14 +13,18 @@ afterEach(async () => {
 });
 
 describe('emitSchemas', () => {
-  it('writes the envelope and one file per event type', async () => {
+  it('writes one schema file per event plus the payment webhook schema', async () => {
     const written = await emitSchemas(dir);
-    expect(written).toHaveLength(2 + Object.keys(eventSchemas).length);
-    const paid = JSON.parse(await readFile(join(dir, 'billing.order-paid.v1.json'), 'utf8'));
-    expect(paid).toEqual(eventSchemas['billing.order-paid.v1']);
-    const envelope = JSON.parse(await readFile(join(dir, 'envelope.v1.json'), 'utf8'));
-    expect(envelope.$id).toBe('urn:billing:schema:envelope:v1');
+    expect(written).toHaveLength(Object.keys(eventCatalog).length + 1);
+    const paid = JSON.parse(await readFile(join(dir, 'OrderPaid.v1.schema.json'), 'utf8'));
+    expect(paid).toEqual(eventCatalog.OrderPaidV1.schema);
+    expect(paid.$id).toBe('urn:billing:schema:OrderPaid:v1');
     const webhook = JSON.parse(await readFile(join(dir, 'payment.charge-event.v1.json'), 'utf8'));
     expect(webhook.$id).toBe('urn:billing:schema:payment.charge-event:v1');
+  });
+
+  it('emits no envelope schema any more', async () => {
+    await emitSchemas(dir);
+    await expect(readFile(join(dir, 'envelope.v1.json'), 'utf8')).rejects.toThrow();
   });
 });

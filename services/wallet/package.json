@@ -10,6 +10,7 @@
   "dependencies": {
     "@billing/contracts": "workspace:^",
     "@billing/database": "workspace:^",
+    "@billing/messaging": "workspace:^",
     "@billing/money": "workspace:^",
     "@billing/observability": "workspace:^",
     "@billing/runtime": "workspace:^",
@@ -22,6 +23,8 @@
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
-    "@billing/testing": "workspace:^"
+    "@billing/testing": "workspace:^",
+    "@pact-foundation/pact": "17.1.4",
+    "amqplib": "^2.2.0"
   }
 }

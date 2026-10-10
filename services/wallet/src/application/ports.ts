@@ -17,6 +17,8 @@ export interface Clock {
 export interface IdGenerator {
   topupId(): string;
   transactionId(): string;
+  /** UUID thật: các schema event yêu cầu `eventId` là UUID. */
+  eventId(): string;
 }
 
 export interface Logger {
@@ -90,6 +92,8 @@ export interface Repositories {
   topups: TopupRepository;
   idempotency: IdempotencyStore;
   inbox: Inbox;
+  orderPayments: OrderPaymentRepository;
+  outbox: OutboxRepository;
 }
 
 export interface TenantUnitOfWork {
@@ -117,4 +121,53 @@ export type GatewayChargeResult =
 export interface PaymentGateway {
   /** Không bao giờ ném: mọi lỗi được trả về dưới dạng `rejected` (đừng thử lại) hoặc `unavailable` (thử lại sau). */
   createCharge(request: GatewayChargeRequest): Promise<GatewayChargeResult>;
+}
+
+/** Đơn đã được trả từ ví; khóa theo `orderId` để một đơn chỉ trả một lần. */
+export interface PaidOrder {
+  orderId: string;
+  customerId: string;
+  walletTransactionId: string;
+  amount: Money;
+  paidAt: Date;
+}
+
+export interface OrderPaymentRepository {
+  find(orderId: string): Promise<PaidOrder | null>;
+  /** Ném `DuplicateKeyError` (nguồn `order_payment`) nếu đơn đã được trả. */
+  insert(order: PaidOrder): Promise<void>;
+}
+
+export interface NewOutboxMessage {
+  id: string;
+  eventType: string;
+  routingKey: string;
+  payload: string;
+  correlationId: string;
+  createdAt: Date;
+}
+
+export interface OutboxMessage extends NewOutboxMessage {
+  attempts: number;
+  nextAttemptAt: Date;
+}
+
+export interface OutboxRepository {
+  /** Thêm message `PENDING`, `attempts` 0, đến hạn ngay tại `createdAt`. */
+  add(message: NewOutboxMessage): Promise<void>;
+  /** Message `PENDING` đến hạn cũ nhất, khóa bằng UPDLOCK + READPAST (bỏ qua dòng đang bị khóa). */
+  lockNextDue(now: Date): Promise<OutboxMessage | null>;
+  /** Đẩy `next_attempt_at` ra xa để không ai nhận lại message trong lúc đang gửi. */
+  lease(id: string, until: Date): Promise<void>;
+  markSent(id: string, sentAt: Date): Promise<void>;
+  /** Tăng `attempts` và đặt lịch gửi lại. */
+  recordFailure(id: string, nextAttemptAt: Date): Promise<void>;
+}
+
+export type PublishOutcome =
+  { kind: 'delivered' } | { kind: 'unroutable' } | { kind: 'failed'; error: string };
+
+export interface EventPublisher {
+  /** Không bao giờ ném: mọi lỗi trả về dưới dạng `unroutable` hoặc `failed`. */
+  publish(message: OutboxMessage): Promise<PublishOutcome>;
 }

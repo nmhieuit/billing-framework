@@ -1,9 +1,10 @@
 import { dateTime, toSafeInteger } from '@billing/database';
 import { Money, type Currency } from '@billing/money';
 import type { Insertable, Selectable } from 'kysely';
+import type { NewOutboxMessage, OutboxMessage, PaidOrder } from '../../application/ports.js';
 import { Account, type AccountKind } from '../../domain/account.js';
 import { Topup, type TopupStatus } from '../../domain/topup.js';
-import type { AccountsTable, TopupsTable } from './schema.js';
+import type { AccountsTable, OrderPaymentsTable, OutboxTable, TopupsTable } from './schema.js';
 
 /** `dateTime()` là biểu thức SQL; Kysely chấp nhận biểu thức ở mọi chỗ cần giá trị Date. */
 export const sqlDate = (value: Date): Date => dateTime(value) as unknown as Date;
@@ -66,4 +67,42 @@ export function rowToTopup(row: Selectable<TopupsTable>): Topup {
     createdAt: row.created_at,
     completedAt: row.completed_at,
   });
+}
+
+export function rowToPaidOrder(row: Selectable<OrderPaymentsTable>): PaidOrder {
+  return {
+    orderId: row.order_id,
+    customerId: row.customer_id,
+    walletTransactionId: row.wallet_transaction_id,
+    amount: Money.of(toSafeInteger(row.amount), row.currency as Currency),
+    paidAt: row.paid_at,
+  };
+}
+
+export function rowToOutbox(row: Selectable<OutboxTable>): OutboxMessage {
+  return {
+    id: row.id,
+    eventType: row.event_type,
+    routingKey: row.routing_key,
+    payload: row.payload,
+    correlationId: row.correlation_id,
+    createdAt: row.created_at,
+    attempts: row.attempts,
+    nextAttemptAt: row.next_attempt_at,
+  };
+}
+
+export function outboxToRow(message: NewOutboxMessage): Insertable<OutboxTable> {
+  return {
+    id: message.id,
+    event_type: message.eventType,
+    routing_key: message.routingKey,
+    payload: message.payload,
+    correlation_id: message.correlationId,
+    status: 'PENDING',
+    attempts: 0,
+    next_attempt_at: sqlDate(message.createdAt),
+    created_at: sqlDate(message.createdAt),
+    sent_at: null,
+  };
 }

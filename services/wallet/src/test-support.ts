@@ -1,10 +1,11 @@
-import { createDatabase } from '@billing/database';
+import { createDatabase, type DatabaseConfig } from '@billing/database';
 import type { Currency } from '@billing/money';
 import { FakeClock, createTestDatabase } from '@billing/testing';
 import { sql, type Kysely } from 'kysely';
 import { expect } from 'vitest';
+import { ApplyPaymentResult } from './application/apply-payment-result.js';
 import { CreateWallet } from './application/create-wallet.js';
-import type { IdGenerator } from './application/ports.js';
+import type { IdGenerator, Logger } from './application/ports.js';
 import { RequestTopup } from './application/request-topup.js';
 import { CustomerId } from './domain/customer-id.js';
 import { TenantId } from './domain/tenant-id.js';
@@ -18,6 +19,7 @@ import { KyselyTenantUnitOfWork } from './infrastructure/kysely/unit-of-work.js'
 export class SequentialIds implements IdGenerator {
   #topups = 0;
   #transactions = 0;
+  #events = 0;
 
   topupId(): string {
     return `tp_${String(++this.#topups).padStart(6, '0')}`;
@@ -26,9 +28,14 @@ export class SequentialIds implements IdGenerator {
   transactionId(): string {
     return `tx_${String(++this.#transactions).padStart(6, '0')}`;
   }
+
+  eventId(): string {
+    return `00000000-0000-4000-8000-${String(++this.#events).padStart(12, '0')}`;
+  }
 }
 
 export interface Harness {
+  config: DatabaseConfig;
   db: Kysely<WalletDatabase>;
   clock: FakeClock;
   ids: SequentialIds;
@@ -47,6 +54,7 @@ export async function createHarness(start = '2026-10-10T10:00:00.000Z'): Promise
   const beta = TenantId.parse('beta');
   await provisionTenants(db as unknown as Kysely<unknown>, [acme, beta]);
   return {
+    config: testDb.config,
     db,
     clock: new FakeClock(start),
     ids: new SequentialIds(),
@@ -142,4 +150,33 @@ export async function seedTopup(
     });
   }
   return { tenant, customer, topupId: body.topupId, chargeId, amount, currency };
+}
+
+export const silentLogger: Logger = {
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+};
+
+/** Nạp tiền thật vào ví (tạo ví nếu chưa có) bằng đúng luồng nạp: lần nạp PENDING rồi webhook thành công. */
+export async function fundWallet(
+  h: Harness,
+  options: { tenant?: TenantId; customer: string; amount: number; currency?: Currency },
+): Promise<void> {
+  const seeded = await seedTopup(h, { ...options, state: 'PENDING' });
+  const outcome = await new ApplyPaymentResult({
+    uow: h.uow,
+    clock: h.clock,
+    ids: h.ids,
+    log: silentLogger,
+  }).execute({
+    tenant: seeded.tenant,
+    eventId: `evt_fund_${seeded.topupId}`,
+    type: 'charge.succeeded',
+    chargeId: seeded.chargeId,
+    reference: seeded.topupId,
+    amount: seeded.amount,
+    currency: seeded.currency,
+  });
+  if (outcome !== 'APPLIED') throw new Error(`could not fund wallet: ${outcome}`);
 }

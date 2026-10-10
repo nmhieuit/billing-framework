@@ -10,6 +10,9 @@ const minimal = {
   WALLET_TENANTS: 'acme,beta',
   PAYMENT_BASE_URL: 'http://payment:3002/',
   PAYMENT_WEBHOOK_SECRET: 'whsec_x',
+  RABBITMQ_HOST: 'mq',
+  RABBITMQ_USER: 'billing_wallet',
+  RABBITMQ_PASSWORD: 'mq-secret',
 };
 
 const problemsOf = (env: NodeJS.ProcessEnv): string[] => {
@@ -28,6 +31,14 @@ describe('loadConfig', () => {
       port: 3001,
       database: { host: 'db', port: 1433, database: 'billing_wallet', user: 'u', password: 'p' },
       payment: { baseUrl: 'http://payment:3002', webhookSecret: 'whsec_x', timeoutMs: 5000 },
+      broker: {
+        host: 'mq',
+        port: 5672,
+        vhost: 'billing',
+        user: 'billing_wallet',
+        password: 'mq-secret',
+      },
+      orders: { prefetch: 10, retryDelaysSeconds: [5, 30, 120, 600, 1800], outboxBatch: 50 },
       topupBackoffSeconds: [1, 5, 30, 120, 600],
       workerIntervalMs: 500,
     });
@@ -63,6 +74,9 @@ describe('loadConfig', () => {
       'WALLET_TENANTS is required',
       'PAYMENT_BASE_URL is required',
       'PAYMENT_WEBHOOK_SECRET is required',
+      'RABBITMQ_HOST is required',
+      'RABBITMQ_USER is required',
+      'RABBITMQ_PASSWORD is required',
     ]);
   });
 
@@ -119,6 +133,50 @@ describe('loadConfig', () => {
       'PAYMENT_TIMEOUT_MS must be an integer in 1..50000',
     ]);
     expect(problemsOf({ ...minimal, PAYMENT_TIMEOUT_MS: '50000' })).toEqual([]);
+  });
+
+  it('reads the broker and order-consumer overrides', () => {
+    const config = loadConfig({
+      ...minimal,
+      RABBITMQ_PORT: '5673',
+      RABBITMQ_VHOST: 'other',
+      ORDER_CONSUMER_PREFETCH: '3',
+      ORDER_RETRY_DELAYS: '2, 4',
+      OUTBOX_BATCH: '7',
+    });
+    expect(config).toMatchObject({
+      broker: { port: 5673, vhost: 'other' },
+      orders: { prefetch: 3, retryDelaysSeconds: [2, 4], outboxBatch: 7 },
+    });
+  });
+
+  it('never has a default for the broker password and treats blank as missing', () => {
+    expect(problemsOf({ ...minimal, RABBITMQ_PASSWORD: ' ' })).toEqual([
+      'RABBITMQ_PASSWORD is required',
+    ]);
+  });
+
+  it.each([
+    ['RABBITMQ_PORT', '0'],
+    ['RABBITMQ_PORT', 'abc'],
+    ['ORDER_CONSUMER_PREFETCH', '0'],
+    ['ORDER_CONSUMER_PREFETCH', '1001'],
+    ['OUTBOX_BATCH', '0'],
+    ['OUTBOX_BATCH', 'x'],
+  ])('rejects %s=%s', (name, value) => {
+    expect(problemsOf({ ...minimal, [name]: value })).toEqual([
+      expect.stringContaining(`${name} must be an integer`),
+    ]);
+  });
+
+  it.each(['1,a', '0', '-1', '1.5', '1,,2'])('rejects ORDER_RETRY_DELAYS %j', (value) => {
+    expect(problemsOf({ ...minimal, ORDER_RETRY_DELAYS: value })).toEqual([
+      'ORDER_RETRY_DELAYS must be a comma-separated list of positive integers (seconds)',
+    ]);
+  });
+
+  it('rejects an empty RABBITMQ_VHOST override', () => {
+    expect(loadConfig({ ...minimal, RABBITMQ_VHOST: '  ' }).broker.vhost).toBe('billing');
   });
 
   it('reports a bad database port together with the other problems', () => {

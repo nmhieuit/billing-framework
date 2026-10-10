@@ -1,6 +1,7 @@
 # ADR-0001: Hợp đồng JSON thuần, không dùng envelope MassTransit
 
 **Trạng thái:** Chấp nhận — 2026-10-09
+**Cập nhật 2026-10-10:** hình dạng message (envelope) được thay bằng ADR-0008; quyết định "JSON thuần, không bám MassTransit" vẫn đúng.
 
 ## Bối cảnh
 
@@ -8,8 +9,10 @@ Ecommerce viết bằng C#/.NET với MassTransit; billing viết bằng Node.js
 
 ## Quyết định
 
-Dùng envelope JSON thuần do billing định nghĩa bằng JSON Schema (`packages/contracts`), version trong tên `type`
-(`billing.order-paid.v1`), người nhận theo "tolerant reader". Không bám định dạng envelope của MassTransit.
+Dùng JSON thuần do billing định nghĩa bằng JSON Schema (`packages/contracts`), version trong tên event và routing key
+(`OrderPaidV1`, `order-paid.v1`; hình dạng phẳng theo ADR-0008), người nhận theo "tolerant reader". Không bám định dạng
+envelope của MassTransit. (Bản gốc của quyết định này dùng envelope tự định nghĩa với `type` kiểu `billing.order-paid.v1`;
+phần đó đã được ADR-0008 thay thế.)
 
 ## Hệ quả
 

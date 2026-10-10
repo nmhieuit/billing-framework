@@ -18,4 +18,10 @@ describe('RandomIdGenerator', () => {
     for (const id of topups) expect(id).toMatch(/^tp_[0-9a-f]{32}$/);
     expect(ids.transactionId()).toMatch(/^tx_[0-9a-f]{32}$/);
   });
+
+  it('produces event ids that are valid UUIDs, as the event schemas require', () => {
+    const ids = new RandomIdGenerator();
+    expect(ids.eventId()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(ids.eventId()).not.toBe(ids.eventId());
+  });
 });
