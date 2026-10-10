@@ -29,6 +29,8 @@ const topup = (overrides: Partial<WalletTopupView> = {}): WalletTopupView => ({
   currency: 'VND',
   status: 'SUCCEEDED',
   failureCode: null,
+  createdAt: new Date('2026-10-08T09:00:00.000Z'),
+  completedAt: new Date('2026-10-10T01:30:00.000Z'),
   ...overrides,
 });
 
@@ -112,6 +114,11 @@ describe('findMissingAtGateway', () => {
       ['MISSING_AT_GATEWAY', 'tp_2', 'ch_2'],
       ['MISSING_AT_GATEWAY', 'tp_3', null],
     ]);
+    expect(missing[0]?.detail).toEqual({
+      walletStatus: 'SUCCEEDED',
+      topupCreatedAt: '2026-10-08T09:00:00.000Z',
+      topupCompletedAt: '2026-10-10T01:30:00.000Z',
+    });
     expect(missing[0]).toMatchObject({
       amountWallet: 150000,
       amountGateway: null,

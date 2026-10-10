@@ -452,6 +452,11 @@ describe('discrepancies that need a human', () => {
       topupId: lost.topupId,
       amountGateway: null,
       amountWallet: lost.amount,
+      detail: {
+        walletStatus: 'SUCCEEDED',
+        topupCreatedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        topupCompletedAt: h.clock.now().toISOString(),
+      },
     });
   });
 

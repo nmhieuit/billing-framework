@@ -77,6 +77,8 @@ function rowToTopupView(row: Selectable<TopupsTable>): WalletTopupView {
     currency: row.currency,
     status: row.status as WalletTopupView['status'],
     failureCode: row.failure_code,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
   };
 }
 

@@ -30,6 +30,8 @@ export interface WalletTopupView {
   readonly currency: string;
   readonly status: 'REQUESTED' | 'PENDING' | 'SUCCEEDED' | 'FAILED';
   readonly failureCode: string | null;
+  readonly createdAt: Date;
+  readonly completedAt: Date | null;
 }
 
 export interface Discrepancy {
@@ -114,7 +116,12 @@ export function findMissingAtGateway(
       amountGateway: null,
       amountWallet: t.amount,
       currency: t.currency,
-      detail: { walletStatus: t.status },
+      // Khoảng cách giữa tạo và hoàn tất > 1 ngày là mẫu dương tính giả quen thuộc (chạy lại thủ công, webhook muộn).
+      detail: {
+        walletStatus: t.status,
+        topupCreatedAt: t.createdAt.toISOString(),
+        topupCompletedAt: t.completedAt?.toISOString() ?? null,
+      },
     }));
 }
 

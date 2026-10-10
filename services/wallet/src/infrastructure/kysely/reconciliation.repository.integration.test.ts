@@ -244,6 +244,8 @@ describe('wallet-side reads', () => {
       currency: 'VND',
       status: 'SUCCEEDED',
       failureCode: null,
+      createdAt: expect.any(Date),
+      completedAt: new Date('2026-08-15T10:00:00.000Z'),
     });
     expect(await repo((r) => r.findTopupsByIds([]))).toEqual([]);
 
