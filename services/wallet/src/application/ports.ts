@@ -1,3 +1,4 @@
+import type { Money } from '@billing/money';
 import type { Account } from '../domain/account.js';
 import type { LedgerTransaction } from '../domain/ledger-transaction.js';
 import type { TenantId } from '../domain/tenant-id.js';
@@ -99,4 +100,21 @@ export interface TenantUnitOfWork {
 export interface TopupSubmitter {
   /** Kích hoạt một lần thử gửi lần nạp sang payment và trả về ngay (không chờ). Bên cài đặt tự xử lý lỗi. */
   submitSoon(tenant: TenantId, topupId: string): void;
+}
+
+export interface GatewayChargeRequest {
+  idempotencyKey: string;
+  amount: Money;
+  reference: string;
+  metadata: Record<string, string>;
+}
+
+export type GatewayChargeResult =
+  | { kind: 'created'; chargeId: string }
+  | { kind: 'rejected'; status: number; message: string }
+  | { kind: 'unavailable'; error: string };
+
+export interface PaymentGateway {
+  /** Không bao giờ ném: mọi lỗi được trả về dưới dạng `rejected` (đừng thử lại) hoặc `unavailable` (thử lại sau). */
+  createCharge(request: GatewayChargeRequest): Promise<GatewayChargeResult>;
 }
