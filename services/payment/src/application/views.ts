@@ -1,4 +1,5 @@
 import type { Charge, ChargeStatus } from '../domain/charge.js';
+import { hasMetadata, type Metadata } from '../domain/metadata.js';
 
 export interface ChargeCreatedView {
   chargeId: string;
@@ -6,6 +7,7 @@ export interface ChargeCreatedView {
   amount: number;
   currency: string;
   status: 'PENDING';
+  metadata?: Metadata;
   createdAt: string;
 }
 
@@ -16,6 +18,7 @@ export interface ChargeView {
   currency: string;
   status: ChargeStatus;
   failureCode?: string;
+  metadata?: Metadata;
   createdAt: string;
   completedAt?: string;
 }
@@ -28,6 +31,7 @@ export function toCreatedView(charge: Charge): ChargeCreatedView {
     amount: p.amount.amount,
     currency: p.amount.currency,
     status: 'PENDING',
+    ...(hasMetadata(p.metadata) ? { metadata: p.metadata } : {}),
     createdAt: p.createdAt.toISOString(),
   };
 }
@@ -41,6 +45,7 @@ export function toChargeView(charge: Charge): ChargeView {
     currency: p.amount.currency,
     status: p.status,
     ...(p.failureCode === null ? {} : { failureCode: p.failureCode }),
+    ...(hasMetadata(p.metadata) ? { metadata: p.metadata } : {}),
     createdAt: p.createdAt.toISOString(),
     ...(p.completedAt === null ? {} : { completedAt: p.completedAt.toISOString() }),
   };

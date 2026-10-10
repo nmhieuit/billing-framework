@@ -41,7 +41,7 @@ export const chargesRoutes: FastifyPluginAsync<ChargesRoutesOptions> = async (ap
     if (typeof body !== 'object' || body === null || Array.isArray(body)) {
       throw new RequestValidationError('INVALID_REQUEST', 'request body must be a JSON object');
     }
-    const { amount, currency, reference } = body as Record<string, unknown>;
+    const { amount, currency, reference, metadata } = body as Record<string, unknown>;
     if (typeof amount !== 'number') {
       throw new RequestValidationError('INVALID_REQUEST', 'amount must be a number');
     }
@@ -57,6 +57,7 @@ export const chargesRoutes: FastifyPluginAsync<ChargesRoutesOptions> = async (ap
       amount,
       currency,
       reference,
+      metadata,
       simulate: first(request.headers['x-simulate']),
     });
 

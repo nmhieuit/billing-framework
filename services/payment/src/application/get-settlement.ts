@@ -1,3 +1,4 @@
+import { hasMetadata, type Metadata } from '../domain/metadata.js';
 import { InvalidSettlementQueryError } from './errors.js';
 import type { Clock, CompletedCursor, SettlementTotal, UnitOfWork } from './ports.js';
 
@@ -18,6 +19,7 @@ export interface SettlementItem {
   currency: string;
   status: 'SUCCEEDED' | 'FAILED';
   failureCode?: string;
+  metadata?: Metadata;
   completedAt: string;
 }
 
@@ -98,6 +100,7 @@ export class GetSettlement {
         currency: p.amount.currency,
         status: p.status as 'SUCCEEDED' | 'FAILED',
         ...(p.failureCode === null ? {} : { failureCode: p.failureCode }),
+        ...(hasMetadata(p.metadata) ? { metadata: p.metadata } : {}),
         completedAt: (p.completedAt ?? p.createdAt).toISOString(),
       };
     });

@@ -23,6 +23,11 @@ export const chargeWebhookSchema = {
         status: { type: 'string', enum: ['SUCCEEDED', 'FAILED'] },
         completedAt: { type: 'string', format: 'date-time' },
         failureCode: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,63}$' },
+        metadata: {
+          type: 'object',
+          maxProperties: 10,
+          additionalProperties: { type: 'string', maxLength: 200 },
+        },
       },
     },
   },

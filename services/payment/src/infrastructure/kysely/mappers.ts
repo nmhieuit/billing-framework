@@ -3,6 +3,7 @@ import { Money, type Currency } from '@billing/money';
 import type { Insertable, Selectable } from 'kysely';
 import { Charge } from '../../domain/charge.js';
 import type { ChargeStatus } from '../../domain/charge.js';
+import { hasMetadata, parseStoredMetadata } from '../../domain/metadata.js';
 import type { Scenario } from '../../domain/scenario.js';
 import { WebhookEvent } from '../../domain/webhook-event.js';
 import type { WebhookEventStatus, WebhookEventType } from '../../domain/webhook-event.js';
@@ -18,6 +19,7 @@ export function chargeToRow(charge: Charge): Insertable<ChargesTable> {
     status: p.status,
     failure_code: p.failureCode,
     scenario: JSON.stringify(p.scenario),
+    metadata: hasMetadata(p.metadata) ? JSON.stringify(p.metadata) : null,
     due_at: dateTime(p.dueAt) as unknown as Date,
     created_at: dateTime(p.createdAt) as unknown as Date,
     completed_at: p.completedAt === null ? null : (dateTime(p.completedAt) as unknown as Date),
@@ -32,6 +34,7 @@ export function rowToCharge(row: Selectable<ChargesTable>): Charge {
     status: row.status as ChargeStatus,
     failureCode: row.failure_code,
     scenario: JSON.parse(row.scenario) as Scenario,
+    metadata: parseStoredMetadata(row.metadata),
     dueAt: row.due_at,
     createdAt: row.created_at,
     completedAt: row.completed_at,
