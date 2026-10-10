@@ -220,6 +220,54 @@ describe('MISSING_AT_WALLET (lost webhook)', () => {
   });
 });
 
+describe('a run that fails after crediting', () => {
+  it('names the credited topup in the failure reason and never credits twice', async () => {
+    const day = startDay(h);
+    const topup = await seedTopup(h, { state: 'PENDING', amount: 55000 });
+    settlement.set(day, [chargeFor(topup)]);
+    // Bọc uow: completeRun bị lỗi sau khi lần ghi bù đã commit.
+    const failing: RunReconciliationDeps['uow'] = {
+      run: (tenant, work) =>
+        h.uow.run(tenant, (repositories) =>
+          work({
+            ...repositories,
+            // Kế thừa prototype để giữ nguyên các phương thức của repository thật.
+            reconciliation: Object.assign(Object.create(repositories.reconciliation), {
+              completeRun: () => Promise.reject(new Error('connection lost')),
+            }),
+          }),
+        ),
+    };
+    const failingRun = new RunReconciliation({
+      uow: failing,
+      settlement,
+      applyPayment: new ApplyPaymentResult({
+        uow: h.uow,
+        clock: h.clock,
+        ids: h.ids,
+        log: silentLogger,
+      }),
+      clock: h.clock,
+      ids: h.ids,
+      log: silentLogger,
+      options: { autofix: true, maxItems: 1000 },
+    });
+
+    const result = await run(day, h.acme, failingRun);
+
+    expect(result?.status).toBe('FAILED');
+    expect(result?.failureReason).toContain('connection lost');
+    expect(result?.failureReason).toContain(topup.topupId);
+    expect(await walletBalance(h.acme, topup.customer)).toBe(55000);
+    expect(await ledgerCount(h.acme, topup.topupId)).toBe(1);
+
+    const next = await run(day);
+    expect(next?.status).toBe('COMPLETED');
+    expect(await walletBalance(h.acme, topup.customer)).toBe(55000);
+    expect(await ledgerCount(h.acme, topup.topupId)).toBe(1);
+  });
+});
+
 describe('discrepancies that need a human', () => {
   it('reports UNKNOWN_CHARGE, AMOUNT_MISMATCH and STATUS_MISMATCH without touching the ledger', async () => {
     const day = startDay(h);

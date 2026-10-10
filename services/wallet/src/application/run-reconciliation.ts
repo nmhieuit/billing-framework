@@ -50,6 +50,17 @@ interface Autofix {
   detail: Record<string, unknown>;
 }
 
+const MAX_LISTED_CREDITED = 5;
+
+/** Lý do thất bại (cột 500 ký tự), kèm danh sách lần nạp đã được ghi bù trước khi lỗi xảy ra. */
+function failureReason(error: unknown, credited: readonly string[]): string {
+  const base = (error instanceof Error ? error.message : 'unexpected error').slice(0, 200);
+  if (credited.length === 0) return base;
+  const listed = credited.slice(0, MAX_LISTED_CREDITED).join(', ');
+  const more = credited.length > MAX_LISTED_CREDITED ? ', ...' : '';
+  return `${base}; ${credited.length} topups already auto-credited: ${listed}${more}`;
+}
+
 /** Một lượt đối soát cho một tenant và một ngày UTC. Mặc định chỉ đọc; chỉ tự ghi bù `MISSING_AT_WALLET`. */
 export class RunReconciliation {
   constructor(private readonly deps: RunReconciliationDeps) {}
@@ -81,6 +92,8 @@ export class RunReconciliation {
   /** Chạy các phép kiểm tra và đóng lượt. Lỗi dự kiến (sao kê, quá lớn, lỗi bất ngờ) đóng lượt `FAILED`, không ném. */
   async finish(handle: RunHandle): Promise<ReconciliationRun> {
     const { tenant, runId, day } = handle;
+    // Các lần nạp đã được ghi bù trong lượt này (mỗi lần là một transaction đã commit), để không mất dấu nếu lượt thất bại.
+    const credited: string[] = [];
     try {
       const ledger = await this.checkLedger(tenant);
       const gateway = await this.checkGateway(tenant, day);
@@ -95,7 +108,7 @@ export class RunReconciliation {
       for (const discrepancy of found) {
         const fix =
           discrepancy.kind === 'MISSING_AT_WALLET' && this.deps.options.autofix
-            ? await this.autofix(tenant, runId, discrepancy)
+            ? await this.autofix(tenant, runId, discrepancy, credited)
             : null;
         items.push({
           id: this.deps.ids.eventId(),
@@ -116,9 +129,9 @@ export class RunReconciliation {
       );
       this.report(tenant, runId, day, items);
     } catch (error) {
-      const reason = error instanceof Error ? error.message : 'unexpected error';
+      const reason = failureReason(error, credited);
       this.deps.log.error(
-        { err: error, tenantId: tenant.value, runId, day },
+        { err: error, tenantId: tenant.value, runId, day, credited },
         'reconciliation run failed',
       );
       await this.deps.uow.run(tenant, ({ reconciliation }) =>
@@ -190,7 +203,12 @@ export class RunReconciliation {
   }
 
   /** Ghi bù một lần nạp mà payment đã xác nhận thành công. Mỗi lần là một transaction riêng; lỗi không lan sang dòng khác. */
-  private async autofix(tenant: TenantId, runId: string, d: Discrepancy): Promise<Autofix> {
+  private async autofix(
+    tenant: TenantId,
+    runId: string,
+    d: Discrepancy,
+    credited: string[],
+  ): Promise<Autofix> {
     if (
       d.chargeId === null ||
       d.topupId === null ||
@@ -211,7 +229,22 @@ export class RunReconciliation {
         amount: d.amountGateway,
         currency: d.currency,
       });
-      if (outcome === 'APPLIED') return { action: 'AUTO_APPLIED', detail: { autofix: 'APPLIED' } };
+      if (outcome === 'APPLIED') {
+        credited.push(topupId);
+        // Ghi log ngay khi đã ghi sổ, để vẫn còn dấu vết dù lượt đối soát thất bại sau đó.
+        this.deps.log.info(
+          {
+            tenantId: tenant.value,
+            runId,
+            chargeId: d.chargeId,
+            topupId,
+            amount: d.amountGateway,
+            currency: d.currency,
+          },
+          'reconciliation credited a topup whose webhook was lost',
+        );
+        return { action: 'AUTO_APPLIED', detail: { autofix: 'APPLIED' } };
+      }
       if (outcome === 'IGNORED') {
         // Webhook thật đến trước: lần nạp đã SUCCEEDED thì coi như đã xử lý xong.
         const now = await this.deps.uow.run(tenant, ({ topups }) => topups.findById(topupId));
