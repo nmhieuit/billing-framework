@@ -1,5 +1,6 @@
 import type { Charge } from './charge.js';
 import { StateTransitionError } from './errors.js';
+import { hasMetadata } from './metadata.js';
 
 export type WebhookEventType = 'charge.succeeded' | 'charge.failed';
 export type WebhookEventStatus = 'PENDING' | 'DELIVERED' | 'FAILED';
@@ -40,6 +41,7 @@ export class WebhookEvent {
         status: c.status,
         completedAt: c.completedAt.toISOString(),
         ...(c.failureCode === null ? {} : { failureCode: c.failureCode }),
+        ...(hasMetadata(c.metadata) ? { metadata: c.metadata } : {}),
       },
     });
     return new WebhookEvent({

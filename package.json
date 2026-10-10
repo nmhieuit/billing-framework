@@ -11,6 +11,7 @@
     "test:coverage": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "db:migrate:payment": "tsx db/payment/migrate.ts",
+    "db:migrate:wallet": "tsx db/wallet/migrate.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "format:check": "prettier --check ."

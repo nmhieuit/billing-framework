@@ -1,0 +1,10 @@
+export const TENANT_REGISTRY = Symbol('TENANT_REGISTRY');
+export const CLOCK = Symbol('CLOCK');
+export const LOGGER = Symbol('LOGGER');
+export const WEBHOOK_SECRET = Symbol('WEBHOOK_SECRET');
+export const CREATE_WALLET = Symbol('CREATE_WALLET');
+export const GET_WALLET = Symbol('GET_WALLET');
+export const LIST_ENTRIES = Symbol('LIST_ENTRIES');
+export const REQUEST_TOPUP = Symbol('REQUEST_TOPUP');
+export const GET_TOPUP = Symbol('GET_TOPUP');
+export const APPLY_PAYMENT_RESULT = Symbol('APPLY_PAYMENT_RESULT');

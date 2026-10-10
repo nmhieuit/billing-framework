@@ -12,6 +12,7 @@
     "@billing/database": "workspace:^",
     "@billing/money": "workspace:^",
     "@billing/observability": "workspace:^",
+    "@billing/runtime": "workspace:^",
     "fastify": "^5.12.5",
     "kysely": "^0.29.6"
   },

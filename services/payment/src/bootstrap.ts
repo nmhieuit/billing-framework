@@ -1,5 +1,6 @@
 import { createDatabase } from '@billing/database';
 import { createLogger } from '@billing/observability';
+import { Worker, once, runAll } from '@billing/runtime';
 import type { FastifyInstance } from 'fastify';
 import { CompleteDueCharges } from './application/complete-due-charges.js';
 import { CreateCharge } from './application/create-charge.js';
@@ -12,9 +13,7 @@ import { HttpWebhookSender } from './infrastructure/http-webhook-sender.js';
 import type { PaymentDatabase } from './infrastructure/kysely/schema.js';
 import { KyselyUnitOfWork } from './infrastructure/kysely/unit-of-work.js';
 import { RandomIdGenerator, SystemClock } from './infrastructure/system.js';
-import { Worker } from './infrastructure/worker.js';
 import { buildApp } from './interface/http/app.js';
-import { once, runAll } from './lifecycle.js';
 
 export interface StartOverrides {
   clock?: Clock;

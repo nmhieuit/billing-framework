@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Money, type Currency } from '@billing/money';
 import { Charge } from '../domain/charge.js';
+import { hasMetadata, parseMetadata } from '../domain/metadata.js';
 import { parseScenario } from '../domain/scenario.js';
 import { DuplicateKeyError, IdempotencyConflictError } from './errors.js';
 import type { Clock, IdGenerator, StoredResponse, UnitOfWork } from './ports.js';
@@ -12,6 +13,8 @@ export interface CreateChargeInput {
   currency: string;
   reference: string;
   simulate?: string | undefined;
+  /** Chưa kiểm tra: use case tự kiểm bằng `parseMetadata` (ném `InvalidChargeError`). */
+  metadata?: unknown;
 }
 
 export interface CreateChargeResult {
@@ -30,7 +33,9 @@ export class CreateCharge {
   async execute(input: CreateChargeInput): Promise<CreateChargeResult> {
     const scenario = parseScenario(input.simulate);
     const amount = Money.of(input.amount, input.currency as Currency);
-    // Băm nội dung đã chuẩn hóa: thứ tự token trong X-Simulate không làm đổi hash.
+    const metadata = parseMetadata(input.metadata);
+    // Băm nội dung đã chuẩn hóa: thứ tự token trong X-Simulate và thứ tự khóa metadata không làm đổi hash.
+    // `metadata` chỉ góp mặt khi không rỗng để request cũ (không có metadata) giữ nguyên hash.
     const requestHash = createHash('sha256')
       .update(
         JSON.stringify({
@@ -38,6 +43,7 @@ export class CreateCharge {
           currency: amount.currency,
           reference: input.reference,
           scenario,
+          ...(hasMetadata(metadata) ? { metadata } : {}),
         }),
       )
       .digest('hex');
@@ -53,6 +59,7 @@ export class CreateCharge {
           reference: input.reference,
           amount,
           scenario,
+          metadata,
           now,
         });
         const body = toCreatedView(charge);

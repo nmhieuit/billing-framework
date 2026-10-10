@@ -1,5 +1,6 @@
 # Overlay cho hạ tầng DÙNG CHUNG với stack ecommerce: chỉ chạy các job khởi tạo (DB, vhost, user)
 # trên network external của ecommerce. Không tham chiếu file nào của repo ecommerce.
+# Migration chạy bằng login *_migrator (db_owner); service chạy bằng login *_app (chỉ DML).
 #
 #   cp deploy/.env.example deploy/.env   # điền mật khẩu
 #   docker compose -f deploy/compose.billing.yml --env-file deploy/.env run --rm billing-sql-init
@@ -21,6 +22,8 @@ services:
       SA_PASSWORD: ${BILLING_SQLSERVER_SA_PASSWORD:?set in deploy/.env}
       WALLET_DB_PASSWORD: ${BILLING_WALLET_DB_PASSWORD:?set in deploy/.env}
       PAYMENT_DB_PASSWORD: ${BILLING_PAYMENT_DB_PASSWORD:?set in deploy/.env}
+      WALLET_MIGRATOR_PASSWORD: ${BILLING_WALLET_MIGRATOR_DB_PASSWORD:?set in deploy/.env}
+      PAYMENT_MIGRATOR_PASSWORD: ${BILLING_PAYMENT_MIGRATOR_DB_PASSWORD:?set in deploy/.env}
     volumes:
       - ./sql/init.sql:/init/init.sql:ro
     # $$ để shell trong container mở rộng biến, giữ mật khẩu khỏi `docker inspect`.
@@ -31,6 +34,7 @@ services:
         /opt/mssql-tools18/bin/sqlcmd -S ${BILLING_SQLSERVER_HOST:-sqlserver}
         -U ${BILLING_SQLSERVER_SA_USER:-sa} -P "$$SA_PASSWORD" -C -b
         -v WALLET_DB_PASSWORD="$$WALLET_DB_PASSWORD" PAYMENT_DB_PASSWORD="$$PAYMENT_DB_PASSWORD"
+        WALLET_MIGRATOR_PASSWORD="$$WALLET_MIGRATOR_PASSWORD" PAYMENT_MIGRATOR_PASSWORD="$$PAYMENT_MIGRATOR_PASSWORD"
         -i /init/init.sql
 
   billing-rabbitmq-init:

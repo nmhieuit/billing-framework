@@ -49,3 +49,27 @@ export function databaseConfigFromEnv(prefix: string, env: NodeJS.ProcessEnv): D
   if (problems.length > 0) throw new ConfigError(problems);
   return { host, port, database, user, password };
 }
+
+const isSet = (value: string | undefined): value is string =>
+  value !== undefined && value.trim() !== '';
+
+/**
+ * Cấu hình cho lệnh migrate. `Migrator` của Kysely cần tài khoản thuộc `db_owner`, còn tài khoản ứng dụng
+ * chỉ có DML; nên cho phép thay `user`/`password` bằng tài khoản migrator (đặt cả hai hoặc không đặt gì).
+ */
+export function migratorConfigFromEnv(
+  prefix: string,
+  migratorPrefix: string,
+  env: NodeJS.ProcessEnv,
+): DatabaseConfig {
+  const base = databaseConfigFromEnv(prefix, env);
+  const user = env[`${migratorPrefix}_USER`];
+  const password = env[`${migratorPrefix}_PASSWORD`];
+  if (!isSet(user) && !isSet(password)) return base;
+  if (!isSet(user) || !isSet(password)) {
+    throw new ConfigError([
+      `${migratorPrefix}_USER and ${migratorPrefix}_PASSWORD must be set together`,
+    ]);
+  }
+  return { ...base, user, password };
+}

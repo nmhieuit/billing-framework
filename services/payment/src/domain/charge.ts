@@ -1,5 +1,6 @@
 import type { Money } from '@billing/money';
 import { InvalidChargeError, StateTransitionError } from './errors.js';
+import { EMPTY_METADATA, type Metadata } from './metadata.js';
 import type { Scenario } from './scenario.js';
 
 export const MAX_REFERENCE_LENGTH = 200;
@@ -13,6 +14,7 @@ export interface ChargeProps {
   readonly status: ChargeStatus;
   readonly failureCode: string | null;
   readonly scenario: Scenario;
+  readonly metadata: Metadata;
   readonly dueAt: Date;
   readonly createdAt: Date;
   readonly completedAt: Date | null;
@@ -26,6 +28,7 @@ export class Charge {
     reference: string;
     amount: Money;
     scenario: Scenario;
+    metadata?: Metadata;
     now: Date;
   }): Charge {
     if (input.reference.trim().length === 0 || input.reference.length > MAX_REFERENCE_LENGTH) {
@@ -42,6 +45,7 @@ export class Charge {
       status: 'PENDING',
       failureCode: null,
       scenario: input.scenario,
+      metadata: input.metadata ?? EMPTY_METADATA,
       dueAt: new Date(input.now.getTime() + delayMs),
       createdAt: input.now,
       completedAt: null,

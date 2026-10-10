@@ -28,7 +28,7 @@ export class KyselyChargeRepository implements ChargeRepository {
   async lockDue(now: Date, limit: number): Promise<Charge[]> {
     // Cần index ix_charges_due (status, due_at, id): không có nó READPAST không bỏ qua được hàng nào có ích.
     const result = await sql<Selectable<ChargesTable>>`
-      select top (${limit}) id, reference, amount, currency, status, failure_code, scenario,
+      select top (${limit}) id, reference, amount, currency, status, failure_code, scenario, metadata,
              due_at, created_at, completed_at
       from charges with (updlock, readpast, rowlock)
       where status = ${'PENDING'} and due_at <= ${dateTime(now)}

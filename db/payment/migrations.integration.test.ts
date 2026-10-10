@@ -19,7 +19,7 @@ afterAll(async () => {
 
 describe('payment migrations', () => {
   it('apply once and are a no-op the second time', async () => {
-    expect(await migrate(db, paymentMigrations)).toEqual(['001-init']);
+    expect(await migrate(db, paymentMigrations)).toEqual(['001-init', '002-metadata']);
     expect(await migrate(db, paymentMigrations)).toEqual([]);
   });
 

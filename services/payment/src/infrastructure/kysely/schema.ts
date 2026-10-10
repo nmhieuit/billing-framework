@@ -9,6 +9,7 @@ export interface ChargesTable {
   status: string;
   failure_code: string | null;
   scenario: string;
+  metadata: string | null;
   due_at: Date;
   created_at: Date;
   completed_at: Date | null;
