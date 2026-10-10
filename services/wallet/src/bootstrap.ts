@@ -19,6 +19,7 @@ import { DEFAULT_OUTBOX_BACKOFF_SECONDS, RelayOutbox } from './application/relay
 import { RequestTopup } from './application/request-topup.js';
 import { ResolveReconciliationItem } from './application/resolve-reconciliation-item.js';
 import { RunReconciliation } from './application/run-reconciliation.js';
+import { ScheduleDailyReconciliation } from './application/schedule-daily-reconciliation.js';
 import { StartManualReconciliation } from './application/start-manual-reconciliation.js';
 import { SubmitDueTopups } from './application/submit-due-topups.js';
 import { SubmitTopup } from './application/submit-topup.js';
@@ -113,6 +114,16 @@ export async function startService(
       maxItems: config.reconciliation.maxItems,
     },
   });
+  const scheduleDaily = new ScheduleDailyReconciliation({
+    uow,
+    run: reconciliation,
+    clock,
+    log,
+    options: {
+      atUtcHour: config.reconciliation.atUtcHour,
+      maxAttempts: config.reconciliation.maxAttempts,
+    },
+  });
 
   const payOrder = new PayOrder({ uow, clock, ids, log });
   const relay = new RelayOutbox({
@@ -188,9 +199,26 @@ export async function startService(
       }
     }
   };
+  // Đối soát định kỳ: mỗi tick xét từng tenant; ScheduleDailyReconciliation tự bỏ qua khi chưa tới giờ hoặc đã xong.
+  const reconcileDailyForAllTenants = async (signal: AbortSignal): Promise<void> => {
+    for (const tenant of registry.all()) {
+      if (signal.aborted) return;
+      try {
+        const outcome = await scheduleDaily.execute(tenant);
+        if (outcome === 'RAN') {
+          log.info({ tenantId: tenant.value }, 'worker ran the daily reconciliation');
+        }
+      } catch (error) {
+        log.error(
+          { err: error, tenantId: tenant.value },
+          'scheduling the daily reconciliation failed',
+        );
+      }
+    }
+  };
   const worker = new Worker({
     intervalMs: config.workerIntervalMs,
-    tasks: [submitDueForAllTenants, relayOutboxForAllTenants],
+    tasks: [submitDueForAllTenants, relayOutboxForAllTenants, reconcileDailyForAllTenants],
     onError: (error) => log.error({ err: error }, 'worker task failed'),
   });
   worker.start();
