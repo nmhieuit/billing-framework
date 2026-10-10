@@ -95,3 +95,8 @@ export interface TenantUnitOfWork {
   /** Một transaction SQL trên schema của tenant; không có cách truy cập DB nào mà không có `TenantId`. */
   run<T>(tenant: TenantId, work: (repositories: Repositories) => Promise<T>): Promise<T>;
 }
+
+export interface TopupSubmitter {
+  /** Kích hoạt một lần thử gửi lần nạp sang payment và trả về ngay (không chờ). Bên cài đặt tự xử lý lỗi. */
+  submitSoon(tenant: TenantId, topupId: string): void;
+}
