@@ -31,8 +31,20 @@ describe('provisionTenants', () => {
 
   it('creates both tenant schemas, applies every migration, and is idempotent', async () => {
     expect(await provisionTenants(db, [acme, beta])).toEqual({
-      acme: ['001-ledger', '002-topups', '003-orders', '004-reconciliation'],
-      beta: ['001-ledger', '002-topups', '003-orders', '004-reconciliation'],
+      acme: [
+        '001-ledger',
+        '002-topups',
+        '003-orders',
+        '004-reconciliation',
+        '005-reconciliation-open-index',
+      ],
+      beta: [
+        '001-ledger',
+        '002-topups',
+        '003-orders',
+        '004-reconciliation',
+        '005-reconciliation-open-index',
+      ],
     });
     expect(await provisionTenants(db, [acme, beta])).toEqual({ acme: [], beta: [] });
     await expect(assertMigrated(db, [acme, beta])).resolves.toBeUndefined();

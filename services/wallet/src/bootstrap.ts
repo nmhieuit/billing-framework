@@ -1,5 +1,5 @@
 import { createDatabase } from '@billing/database';
-import { BrokerClient } from '@billing/messaging';
+import { BrokerClient, deadLetterQueueName } from '@billing/messaging';
 import { createLogger } from '@billing/observability';
 import { Worker, once, runAll } from '@billing/runtime';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -25,12 +25,14 @@ import { DEFAULT_OUTBOX_BACKOFF_SECONDS, RelayOutbox } from './application/relay
 import { RequestTopup } from './application/request-topup.js';
 import { ResolveReconciliationItem } from './application/resolve-reconciliation-item.js';
 import { RunReconciliation } from './application/run-reconciliation.js';
+import { SampleState } from './application/sample-state.js';
 import { ScheduleDailyReconciliation } from './application/schedule-daily-reconciliation.js';
 import { StartManualReconciliation } from './application/start-manual-reconciliation.js';
 import { SubmitDueTopups } from './application/submit-due-topups.js';
 import { SubmitTopup } from './application/submit-topup.js';
 import type { WalletConfig } from './config.js';
 import { AmqpEventPublisher } from './infrastructure/amqp-event-publisher.js';
+import { BrokerQueueDepthReader } from './infrastructure/broker-queue-depth.js';
 import { HttpPaymentGateway } from './infrastructure/http-payment-gateway.js';
 import { HttpSettlementSource } from './infrastructure/http-settlement-source.js';
 import type { WalletDatabase } from './infrastructure/kysely/schema.js';
@@ -245,6 +247,23 @@ export async function startService(
   });
   reconcileWorker.start();
 
+  // Chụp trạng thái định kỳ cho gauge; Worker riêng để không phụ thuộc nhịp của các worker nghiệp vụ.
+  const sampleState = new SampleState({
+    uow,
+    registry,
+    queueDepth: new BrokerQueueDepthReader(broker),
+    dlqQueue: deadLetterQueueName(orderPaymentsTopology(config.orders.retryDelaysSeconds).queue),
+    metrics,
+    clock,
+    log,
+  });
+  const sampleStateWorker = new Worker({
+    intervalMs: config.telemetry.sampleIntervalSeconds * 1000,
+    tasks: [async () => void (await sampleState.execute())],
+    onError: (error) => log.error({ err: error }, 'sampling state failed'),
+  });
+  sampleStateWorker.start();
+
   return {
     app,
     stop: once(() =>
@@ -252,6 +271,7 @@ export async function startService(
         () => broker.stopConsuming(),
         () => worker.stop(),
         () => reconcileWorker.stop(),
+        () => sampleStateWorker.stop(),
         () => app.close(),
         () => submitter.drain(),
         () => background.drain(),

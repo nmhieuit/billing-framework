@@ -94,6 +94,25 @@ export interface Inbox {
   record(consumer: string, messageId: string, now: Date): Promise<void>;
 }
 
+export interface StateSnapshot {
+  outboxPending: number;
+  outboxOldestCreatedAt: Date | null;
+  topupsRequested: number;
+  topupsOldestCreatedAt: Date | null;
+  openItemsByKind: Record<string, number>;
+  oldestOpenItemCreatedAt: Date | null;
+  lastReconciliationSuccessAt: Date | null;
+}
+
+export interface StateRepository {
+  snapshot(): Promise<StateSnapshot>;
+}
+
+export interface QueueDepthReader {
+  /** Số message trong queue; `null` khi không đọc được. Không bao giờ ném. */
+  depth(queue: string): Promise<number | null>;
+}
+
 export interface Repositories {
   accounts: AccountRepository;
   ledger: LedgerRepository;
@@ -103,6 +122,7 @@ export interface Repositories {
   orderPayments: OrderPaymentRepository;
   outbox: OutboxRepository;
   reconciliation: ReconciliationRepository;
+  state: StateRepository;
 }
 
 export interface TenantUnitOfWork {
