@@ -57,6 +57,28 @@ export interface ProcessedMessagesTable {
   processed_at: Date;
 }
 
+export interface OrderPaymentsTable {
+  order_id: string;
+  customer_id: string;
+  wallet_transaction_id: string;
+  amount: ColumnType<string, number, number>;
+  currency: string;
+  paid_at: Date;
+}
+
+export interface OutboxTable {
+  id: string;
+  event_type: string;
+  routing_key: string;
+  payload: string;
+  correlation_id: string;
+  status: string;
+  attempts: number;
+  next_attempt_at: Date;
+  created_at: Date;
+  sent_at: Date | null;
+}
+
 /** Tên bảng không có schema: repository luôn dựng trên `db.withSchema('t_<tenant>')`. */
 export interface WalletDatabase {
   accounts: AccountsTable;
@@ -65,4 +87,6 @@ export interface WalletDatabase {
   topups: TopupsTable;
   idempotency_keys: IdempotencyKeysTable;
   processed_messages: ProcessedMessagesTable;
+  order_payments: OrderPaymentsTable;
+  outbox: OutboxTable;
 }

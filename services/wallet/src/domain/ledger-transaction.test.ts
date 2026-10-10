@@ -78,3 +78,33 @@ describe('LedgerTransaction.topup', () => {
     expect(() => topup(amount)).toThrow(InvalidLedgerTransactionError);
   });
 });
+
+describe('LedgerTransaction.orderPayment', () => {
+  const make = (amount = 50000, orderId = '0b1f3c6e-6a4e-4d0f-8a4b-9f1d7b6f0c11') =>
+    LedgerTransaction.orderPayment({
+      id: 'tx_1',
+      orderId,
+      walletAccountId: 'wallet:c1',
+      merchantAccountId: 'system:MERCHANT:VND',
+      amount: Money.of(amount, 'VND'),
+      now,
+    });
+
+  it('debits the wallet, credits the merchant, and is keyed by the order', () => {
+    const p = make().toProps();
+    expect(p.kind).toBe('ORDER_PAYMENT');
+    expect(p.businessKey).toBe('order:0b1f3c6e-6a4e-4d0f-8a4b-9f1d7b6f0c11');
+    expect(p.entries.map((e) => [e.accountId, e.amount.amount])).toEqual([
+      ['wallet:c1', -50000],
+      ['system:MERCHANT:VND', 50000],
+    ]);
+  });
+
+  it.each([0, -1])('rejects a non-positive amount (%d)', (amount) => {
+    expect(() => make(amount)).toThrow(InvalidLedgerTransactionError);
+  });
+
+  it('rejects an order id that makes the business key too long', () => {
+    expect(() => make(1, 'x'.repeat(200))).toThrow(InvalidLedgerTransactionError);
+  });
+});

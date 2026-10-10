@@ -31,8 +31,8 @@ describe('provisionTenants', () => {
 
   it('creates both tenant schemas, applies every migration, and is idempotent', async () => {
     expect(await provisionTenants(db, [acme, beta])).toEqual({
-      acme: ['001-ledger', '002-topups'],
-      beta: ['001-ledger', '002-topups'],
+      acme: ['001-ledger', '002-topups', '003-orders'],
+      beta: ['001-ledger', '002-topups', '003-orders'],
     });
     expect(await provisionTenants(db, [acme, beta])).toEqual({ acme: [], beta: [] });
     await expect(assertMigrated(db, [acme, beta])).resolves.toBeUndefined();
@@ -60,6 +60,8 @@ describe('provisionTenants', () => {
         'kysely_migration_lock',
         'ledger_entries',
         'ledger_transactions',
+        'order_payments',
+        'outbox',
         'processed_messages',
         'topups',
       ]);
