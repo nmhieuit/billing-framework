@@ -1,8 +1,8 @@
 import { ConfigError } from '@billing/database';
 import { createLogger } from '@billing/observability';
+import { createShutdownHandler, startOrExit } from '@billing/runtime';
 import { startService } from './bootstrap.js';
 import { loadConfig, type PaymentConfig } from './config.js';
-import { createShutdownHandler, startOrExit } from './lifecycle.js';
 
 const log = createLogger('payment');
 

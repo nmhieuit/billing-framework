@@ -74,6 +74,12 @@ importers:
         specifier: ^10.4.0
         version: 10.4.0
 
+  packages/runtime:
+    devDependencies:
+      '@billing/testing':
+        specifier: workspace:^
+        version: link:../testing
+
   packages/testing:
     dependencies:
       '@billing/database':
@@ -103,6 +109,9 @@ importers:
       '@billing/observability':
         specifier: workspace:^
         version: link:../../packages/observability
+      '@billing/runtime':
+        specifier: workspace:^
+        version: link:../../packages/runtime
       fastify:
         specifier: ^5.12.5
         version: 5.12.5
