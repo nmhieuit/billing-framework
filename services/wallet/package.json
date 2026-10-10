@@ -10,6 +10,7 @@
   "dependencies": {
     "@billing/contracts": "workspace:^",
     "@billing/database": "workspace:^",
+    "@billing/messaging": "workspace:^",
     "@billing/money": "workspace:^",
     "@billing/observability": "workspace:^",
     "@billing/runtime": "workspace:^",

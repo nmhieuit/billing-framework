@@ -144,6 +144,9 @@ importers:
       '@billing/database':
         specifier: workspace:^
         version: link:../../packages/database
+      '@billing/messaging':
+        specifier: workspace:^
+        version: link:../../packages/messaging
       '@billing/money':
         specifier: workspace:^
         version: link:../../packages/money
