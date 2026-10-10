@@ -296,24 +296,37 @@ export class KyselyReconciliationRepository implements ReconciliationRepository 
     return rows.map(rowToTopupView);
   }
 
+  /** Bước 1: tìm ứng viên (đọc không khóa, có thể lệch tạm thời); bước 2: đọc lại có khóa để loại trừ lệch tạm thời. */
   async findUnbalancedTransactions(): Promise<Array<{ transactionId: string; total: number }>> {
-    const result = await sql<{ transaction_id: string; total: string }>`
-      select top (${sql.lit(LEDGER_CHECK_LIMIT)}) transaction_id, sum(amount) as total
+    const result = await sql<{ transaction_id: string }>`
+      select top (${sql.lit(LEDGER_CHECK_LIMIT)}) transaction_id
       from ${sql.id(this.schema, 'ledger_entries')}
       group by transaction_id
       having sum(amount) <> 0
       order by transaction_id`.execute(this.db);
-    return result.rows.map((row) => ({
-      transactionId: row.transaction_id,
-      total: toSafeInteger(row.total),
-    }));
+    return this.confirmUnbalanced(result.rows.map((row) => row.transaction_id));
+  }
+
+  /** Cộng lại các dòng của riêng từng giao dịch ứng viên; chỉ giữ giao dịch vẫn lệch. */
+  async confirmUnbalanced(
+    transactionIds: readonly string[],
+  ): Promise<Array<{ transactionId: string; total: number }>> {
+    const confirmed: Array<{ transactionId: string; total: number }> = [];
+    for (const transactionId of transactionIds) {
+      const result = await sql<{ total: string | null }>`
+        select sum(amount) as total from ${sql.id(this.schema, 'ledger_entries')}
+        where transaction_id = ${transactionId}`.execute(this.db);
+      const total = toSafeInteger(result.rows[0]?.total ?? '0');
+      if (total !== 0) confirmed.push({ transactionId, total });
+    }
+    return confirmed;
   }
 
   async findBalanceMismatches(): Promise<
     Array<{ accountId: string; balance: number; ledgerTotal: number }>
   > {
-    const result = await sql<{ id: string; balance: string; ledger_total: string }>`
-      select top (${sql.lit(LEDGER_CHECK_LIMIT)}) a.id, a.balance, coalesce(e.total, 0) as ledger_total
+    const result = await sql<{ id: string }>`
+      select top (${sql.lit(LEDGER_CHECK_LIMIT)}) a.id
       from ${sql.id(this.schema, 'accounts')} a
       left join (
         select account_id, sum(amount) as total
@@ -322,10 +335,30 @@ export class KyselyReconciliationRepository implements ReconciliationRepository 
       ) e on e.account_id = a.id
       where a.balance <> coalesce(e.total, 0)
       order by a.id`.execute(this.db);
-    return result.rows.map((row) => ({
-      accountId: row.id,
-      balance: toSafeInteger(row.balance),
-      ledgerTotal: toSafeInteger(row.ledger_total),
-    }));
+    return this.confirmBalanceMismatches(result.rows.map((row) => row.id));
+  }
+
+  /**
+   * Khóa hàng tài khoản (UPDLOCK, HOLDLOCK) rồi đọc lại số dư và tổng sổ cái của riêng nó: mọi giao dịch ghi sổ
+   * đều cập nhật hàng này nên sau khi khóa, hai số liệu nhất quán thời điểm. Chỉ giữ tài khoản vẫn lệch.
+   */
+  async confirmBalanceMismatches(
+    accountIds: readonly string[],
+  ): Promise<Array<{ accountId: string; balance: number; ledgerTotal: number }>> {
+    const confirmed: Array<{ accountId: string; balance: number; ledgerTotal: number }> = [];
+    for (const accountId of accountIds) {
+      const locked = await sql<{ balance: string }>`
+        select balance from ${sql.id(this.schema, 'accounts')} with (updlock, holdlock)
+        where id = ${accountId}`.execute(this.db);
+      const row = locked.rows[0];
+      if (row === undefined) continue;
+      const sum = await sql<{ total: string | null }>`
+        select sum(amount) as total from ${sql.id(this.schema, 'ledger_entries')}
+        where account_id = ${accountId}`.execute(this.db);
+      const balance = toSafeInteger(row.balance);
+      const ledgerTotal = toSafeInteger(sum.rows[0]?.total ?? '0');
+      if (balance !== ledgerTotal) confirmed.push({ accountId, balance, ledgerTotal });
+    }
+    return confirmed;
   }
 }
