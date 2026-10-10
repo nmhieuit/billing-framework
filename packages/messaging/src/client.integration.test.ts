@@ -2,6 +2,7 @@ import { createTestBroker, waitFor, type TestBroker } from '@billing/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BrokerClient } from './client.js';
 import { open, publishAsOrders, silentLog, testTopology } from './test-helpers.js';
+import { declareConsumerTopology } from './topology.js';
 import type { BrokerLogger, IncomingMessage, OutgoingMessage } from './types.js';
 
 let broker: TestBroker;
@@ -299,5 +300,37 @@ describe('BrokerClient channel-level recovery (connection stays up)', () => {
 
     await publishUntilHandled(handled, 'fixed');
     await client.close();
+  });
+});
+
+describe('BrokerClient.queueDepth', () => {
+  it('counts waiting messages, returns undefined for a missing queue without harming the channels, and after close', async () => {
+    const client = await BrokerClient.connect({ config: broker.wallet, log: silentLog });
+    const topology = isolated('depth');
+    // Khai báo queue (không consumer) bằng channel dùng một lần, rồi để ecommerce publish 3 message.
+    const wallet = await open(broker.wallet);
+    const declareChannel = await wallet.createChannel();
+    await declareConsumerTopology(declareChannel, topology);
+    await wallet.close();
+    for (let i = 0; i < 3; i++) await publishFromOrders({ i }, `depth-${i}`);
+
+    await waitFor(async () => (await client.queueDepth(topology.queue)) === 3);
+
+    // Queue không tồn tại: 404 chỉ làm hỏng channel dùng một lần.
+    expect(await client.queueDepth('wallet.does-not-exist')).toBeUndefined();
+    const handled: string[] = [];
+    await client.consume({
+      topology: isolated('depth-after'),
+      prefetch: 1,
+      handler: async (m) => {
+        handled.push(m.messageId ?? '');
+        return { action: 'ack' };
+      },
+    });
+    await publishUntilHandled(handled, 'depth-after', 15_000);
+    expect((await client.publisher.publish(paid('depth-publish'))).kind).toBe('delivered');
+
+    await client.close();
+    expect(await client.queueDepth(topology.queue)).toBeUndefined();
   });
 });
