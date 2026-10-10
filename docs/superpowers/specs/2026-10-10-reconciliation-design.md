@@ -1,7 +1,7 @@
 # Bước 5 — Đối soát: thiết kế
 
 **Ngày:** 2026-10-10
-**Trạng thái:** Chờ duyệt
+**Trạng thái:** Đã triển khai (xem ADR-0010)
 **Phạm vi:** Module `reconciliation` của wallet: kiểm tra toàn vẹn ledger nội bộ và đối soát Wallet ↔ Gateway (payment), lưu kết quả theo run bất biến, tự ghi bù loại lệch an toàn, API xem/đóng ca. Phép kiểm tra Wallet ↔ Orders chỉ được định nghĩa hợp đồng bằng tài liệu. Dựa trên spec nền tảng (`2026-10-09-billing-framework-design.md`, mục 6), wallet core và Bước 4.
 
 ## 1. Mục tiêu và quyết định đã chốt
@@ -39,26 +39,26 @@ Cả hai là lỗi toàn vẹn dữ liệu: log `error`, không tự sửa.
 
 ### 3.2 Wallet ↔ Gateway
 
-Lấy toàn bộ settlement của ngày (cursor, 1000/trang), giữ charge có `metadata.tenantId` đúng tenant, so với bảng `topups` theo `charge_id` và `reference = topupId`. Settlement chỉ liệt kê charge đã hoàn tất, nên topup còn `PENDING` mà gateway chưa có không phải lệch.
+Lấy toàn bộ settlement của ngày (cursor, 1000/trang), giữ charge có `metadata.tenantId` đúng tenant (charge thiếu hoặc mang `metadata.tenantId` của tenant khác bị bỏ qua trong lượt của tenant này), so với bảng `topups` theo `charge_id` và `reference = topupId`. Settlement chỉ liệt kê charge đã hoàn tất, nên topup còn `PENDING` mà gateway chưa có không phải lệch.
 
 | kind | Điều kiện | Xử lý |
 |---|---|---|
 | (khớp) | Cùng `chargeId`, số tiền, đồng tiền, trạng thái (`SUCCEEDED`/`FAILED`) | Không item |
-| `MISSING_AT_WALLET` | Gateway `SUCCEEDED`, wallet có topup `REQUESTED`/`PENDING` | Tự ghi bù (nếu cờ bật), ngược lại ca thủ công |
-| `UNKNOWN_CHARGE` | Gateway có charge, wallet không có topup tương ứng | Ca thủ công |
-| `MISSING_AT_GATEWAY` | Wallet topup `SUCCEEDED`, gateway không có | Ca thủ công |
+| `MISSING_AT_WALLET` | Gateway `SUCCEEDED`, wallet có topup `REQUESTED`/`PENDING`, hoặc `FAILED` với `PAYMENT_UNAVAILABLE` | Tự ghi bù (nếu cờ bật), ngược lại ca thủ công |
+| `UNKNOWN_CHARGE` | Gateway có charge, wallet không có topup tương ứng, hoặc topup đã gắn với charge khác | Ca thủ công |
+| `MISSING_AT_GATEWAY` | Wallet topup `SUCCEEDED`, gateway không có (so với settlement của ngày D **và** D-1) | Ca thủ công |
 | `AMOUNT_MISMATCH` | Khác số tiền hoặc đồng tiền | Ca thủ công |
 | `STATUS_MISMATCH` | Khác trạng thái | Ca thủ công |
 
-Tổng kiểm: tổng `SUCCEEDED` ở gateway so với tổng `TOPUP` ở wallet, tách theo đồng tiền (VND và USD không cộng lẫn).
+Tổng kiểm: tổng `SUCCEEDED` ở gateway và tổng `TOPUP` ở wallet, tách theo đồng tiền (VND và USD không cộng lẫn). Các tổng này chỉ để tham khảo (lưu trên run); chỉ phép so từng item mới sinh lệch.
 
 ### 3.3 Tự ghi bù
 
-Với mỗi `MISSING_AT_WALLET`, gọi `ApplyPaymentResult` với `eventId = reconcile:<chargeId>` và `type = charge.succeeded`. Mỗi lần ghi bù là một transaction riêng; lỗi một item không ảnh hưởng item khác. Kết quả `APPLIED`/`DUPLICATE`/`IGNORED` → item `AUTO_APPLIED` (kèm `detail.note = "already applied"` khi không phải `APPLIED`); lỗi → `FAILED_AUTOFIX`, ca vẫn `OPEN`. Chống trùng của inbox/ledger bảo đảm không cộng hai lần, kể cả khi webhook đến giữa chừng hoặc hai run chạy song song.
+Với mỗi `MISSING_AT_WALLET`, gọi `ApplyPaymentResult` với `eventId = reconcile:<runId>:<chargeId>` và `type = charge.succeeded`. Mỗi lần ghi bù là một transaction riêng; lỗi một item không ảnh hưởng item khác. Kết quả `APPLIED` → item `AUTO_APPLIED` (`detail.autofix = "APPLIED"`); `IGNORED` mà topup đã `SUCCEEDED` (webhook thật đến trước) cũng là `AUTO_APPLIED` (`detail.autofix = "already settled"`). Các kết quả khác (`DUPLICATE`, `MISMATCH`, `UNKNOWN_TOPUP`, lỗi) → `FAILED_AUTOFIX`, ca vẫn `OPEN`. Item `AUTO_APPLIED` được lưu `RESOLVED` bởi `system` với ghi chú `auto-applied by reconciliation`. Event id theo lượt nên lần thử thất bại trước không chặn lượt sau; chống cộng hai lần nhờ business key `topup:<id>`, kể cả khi webhook đến giữa chừng hoặc hai run chạy song song. Nếu run thất bại sau khi đã ghi bù, `failure_reason` nêu các topup đã được ghi bù.
 
 ## 4. Luồng chạy và lịch
 
-`RunReconciliation.execute({ tenant, day, trigger })`:
+`RunReconciliation.execute({ tenant, day, triggeredBy })`:
 
 1. Tạo run `RUNNING` (transaction riêng).
 2. Kiểm tra ledger nội bộ (3.1).
@@ -68,15 +68,22 @@ Với mỗi `MISSING_AT_WALLET`, gọi `ApplyPaymentResult` với `eventId = rec
 
 Gateway lỗi/timeout, hoặc vượt `RECONCILE_MAX_ITEMS` → run `FAILED` kèm lý do, không có item nửa vời và không ghi bù gì.
 
-**Lịch:** task `reconcile-daily` trong worker, ngày D-1 UTC cho từng tenant, chỉ chạy sau `RECONCILE_AT_UTC_HOUR`. Mỗi (tenant, ngày) chỉ có tối đa một run `SCHEDULED` không-`FAILED` (unique index lọc); run `SCHEDULED` `FAILED` được thử lại ở tick sau tới `RECONCILE_MAX_ATTEMPTS`, mỗi lần là run mới. Hai run cùng ngày cùng lúc (tay + lịch) được phép.
+**Lịch:** task `reconcile-daily` trong worker, ngày D-1 UTC cho từng tenant, chỉ chạy sau `RECONCILE_AT_UTC_HOUR`. Mỗi (tenant, ngày) chỉ có tối đa một run `SCHEDULED` không-`FAILED` (unique index lọc). Quy tắc mỗi tick:
+
+- Run `RUNNING` quá 30 phút được coi là worker đã chết và chuyển `FAILED`.
+- Run `SCHEDULED` `FAILED` được thử lại tối đa `RECONCILE_MAX_ATTEMPTS` lần, cách nhau ít nhất 15 phút, mỗi lần là run mới. Hết số lần → `GAVE_UP` (log `scheduled reconciliation gave up`), cần sửa nguyên nhân rồi chạy tay.
+- `DONE`/`GAVE_UP` được nhớ trong bộ nhớ theo tenant và ngày (trả lại đúng kết quả đã quyết định) để không truy vấn DB mỗi tick; mất khi tiến trình khởi động lại, khi đó DB là nguồn sự thật.
+- Hai run cùng ngày cùng lúc (tay + lịch) được phép.
 
 ## 5. Mô hình lưu
 
 Migration `004-reconciliation` trong từng schema tenant.
 
-`reconciliation_runs`: `id`, `day`, `status` (`RUNNING`|`COMPLETED`|`FAILED`), `trigger` (`SCHEDULED`|`MANUAL`), `failure_reason`, `gateway_total`, `wallet_total` (theo đồng tiền, JSON), `item_count`, `started_at`, `finished_at`.
+`reconciliation_runs`: `id`, `run_day`, `status` (`RUNNING`|`COMPLETED`|`FAILED`), `triggered_by` (`SCHEDULED`|`MANUAL`), `failure_reason`, `gateway_totals`, `wallet_totals` (theo đồng tiền, JSON), `item_count`, `started_at`, `finished_at`.
 
-`reconciliation_items`: `id`, `run_id`, `kind`, `charge_id`, `topup_id`, `amount_gateway`, `amount_wallet`, `currency`, `detail` (JSON), `action` (`NONE`|`AUTO_APPLIED`|`FAILED_AUTOFIX`), `case_status` (`OPEN`|`RESOLVED`|`IGNORED`), `resolved_by`, `resolution_note`, `resolved_at`.
+`reconciliation_items`: `seq` (identity, dùng làm cursor phân trang), `id`, `run_id`, `kind`, `charge_id`, `topup_id`, `amount_gateway`, `amount_wallet`, `currency`, `detail` (JSON), `action` (`NONE`|`AUTO_APPLIED`|`FAILED_AUTOFIX`), `case_status` (`OPEN`|`RESOLVED`|`IGNORED`), `resolved_by`, `resolution_note`, `resolved_at`, `created_at`.
+
+Unique index lọc: `run_day` với điều kiện `triggered_by = 'SCHEDULED' and status <> 'FAILED'`.
 
 Run bất biến: chạy lại tạo run mới; item cũ chỉ đổi `case_status` và các cột `resolved_*` khi đóng ca.
 
@@ -84,10 +91,10 @@ Run bất biến: chạy lại tạo run mới; item cũ chỉ đổi `case_stat
 
 Cùng guard và quy ước tenant/correlation như các endpoint wallet hiện có.
 
-- `POST /reconciliations` `{ "date": "YYYY-MM-DD" }` → `202` + `runId`; chạy nền. Ngày sai định dạng/tương lai → `422`.
+- `POST /reconciliations` `{ "date": "YYYY-MM-DD" }` → `202` + `{ "runId", "status": "RUNNING" }`; chạy nền. Ngày sai định dạng/tương lai → `422`.
 - `GET /reconciliations/:runId` → trạng thái và tổng kiểm.
 - `GET /reconciliations/:runId/items?caseStatus=&cursor=` → danh sách phân trang.
-- `POST /reconciliation-items/:id/resolve` `{ "status": "RESOLVED"|"IGNORED", "note": "1..500 ký tự", "resolvedBy": "..." }`. Lặp lại cùng giá trị trả cùng kết quả; giá trị khác → `409`; thiếu `note` → `422`.
+- `POST /reconciliation-items/:id/resolve` `{ "status": "RESOLVED"|"IGNORED", "note": "1..500 ký tự", "resolvedBy": "1..64 ký tự" }` → `200`. Lặp lại cùng giá trị trả cùng kết quả; giá trị khác → `409`; thiếu `note`/`resolvedBy` hoặc `status` sai → `422`.
 
 ## 7. Cấu hình
 
@@ -115,7 +122,7 @@ TDD; mỗi loại lệch có kịch bản dựng lệch có chủ đích. Dùng 
 
 ## 11. Tài liệu kèm theo
 
-ADR-0010 (đối soát chỉ đọc theo mặc định, run bất biến, ghi bù qua đường nạp bình thường), README, `.env.example`, và mục runbook ngắn: đọc item, đóng ca, xử lý từng `kind` bằng tay.
+[ADR-0010](../../adr/0010-reconciliation-read-only-immutable-runs.vi.md) (đối soát chỉ đọc theo mặc định, run bất biến, ghi bù qua đường nạp bình thường), README, `.env.example`, và mục runbook ngắn: đọc item, đóng ca, xử lý từng `kind` bằng tay.
 
 ## 12. Ngoài phạm vi
 

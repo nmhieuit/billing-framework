@@ -121,6 +121,11 @@ Hai chiều: `wallet` là consumer của `OrderReadyForPaymentV1` (provider `ord
 `OrderPaymentFailedV1` (provider `wallet`). Pact message, spec 3.0.0 (PactNet 5 đọc được). Pact mẫu phía `orders` để tham khảo:
 `services/wallet/pact-fixtures/orders-wallet.json`. Cách chạy broker và publish/verify: `docs/integration/pact-broker.vi.md`.
 
+## Đối soát Wallet ↔ Orders
+
+Ecommerce sẽ cần cung cấp snapshot order `Paid` theo ngày để wallet đối soát; chưa chặn việc triển khai Bước 4. Hợp đồng và
+câu hỏi mở: [`orders-reconciliation.vi.md`](orders-reconciliation.vi.md).
+
 ## Câu hỏi mở
 
 - Danh sách tenant của gateway ecommerce phải khớp `WALLET_TENANTS` của wallet.
