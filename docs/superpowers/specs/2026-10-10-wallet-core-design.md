@@ -1,7 +1,7 @@
 # Wallet Core — Thiết kế
 
 **Ngày:** 2026-10-10
-**Trạng thái:** Chờ duyệt
+**Trạng thái:** Đã hiện thực
 **Phạm vi:** Bước 3 của lộ trình trong [`2026-10-09-billing-framework-design.md`](2026-10-09-billing-framework-design.md) — service `wallet` (NestJS): ví theo khách hàng và theo tenant, ledger ghi sổ kép bất biến, nạp tiền qua `payment` (HTTP + webhook), chống trùng, inbox. Dùng hợp đồng của [`2026-10-09-payment-simulator-design.md`](2026-10-09-payment-simulator-design.md).
 
 ## 1. Mục tiêu và phạm vi
@@ -37,7 +37,7 @@ Wallet giữ số dư của khách (ví nạp trước) và chứng minh đượ
 |---|---|
 | `POST /wallets` | Body `{ currency }` (`VND`\|`USD`). Chưa có ví → `201`; đã có cùng đồng tiền → `200` trả ví đó; khác đồng tiền → `409 WALLET_CURRENCY_CONFLICT`; khách sai dạng → `400 INVALID_REQUEST`; `currency` không hỗ trợ → `400 INVALID_REQUEST` |
 | `GET /wallet` | Ví của khách gọi: `{ customerId, currency, balance, createdAt }`; chưa có → `404 WALLET_NOT_FOUND` |
-| `POST /topups` | Header `Idempotency-Key` bắt buộc (1..255 ký tự, không có khoảng trắng đầu/cuối, thiếu → `400 MISSING_IDEMPOTENCY_KEY`, sai dạng → `400 INVALID_IDEMPOTENCY_KEY`). Body `{ amount }`: số nguyên minor unit `>= 1`; đồng tiền lấy từ ví. Chưa có ví → `404 WALLET_NOT_FOUND`. Luôn trả `202 { topupId, status: "REQUESTED", amount, currency, createdAt }`. Cùng key + cùng nội dung → trả lại đúng phản hồi đã lưu; cùng key + nội dung khác → `422 IDEMPOTENCY_KEY_REUSED` |
+| `POST /topups` | Header `Idempotency-Key` bắt buộc (1..255 ký tự, không có khoảng trắng đầu/cuối, thiếu → `400 MISSING_IDEMPOTENCY_KEY`, sai dạng → `400 INVALID_IDEMPOTENCY_KEY`). Body `{ amount }`: số nguyên minor unit trong `1..1_000_000_000_000` (vượt trần → `400 INVALID_REQUEST`); đồng tiền lấy từ ví. Chưa có ví → `404 WALLET_NOT_FOUND`. Luôn trả `202 { topupId, status: "REQUESTED", amount, currency, createdAt }`. Cùng key + cùng nội dung → trả lại đúng phản hồi đã lưu; cùng key + nội dung khác → `422 IDEMPOTENCY_KEY_REUSED` |
 | `GET /topups/{id}` | Lần nạp của chính khách: `{ topupId, status, amount, currency, failureCode?, createdAt, completedAt? }`; của khách/tenant khác → `404 TOPUP_NOT_FOUND` |
 | `GET /wallet/entries` | Bút toán ledger của ví, tăng dần theo `entryId`, phân trang `limit` (mặc định 100, tối đa 1000) và `cursor`; mỗi dòng `{ entryId, transactionId, businessKey, amount, createdAt }`. `limit`/`cursor` sai → `400 INVALID_QUERY` |
 | `POST /webhooks/payment` | Mục 6. Chữ ký sai/thiếu/hết hạn → `401 INVALID_SIGNATURE`; payload sai hoặc tenant lạ → `400 INVALID_WEBHOOK`; đã xử lý, trùng hoặc bỏ qua có chủ đích → `200` |
@@ -77,7 +77,7 @@ Mỗi dòng bút toán có `amount` có dấu (số nguyên minor unit, khác 0)
 1. `POST /topups`: trong một transaction kiểm tra ví, xử lý idempotency, ghi lần nạp `REQUESTED` với `next_attempt_at = now`. Trả `202` rồi **kích hoạt một lần thử gửi sang payment** không chờ; lỗi của lần thử này chỉ ghi log.
 2. Worker định kỳ (`WORKER_INTERVAL_MS`), lần lượt qua từng tenant cấu hình, gọi cùng use case cho các lần nạp `REQUESTED` đến hạn; nó nhận tín hiệu dừng và kiểm tra giữa các lần nạp.
 3. `SubmitTopup`: (a) trong transaction ngắn chiếm một lần nạp bằng lease 60 giây (`UPDLOCK, READPAST`, đẩy `next_attempt_at`); (b) gọi `POST /charges` **ngoài transaction** với `Idempotency-Key = topup:<tenant>:<topupId>`, `reference = <topupId>`, `metadata = { tenantId }`, timeout `PAYMENT_TIMEOUT_MS`; (c) ghi kết quả trong transaction mới.
-4. Kết quả: `202` → `PENDING` và lưu `charge_id`. `4xx` → `FAILED` ngay với `PAYMENT_REJECTED` (lỗi đầu vào, không thử lại). Lỗi mạng, timeout, `5xx` → thử lại theo `TOPUP_SUBMIT_BACKOFF` (mặc định `1,5,30,120,600` giây): lần thất bại thứ `n` (`n <= len`) hẹn lại sau `backoff[n-1]` giây; lần thứ `len+1` → `FAILED` với `PAYMENT_UNAVAILABLE`. Gọi lại luôn an toàn nhờ idempotency key của payment.
+4. Kết quả: `202` → `PENDING` và lưu `charge_id`. `4xx` trừ `408`/`429` → `FAILED` ngay với `PAYMENT_REJECTED` (lỗi đầu vào, không thử lại). `408`, `429`, `5xx`, lỗi mạng, timeout, và `202` thiếu `chargeId` → thử lại theo `TOPUP_SUBMIT_BACKOFF` (mặc định `1,5,30,120,600` giây): lần thất bại thứ `n` (`n <= len`) hẹn lại sau `backoff[n-1]` giây; lần thứ `len+1` → `FAILED` với `PAYMENT_UNAVAILABLE`. Gọi lại luôn an toàn nhờ idempotency key của payment.
 
 ### Mở rộng payment: `metadata`
 
@@ -92,7 +92,7 @@ Mỗi dòng bút toán có `amount` có dấu (số nguyên minor unit, khác 0)
 3. Trong **một transaction** của schema tenant:
    - chèn `processed_messages (consumer = "payment-webhook", message_id = eventId)`; trùng khóa → rollback và trả `200`, không có tác động;
    - khóa dòng lần nạp (`UPDLOCK`) tìm theo `id = data.reference`; không có → ghi log lỗi và trả `200` (tránh payment retry vô ích; Bước 5 sẽ phát hiện);
-   - số tiền hoặc đồng tiền khác lần nạp → không đụng sổ, ghi log lỗi, trả `200`;
+   - số tiền hoặc đồng tiền khác lần nạp, hoặc `chargeId` khác `chargeId` đã ghi của lần nạp (khi đã có) → không đụng sổ, ghi log lỗi, trả `200`;
    - `charge.succeeded` → ghi giao dịch `topup:<id>` (ví `+X`, `GATEWAY −X`), đặt `SUCCEEDED`, `completed_at`, `charge_id`; đã `SUCCEEDED` thì không làm gì;
    - `charge.failed` → đặt `FAILED` kèm `failureCode` (chỉ khi chưa `SUCCEEDED`).
 4. Bí mật webhook và chữ ký không bao giờ xuất hiện trong log hay thông báo lỗi.
@@ -132,10 +132,10 @@ Bốn lớp theo quy ước repo; NestJS luôn tiêm phụ thuộc bằng `@Inje
 | `WALLET_TENANTS` | Danh sách tenant, ngăn cách bằng dấu phẩy, mỗi tenant khớp regex ở mục 2 | không có (bắt buộc, ít nhất một) |
 | `PAYMENT_BASE_URL` | Địa chỉ gốc của payment (http/https tuyệt đối) | không có (bắt buộc) |
 | `PAYMENT_WEBHOOK_SECRET` | Khóa kiểm chữ ký webhook | không có (bắt buộc) |
-| `PAYMENT_TIMEOUT_MS` | Timeout mỗi lần gọi payment | `5000` |
+| `PAYMENT_TIMEOUT_MS` | Timeout mỗi lần gọi payment, số nguyên `1..50000` (phải nhỏ hơn lease 60 giây) | `5000` |
 | `TOPUP_SUBMIT_BACKOFF` | Các mốc retry gọi payment (giây) | `1,5,30,120,600` |
 | `WORKER_INTERVAL_MS` | Chu kỳ poll của worker | `500` |
-| `WALLET_MIGRATOR_DB_USER`, `WALLET_MIGRATOR_DB_PASSWORD` | Tài khoản `db_owner` chỉ dùng cho `db:migrate:wallet` (đặt cả hai hoặc không đặt); service không đọc | không có (tùy chọn) |
+| `WALLET_MIGRATOR_DB_USER`, `WALLET_MIGRATOR_DB_PASSWORD` | Tài khoản `db_owner` chỉ dùng cho `db:migrate:wallet` (đặt cả hai hoặc không đặt); service không đọc. Thực tế bắt buộc vì Kysely Migrator cần `db_owner`; bỏ trống chỉ chạy được khi tài khoản ứng dụng chính là `db_owner` (local/dev) | không có (tùy chọn ở local/dev) |
 
 Thiếu hoặc sai thì service từ chối khởi động và liệt kê mọi vấn đề cùng lúc. Không có giá trị mặc định cho bí mật.
 

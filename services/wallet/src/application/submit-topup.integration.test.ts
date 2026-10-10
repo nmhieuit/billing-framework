@@ -25,6 +25,13 @@ class ScriptedGateway implements PaymentGateway {
   }
 }
 
+interface LogLine {
+  level: 'info' | 'warn' | 'error';
+  details: object;
+  message: string | undefined;
+}
+
+let logs: LogLine[];
 let h: Harness;
 let gateway: ScriptedGateway;
 let submit: SubmitTopup;
@@ -55,10 +62,16 @@ beforeEach(async () => {
       .execute();
   }
   gateway = new ScriptedGateway();
+  logs = [];
   submit = new SubmitTopup({
     uow: h.uow,
     gateway,
     clock: h.clock,
+    log: {
+      info: (details, message) => logs.push({ level: 'info', details, message }),
+      warn: (details, message) => logs.push({ level: 'warn', details, message }),
+      error: (details, message) => logs.push({ level: 'error', details, message }),
+    },
     backoffSeconds: [1, 5],
     leaseSeconds: 60,
   });
@@ -158,6 +171,67 @@ describe('SubmitTopup', () => {
     h.clock.advanceSeconds(10_000);
     expect(await submit.executeFor(tenant, topupId)).toBe('NOT_DUE');
     expect(gateway.requests).toHaveLength(3);
+  });
+
+  it('logs a rejected topup as an error with tenant, topup, gateway status and message', async () => {
+    const { tenant, topupId } = await seed();
+    gateway.enqueue({ kind: 'rejected', status: 422, message: 'amount too small' });
+    await submit.executeFor(tenant, topupId);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      level: 'error',
+      details: {
+        tenantId: 'acme',
+        topupId,
+        gatewayStatus: 422,
+        gatewayMessage: 'amount too small',
+      },
+    });
+  });
+
+  it('logs each retry as a warning with the attempt and error, and the final failure as an error', async () => {
+    const { tenant, topupId } = await seed();
+    gateway.enqueue(
+      ...Array.from(
+        { length: 3 },
+        (_, i) => ({ kind: 'unavailable', error: `down ${i + 1}` }) as const,
+      ),
+    );
+    await submit.executeFor(tenant, topupId);
+    h.clock.advanceSeconds(1);
+    await submit.executeFor(tenant, topupId);
+    expect(logs.map((l) => l.level)).toEqual(['warn', 'warn']);
+    expect(logs[0]?.details).toMatchObject({
+      tenantId: 'acme',
+      topupId,
+      attempt: 1,
+      error: 'down 1',
+    });
+    expect(logs[1]?.details).toMatchObject({ attempt: 2, error: 'down 2' });
+
+    h.clock.advanceSeconds(5);
+    expect(await submit.executeFor(tenant, topupId)).toBe('FAILED');
+    expect(logs).toHaveLength(3);
+    expect(logs[2]).toMatchObject({
+      level: 'error',
+      details: { tenantId: 'acme', topupId, attempts: 3, lastError: 'down 3' },
+    });
+  });
+
+  it('logs nothing for a successful submission or a superseded one', async () => {
+    const ok = await seed();
+    await submit.executeFor(ok.tenant, ok.topupId);
+    const late = await seed();
+    gateway.enqueue({ kind: 'rejected', status: 400, message: 'x' });
+    gateway.onCall = async () => {
+      await h.uow.run(late.tenant, async ({ topups }) => {
+        const topup = await topups.lockById(late.topupId);
+        if (!topup) throw new Error('missing topup');
+        await topups.save(topup.applySucceeded('ch_w', h.clock.now()));
+      });
+    };
+    expect(await submit.executeFor(late.tenant, late.topupId)).toBe('SUPERSEDED');
+    expect(logs).toEqual([]);
   });
 
   it('uses the same idempotency key on every retry and ends up PENDING once the gateway recovers', async () => {

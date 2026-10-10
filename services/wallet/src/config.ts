@@ -103,7 +103,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): WalletConfig {
   }
 
   const port = integer('PORT', 3001, 1, 65535);
-  const timeoutMs = integer('PAYMENT_TIMEOUT_MS', 5000, 1, 120_000);
+  const timeoutMs = integer('PAYMENT_TIMEOUT_MS', 5000, 1, 50_000);
   const workerIntervalMs = integer('WORKER_INTERVAL_MS', 500, 1, 3_600_000);
 
   if (problems.length > 0 || database === undefined || topupBackoffSeconds === undefined) {

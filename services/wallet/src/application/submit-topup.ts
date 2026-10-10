@@ -1,6 +1,12 @@
 import type { TenantId } from '../domain/tenant-id.js';
 import type { Topup } from '../domain/topup.js';
-import type { Clock, PaymentGateway, TenantUnitOfWork } from './ports.js';
+import type {
+  Clock,
+  GatewayChargeResult,
+  Logger,
+  PaymentGateway,
+  TenantUnitOfWork,
+} from './ports.js';
 
 export type SubmitOutcome =
   'SUBMITTED' | 'REJECTED' | 'RETRY_SCHEDULED' | 'FAILED' | 'SUPERSEDED' | 'NOT_DUE';
@@ -20,6 +26,7 @@ export class SubmitTopup {
       uow: TenantUnitOfWork;
       gateway: PaymentGateway;
       clock: Clock;
+      log: Logger;
       backoffSeconds: readonly number[];
       leaseSeconds?: number;
     },
@@ -60,7 +67,8 @@ export class SubmitTopup {
       metadata: { tenantId: tenant.value },
     });
 
-    return this.deps.uow.run(tenant, async ({ topups }): Promise<SubmitOutcome> => {
+    let attempts = 0;
+    const outcome = await this.deps.uow.run(tenant, async ({ topups }): Promise<SubmitOutcome> => {
       const current = await topups.lockById(props.id);
       // Webhook có thể đã chốt lần nạp trong lúc ta chờ payment: không ghi đè.
       if (!current || current.toProps().status !== 'REQUESTED') return 'SUPERSEDED';
@@ -69,11 +77,15 @@ export class SubmitTopup {
         case 'created':
           await topups.save(current.recordSubmitted(result.chargeId));
           return 'SUBMITTED';
-        case 'rejected':
-          await topups.save(current.recordRejected(now));
+        case 'rejected': {
+          const rejected = current.recordRejected(now);
+          attempts = rejected.toProps().attempts;
+          await topups.save(rejected);
           return 'REJECTED';
+        }
         case 'unavailable': {
           const next = current.recordUnavailable(now, this.deps.backoffSeconds);
+          attempts = next.toProps().attempts;
           await topups.save(next);
           return next.toProps().status === 'FAILED' ? 'FAILED' : 'RETRY_SCHEDULED';
         }
@@ -83,5 +95,34 @@ export class SubmitTopup {
         }
       }
     });
+    // Ghi log SAU khi transaction kết quả đã commit; không bao giờ ghi bí mật hay thân yêu cầu.
+    this.report(outcome, tenant, props.id, result, attempts);
+    return outcome;
+  }
+
+  private report(
+    outcome: SubmitOutcome,
+    tenant: TenantId,
+    topupId: string,
+    result: GatewayChargeResult,
+    attempts: number,
+  ): void {
+    const details = { tenantId: tenant.value, topupId };
+    if (outcome === 'REJECTED' && result.kind === 'rejected') {
+      this.deps.log.error(
+        { ...details, gatewayStatus: result.status, gatewayMessage: result.message },
+        'topup rejected by payment; marked FAILED (PAYMENT_REJECTED)',
+      );
+    } else if (outcome === 'FAILED' && result.kind === 'unavailable') {
+      this.deps.log.error(
+        { ...details, attempts, lastError: result.error },
+        'topup failed: payment unavailable and retries exhausted (PAYMENT_UNAVAILABLE)',
+      );
+    } else if (outcome === 'RETRY_SCHEDULED' && result.kind === 'unavailable') {
+      this.deps.log.warn(
+        { ...details, attempt: attempts, error: result.error },
+        'payment unavailable; topup retry scheduled',
+      );
+    }
   }
 }

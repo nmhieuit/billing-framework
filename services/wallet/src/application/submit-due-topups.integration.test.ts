@@ -40,6 +40,7 @@ beforeAll(async () => {
       uow: h.uow,
       gateway,
       clock: h.clock,
+      log: { info: () => undefined, warn: () => undefined, error: () => undefined },
       backoffSeconds: [1],
       leaseSeconds: 60,
     }),

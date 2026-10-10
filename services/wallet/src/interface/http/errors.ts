@@ -4,9 +4,11 @@ import {
   Inject,
   type ArgumentsHost,
   type ExceptionFilter,
+  type RawBodyRequest,
 } from '@nestjs/common';
+import { verifyWebhook } from '@billing/contracts';
 import { InvalidMoneyError } from '@billing/money';
-import type { FastifyReply } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import {
   IdempotencyConflictError,
   InvalidQueryError,
@@ -17,9 +19,9 @@ import {
   WalletCurrencyConflictError,
   WalletNotFoundError,
 } from '../../application/errors.js';
-import type { Logger } from '../../application/ports.js';
+import type { Clock, Logger } from '../../application/ports.js';
 import { InvalidCustomerError, InvalidTopupError } from '../../domain/errors.js';
-import { LOGGER } from './tokens.js';
+import { CLOCK, LOGGER, WEBHOOK_SECRET } from './tokens.js';
 
 /** Lỗi do chính lớp HTTP phát hiện (thiếu/sai header hay body) trước khi vào use case. */
 export class ApiError extends Error {
@@ -103,12 +105,39 @@ export function mapError(error: unknown): MappedError {
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
-  constructor(@Inject(LOGGER) private readonly log: Logger) {}
+  constructor(
+    @Inject(LOGGER) private readonly log: Logger,
+    @Inject(CLOCK) private readonly clock: Clock,
+    @Inject(WEBHOOK_SECRET) private readonly webhookSecret: string,
+  ) {}
 
   catch(error: unknown, host: ArgumentsHost): void {
-    const reply = host.switchToHttp().getResponse<FastifyReply>();
-    const mapped = mapError(error);
+    const http = host.switchToHttp();
+    const reply = http.getResponse<FastifyReply>();
+    const mapped = this.mapWebhookBodyError(error, http.getRequest()) ?? mapError(error);
     if (mapped.status >= 500) this.log.error({ err: error }, 'unhandled error');
     void reply.code(mapped.status).send({ error: { code: mapped.code, message: mapped.message } });
+  }
+
+  /**
+   * Thân webhook hỏng JSON bị Fastify từ chối TRƯỚC controller; giữ đúng thứ tự "chữ ký trước": chữ ký không hợp lệ
+   * (kể cả thiếu) → 401, chữ ký hợp lệ nhưng thân không phải JSON → 400 INVALID_WEBHOOK.
+   */
+  private mapWebhookBodyError(error: unknown, request: unknown): MappedError | undefined {
+    // Nest bọc lỗi parse của Fastify thành HttpException 400; controller webhook chỉ ném ApiError nên 400 kiểu này
+    // trên route webhook chỉ có thể do thân không parse được.
+    if (!(error instanceof HttpException) || error.getStatus() !== 400) return undefined;
+    const req = request as RawBodyRequest<FastifyRequest> | undefined;
+    if (req?.method !== 'POST' || req.url.split('?')[0] !== '/webhooks/payment') return undefined;
+    const signature = req.headers['x-signature'];
+    const verdict = verifyWebhook({
+      secret: this.webhookSecret,
+      body: req.rawBody?.toString('utf8') ?? '',
+      header: typeof signature === 'string' ? signature : undefined,
+      nowSeconds: Math.floor(this.clock.now().getTime() / 1000),
+    });
+    return verdict.ok
+      ? { status: 400, code: 'INVALID_WEBHOOK', message: 'webhook body is not valid JSON' }
+      : { status: 401, code: 'INVALID_SIGNATURE', message: 'webhook signature is invalid' };
   }
 }

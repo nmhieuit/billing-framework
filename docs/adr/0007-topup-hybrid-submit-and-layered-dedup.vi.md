@@ -13,8 +13,8 @@ lần, không được mất, và `POST /topups` phải trả lời nhanh.
 kích hoạt một lần thử gửi sang payment không chờ. Một worker định kỳ gửi lại các lần nạp `REQUESTED` đến hạn. Cả hai
 dùng chung `SubmitTopup`: chiếm lần nạp bằng lease 60 giây (`UPDLOCK, READPAST`), gọi payment ngoài transaction với
 `Idempotency-Key = topup:<tenant>:<topupId>`, ghi kết quả trong transaction mới (bỏ qua nếu webhook đã chốt trước).
-Lỗi 4xx → `FAILED`/`PAYMENT_REJECTED` ngay; lỗi mạng, timeout, 5xx → retry theo `TOPUP_SUBMIT_BACKOFF`, hết lượt →
-`FAILED`/`PAYMENT_UNAVAILABLE`. Webhook là nguồn sự thật về tiền: `charge.succeeded` đến muộn vẫn chuyển
+Lỗi 4xx trừ 408/429 → `FAILED`/`PAYMENT_REJECTED` ngay; 408, 429, 5xx, lỗi mạng, timeout và `202` thiếu `chargeId`
+→ retry theo `TOPUP_SUBMIT_BACKOFF`, hết lượt → `FAILED`/`PAYMENT_UNAVAILABLE`. Webhook là nguồn sự thật về tiền: `charge.succeeded` đến muộn vẫn chuyển
 `FAILED`/`PAYMENT_UNAVAILABLE` thành `SUCCEEDED` và ghi sổ.
 
 Chống trùng khi ghi tiền theo lớp: idempotency key API `(customer, key)` + hash nội dung; idempotency key gửi payment;
@@ -31,4 +31,5 @@ ledger; `UPDLOCK` tài khoản theo thứ tự id; trigger bất biến và `CHE
 
 Nếu tiến trình chết giữa lúc gửi, lần nạp tự đến hạn lại sau lease và được gửi lại an toàn nhờ idempotency key của
 payment. Một webhook có thể đến trước khi kết quả gọi được ghi; trạng thái `REQUESTED` vẫn được chốt đúng. Dừng
-service chờ các lần thử gửi ngay đang chạy rồi mới đóng DB.
+service chờ các lần thử gửi ngay đang chạy rồi mới đóng DB. Mỗi tick worker xử lý lần lượt từng tenant (tối đa 50
+lần nạp mỗi tenant), nên khi payment ngừng hoạt động, một tenant tồn đọng có thể làm chậm các tenant khác.

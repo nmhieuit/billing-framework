@@ -142,12 +142,12 @@ describe('LedgerRepository', () => {
 describe('TopupRepository', () => {
   it('round-trips a topup including milliseconds, null columns and a bigint amount', async () => {
     await h.uow.run(h.acme, ({ accounts }) => accounts.insert(wallet('t1')));
-    const topup = requestTopup(
-      'tp_t1',
-      't1',
-      Number.MAX_SAFE_INTEGER,
-      new Date('2026-10-10T10:00:00.003Z'),
-    );
+    // Vượt trần API (MAX_TOPUP_AMOUNT) nên dựng lại từ props: ở đây chỉ kiểm cột bigint đọc/ghi đúng.
+    const base = requestTopup('tp_t1', 't1', 10, new Date('2026-10-10T10:00:00.003Z'));
+    const topup = Topup.rehydrate({
+      ...base.toProps(),
+      amount: Money.of(Number.MAX_SAFE_INTEGER, 'VND'),
+    });
     await h.uow.run(h.acme, ({ topups }) => topups.insert(topup));
     const found = await h.uow.run(h.acme, ({ topups }) => topups.findById('tp_t1'));
     expect(found?.toProps()).toEqual(topup.toProps());

@@ -2,7 +2,7 @@ import { Money } from '@billing/money';
 import { describe, expect, it } from 'vitest';
 import { CustomerId } from './customer-id.js';
 import { InvalidTopupError, StateTransitionError } from './errors.js';
-import { Topup } from './topup.js';
+import { MAX_TOPUP_AMOUNT, Topup } from './topup.js';
 
 const t0 = new Date('2026-10-10T10:00:00.000Z');
 const plus = (seconds: number) => new Date(t0.getTime() + seconds * 1000);
@@ -44,6 +44,20 @@ describe('Topup.request', () => {
         now: t0,
       }),
     ).toThrow(InvalidTopupError);
+  });
+
+  it('accepts exactly MAX_TOPUP_AMOUNT and rejects one more', () => {
+    const request = (amount: number) =>
+      Topup.request({
+        id: 'tp_max',
+        customerId: CustomerId.parse('c1'),
+        accountId: 'wallet:c1',
+        amount: Money.of(amount, 'VND'),
+        now: t0,
+      });
+    expect(MAX_TOPUP_AMOUNT).toBe(1_000_000_000_000);
+    expect(request(MAX_TOPUP_AMOUNT).toProps().amount.amount).toBe(MAX_TOPUP_AMOUNT);
+    expect(() => request(MAX_TOPUP_AMOUNT + 1)).toThrow(InvalidTopupError);
   });
 });
 

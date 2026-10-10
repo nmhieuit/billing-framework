@@ -2,7 +2,7 @@ import { Account } from '../domain/account.js';
 import { StateTransitionError } from '../domain/errors.js';
 import { LedgerTransaction } from '../domain/ledger-transaction.js';
 import type { TenantId } from '../domain/tenant-id.js';
-import type { Topup } from '../domain/topup.js';
+import type { Topup, TopupProps } from '../domain/topup.js';
 import { DuplicateKeyError } from './errors.js';
 import type { Clock, IdGenerator, Logger, Repositories, TenantUnitOfWork } from './ports.js';
 
@@ -24,6 +24,13 @@ export type ApplyOutcome = 'APPLIED' | 'DUPLICATE' | 'UNKNOWN_TOPUP' | 'MISMATCH
 
 const CONSUMER = 'payment-webhook';
 const UNKNOWN_FAILURE_CODE = 'unknown';
+const PAYMENT_UNAVAILABLE = 'PAYMENT_UNAVAILABLE';
+
+interface ApplyResult {
+  outcome: ApplyOutcome;
+  /** Lần nạp như đã đọc (trước khi chuyển trạng thái), để `report` ghi log đúng mức; `null` khi không tìm thấy. */
+  topup: TopupProps | null;
+}
 
 export class ApplyPaymentResult {
   constructor(
@@ -31,39 +38,47 @@ export class ApplyPaymentResult {
   ) {}
 
   async execute(input: ApplyPaymentResultInput): Promise<ApplyOutcome> {
-    let outcome: ApplyOutcome;
+    let result: ApplyResult;
     try {
-      outcome = await this.deps.uow.run(input.tenant, (repositories) =>
+      result = await this.deps.uow.run(input.tenant, (repositories) =>
         this.apply(repositories, input),
       );
     } catch (error) {
-      // Cùng eventId (inbox) hoặc cùng business_key (sổ cái): giao dịch đã rollback, tiền đã được ghi trước đó.
-      if (error instanceof DuplicateKeyError) return 'DUPLICATE';
+      if (error instanceof DuplicateKeyError) {
+        // Inbox: webhook trùng, bình thường. Sổ cái: đã có `topup:<id>` mà lần nạp chưa SUCCEEDED thì dữ liệu bất nhất.
+        if (error.source === 'ledger') {
+          this.deps.log.error(
+            { tenantId: input.tenant.value, eventId: input.eventId, reference: input.reference },
+            `ledger already holds topup:${input.reference} but the topup is not SUCCEEDED; inconsistent`,
+          );
+        }
+        return 'DUPLICATE';
+      }
       throw error;
     }
-    this.report(outcome, input);
-    return outcome;
+    this.report(result, input);
+    return result.outcome;
   }
 
   private async apply(
     { accounts, ledger, topups, inbox }: Repositories,
     input: ApplyPaymentResultInput,
-  ): Promise<ApplyOutcome> {
+  ): Promise<ApplyResult> {
     const now = this.deps.clock.now();
     await inbox.record(CONSUMER, input.eventId, now);
 
     const topup = await topups.lockById(input.reference);
-    if (!topup) return 'UNKNOWN_TOPUP';
+    if (!topup) return { outcome: 'UNKNOWN_TOPUP', topup: null };
 
     const props = topup.toProps();
     const consistent =
       props.amount.amount === input.amount &&
       props.amount.currency === input.currency &&
       (props.chargeId === null || props.chargeId === input.chargeId);
-    if (!consistent) return 'MISMATCH';
+    if (!consistent) return { outcome: 'MISMATCH', topup: props };
 
     const next = this.transition(topup, input, now);
-    if (next === null) return 'IGNORED';
+    if (next === null) return { outcome: 'IGNORED', topup: props };
 
     if (input.type === 'charge.succeeded') {
       const walletId = props.accountId;
@@ -88,7 +103,7 @@ export class ApplyPaymentResult {
       );
     }
     await topups.save(next);
-    return 'APPLIED';
+    return { outcome: 'APPLIED', topup: props };
   }
 
   /** `null` khi trạng thái hiện tại không cho phép chuyển (đã chốt, hoặc thất bại vì lý do khác). */
@@ -103,7 +118,7 @@ export class ApplyPaymentResult {
     }
   }
 
-  private report(outcome: ApplyOutcome, input: ApplyPaymentResultInput): void {
+  private report({ outcome, topup }: ApplyResult, input: ApplyPaymentResultInput): void {
     const details = {
       tenantId: input.tenant.value,
       eventId: input.eventId,
@@ -116,18 +131,46 @@ export class ApplyPaymentResult {
         this.deps.log.error(details, 'payment event references an unknown topup');
         break;
       case 'MISMATCH':
-        this.deps.log.error(details, 'payment event does not match the topup; ledger untouched');
+        this.deps.log.error(
+          {
+            ...details,
+            amount: input.amount,
+            currency: input.currency,
+            expected: topup && {
+              amount: topup.amount.amount,
+              currency: topup.amount.currency,
+              chargeId: topup.chargeId,
+            },
+          },
+          'payment event does not match the topup; ledger untouched',
+        );
         break;
-      case 'IGNORED':
+      case 'IGNORED': {
+        const withState = {
+          ...details,
+          topupStatus: topup?.status,
+          failureCode: topup?.failureCode,
+        };
         if (input.type === 'charge.failed') {
-          this.deps.log.error(details, 'charge.failed ignored: the topup is already settled');
-        } else {
-          this.deps.log.warn(
-            details,
-            'charge.succeeded ignored: the topup cannot be completed from its state',
+          // Chỉ nghiêm trọng khi cổng báo thất bại mà ví đã được cộng tiền.
+          if (topup?.status === 'SUCCEEDED') {
+            this.deps.log.error(
+              withState,
+              'charge.failed ignored: the topup already SUCCEEDED (payment disagrees with the ledger)',
+            );
+          } else {
+            this.deps.log.warn(withState, 'charge.failed ignored: the topup is already failed');
+          }
+        } else if (topup?.status === 'FAILED' && topup.failureCode !== PAYMENT_UNAVAILABLE) {
+          this.deps.log.error(
+            withState,
+            'charge.succeeded ignored: the customer was charged but the wallet was not credited',
           );
+        } else {
+          this.deps.log.warn(withState, 'charge.succeeded ignored: the topup is already settled');
         }
         break;
+      }
       case 'APPLIED':
       case 'DUPLICATE':
         break;

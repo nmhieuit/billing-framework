@@ -283,6 +283,15 @@ describe('POST /topups and GET /topups/:id', () => {
     expect(submitted).toEqual([{ tenant: 'acme', topupId: body.topupId }]);
   });
 
+  it('accepts exactly 1_000_000_000_000 and rejects one more with 400 INVALID_REQUEST', async () => {
+    const customer = newCustomer();
+    await createWallet(customer);
+    expect((await post(customer, 'max-ok', { amount: 1_000_000_000_000 })).statusCode).toBe(202);
+    const tooBig = await post(customer, 'max-over', { amount: 1_000_000_000_001 });
+    expect(tooBig.statusCode).toBe(400);
+    expect(errorOf(tooBig.body).code).toBe('INVALID_REQUEST');
+  });
+
   it('replays the stored response for the same key and body, and rejects reuse with another body', async () => {
     const customer = newCustomer();
     await createWallet(customer);
@@ -552,6 +561,22 @@ describe('POST /webhooks/payment', () => {
     expect(res.statusCode).toBe(401);
     expect(errorOf(res.body).code).toBe('INVALID_SIGNATURE');
     expect(await balanceOf(seeded.customer)).toBe(0);
+  });
+
+  it('checks the signature before the body: malformed JSON is 401 when unsigned or mis-signed, 400 INVALID_WEBHOOK when signed', async () => {
+    const broken = '{"eventId": ';
+    for (const signature of [
+      null,
+      'garbage',
+      signWebhook('another-secret', broken, nowSeconds()),
+    ]) {
+      const res = await hook(broken, signature);
+      expect(res.statusCode).toBe(401);
+      expect(errorOf(res.body).code).toBe('INVALID_SIGNATURE');
+    }
+    const signed = await hook(broken);
+    expect(signed.statusCode).toBe(400);
+    expect(errorOf(signed.body).code).toBe('INVALID_WEBHOOK');
   });
 
   it('rejects a correctly signed payload that is invalid or points to an unknown tenant with 400 INVALID_WEBHOOK', async () => {

@@ -1,5 +1,6 @@
-import type { Currency } from '@billing/money';
+import { Money, type Currency } from '@billing/money';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { LedgerTransaction } from '../domain/ledger-transaction.js';
 import type { TenantId } from '../domain/tenant-id.js';
 import {
   createHarness,
@@ -167,7 +168,17 @@ describe('ApplyPaymentResult — success', () => {
     });
     expect(await balance(h.acme, `wallet:${seeded.customer}`)).toBe(0);
     expect((await ledgerFor(h.acme, seeded.topupId)).transactions).toHaveLength(0);
-    expect(logs.some((l) => l.level !== 'info')).toBe(true);
+    const problems = logs.filter((l) => l.level !== 'info');
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatchObject({
+      level: 'error',
+      message: expect.stringContaining('customer was charged but the wallet was not credited'),
+      details: {
+        topupStatus: 'FAILED',
+        failureCode: 'PAYMENT_REJECTED',
+        reference: seeded.topupId,
+      },
+    });
   });
 });
 
@@ -199,6 +210,15 @@ describe('ApplyPaymentResult — failure', () => {
     expect(await balance(h.acme, `wallet:${seeded.customer}`)).toBe(150000);
     expect(logs.some((l) => l.level === 'error')).toBe(true);
   });
+
+  it('only warns for charge.failed on a topup that is already FAILED (nothing to undo)', async () => {
+    const seeded = await seedTopup(h, { state: 'FAILED_REJECTED' });
+    expect(
+      await apply.execute(event(seeded, { type: 'charge.failed', failureCode: 'card_declined' })),
+    ).toBe('IGNORED');
+    expect(logs.filter((l) => l.level === 'error')).toEqual([]);
+    expect(logs.filter((l) => l.level === 'warn')).toHaveLength(1);
+  });
 });
 
 describe('ApplyPaymentResult — duplicates', () => {
@@ -214,8 +234,48 @@ describe('ApplyPaymentResult — duplicates', () => {
   it('ignores a second success event (new event id) for a topup that is already SUCCEEDED', async () => {
     const seeded = await seedTopup(h);
     expect(await apply.execute(event(seeded))).toBe('APPLIED');
+    logs.length = 0;
     expect(await apply.execute(event(seeded))).toBe('IGNORED');
     expect(await balance(h.acme, `wallet:${seeded.customer}`)).toBe(150000);
+    expect(logs.map((l) => l.level)).toEqual(['warn']);
+  });
+
+  it('answers DUPLICATE and logs an error when the ledger already holds topup:<id> but the topup is not SUCCEEDED', async () => {
+    const seeded = await seedTopup(h);
+    await h.uow.run(h.acme, async ({ ledger, accounts }) => {
+      // Giữ bất biến số dư = tổng dòng sổ: cộng/trừ đúng như một lần ghi thật, chỉ riêng lần nạp vẫn PENDING.
+      const locked = await accounts.lockMany([`wallet:${seeded.customer}`, gateway('VND')]);
+      const money = Money.of(seeded.amount, 'VND');
+      for (const account of locked) {
+        const isWallet = account.toProps().id === `wallet:${seeded.customer}`;
+        await accounts.saveBalance(account.apply(isWallet ? money : money.negate()));
+      }
+      await ledger.post(
+        LedgerTransaction.topup({
+          id: h.ids.transactionId(),
+          topupId: seeded.topupId,
+          walletAccountId: `wallet:${seeded.customer}`,
+          gatewayAccountId: gateway('VND'),
+          amount: Money.of(seeded.amount, 'VND'),
+          now: h.clock.now(),
+        }),
+      );
+    });
+    expect(await apply.execute(event(seeded))).toBe('DUPLICATE');
+    const errors = logs.filter((l) => l.level === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.message).toContain(`topup:${seeded.topupId}`);
+    expect(errors[0]?.message).toContain('inconsistent');
+    expect(await topupRow(h.acme, seeded.topupId)).toMatchObject({ status: 'PENDING' });
+  });
+
+  it('does not log an inbox duplicate as an error', async () => {
+    const seeded = await seedTopup(h);
+    const first = event(seeded);
+    await apply.execute(first);
+    logs.length = 0;
+    expect(await apply.execute(first)).toBe('DUPLICATE');
+    expect(logs).toEqual([]);
   });
 
   it('applies the same event exactly once when it is delivered concurrently', async () => {
@@ -272,14 +332,31 @@ describe('ApplyPaymentResult — inconsistent events', () => {
     ['a different charge id', { chargeId: 'ch_other' }],
   ])('refuses an event with %s without touching the ledger', async (_name, override) => {
     const seeded = await seedTopup(h);
-    expect(await apply.execute(event(seeded, override))).toBe('MISMATCH');
+    const mismatched = event(seeded, override);
+    expect(await apply.execute(mismatched)).toBe('MISMATCH');
     expect(await topupRow(h.acme, seeded.topupId)).toMatchObject({
       status: 'PENDING',
       completed_at: null,
     });
     expect(await balance(h.acme, `wallet:${seeded.customer}`)).toBe(0);
     expect((await ledgerFor(h.acme, seeded.topupId)).transactions).toHaveLength(0);
-    expect(logs.some((l) => l.level === 'error')).toBe(true);
+    const sent: Partial<ApplyPaymentResultInput> = override;
+    const [line] = logs.filter((l) => l.level === 'error');
+    expect(line?.details).toMatchObject({
+      amount: sent.amount ?? seeded.amount,
+      currency: sent.currency ?? seeded.currency,
+      chargeId: sent.chargeId ?? seeded.chargeId,
+      expected: { amount: seeded.amount, currency: seeded.currency, chargeId: seeded.chargeId },
+    });
+    // Sự kiện đã được ghi vào inbox (commit cùng giao dịch): gửi lại cùng eventId là DUPLICATE.
+    expect(await apply.execute(mismatched)).toBe('DUPLICATE');
+  });
+
+  it('commits the inbox row for an IGNORED event, so re-sending it answers DUPLICATE', async () => {
+    const seeded = await seedTopup(h, { state: 'FAILED_REJECTED' });
+    const ignored = event(seeded);
+    expect(await apply.execute(ignored)).toBe('IGNORED');
+    expect(await apply.execute(ignored)).toBe('DUPLICATE');
   });
 
   it('rolls everything back, including the inbox record, when something fails after the inbox write', async () => {

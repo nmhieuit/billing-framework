@@ -66,6 +66,7 @@ export async function startService(
     uow,
     gateway,
     clock,
+    log,
     backoffSeconds: config.topupBackoffSeconds,
   });
   const submitter = new InlineTopupSubmitter({ submit, log });
@@ -95,7 +96,12 @@ export async function startService(
     for (const tenant of registry.all()) {
       if (signal.aborted) return;
       try {
-        await submitDue.execute(tenant, undefined, { shouldContinue: () => !signal.aborted });
+        const report = await submitDue.execute(tenant, undefined, {
+          shouldContinue: () => !signal.aborted,
+        });
+        if (Object.values(report).some((count) => count > 0)) {
+          log.info({ tenantId: tenant.value, ...report }, 'worker submitted due topups');
+        }
       } catch (error) {
         log.error({ err: error, tenantId: tenant.value }, 'submitting due topups failed');
       }

@@ -18,6 +18,9 @@ export interface TopupProps {
   readonly completedAt: Date | null;
 }
 
+/** Trần một lần nạp (đơn vị nhỏ nhất): chặn số vô lý trước khi chạm DB hay payment. */
+export const MAX_TOPUP_AMOUNT = 1_000_000_000_000;
+
 const PAYMENT_REJECTED = 'PAYMENT_REJECTED';
 const PAYMENT_UNAVAILABLE = 'PAYMENT_UNAVAILABLE';
 
@@ -35,6 +38,9 @@ export class Topup {
   }): Topup {
     if (!input.amount.isPositive()) {
       throw new InvalidTopupError('amount must be at least 1 minor unit');
+    }
+    if (input.amount.amount > MAX_TOPUP_AMOUNT) {
+      throw new InvalidTopupError(`amount must not exceed ${MAX_TOPUP_AMOUNT} minor units`);
     }
     return new Topup({
       id: input.id,

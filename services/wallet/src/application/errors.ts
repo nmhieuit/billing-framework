@@ -33,4 +33,12 @@ export class InvalidQueryError extends Error {
 /** Do repository ném khi vi phạm khóa duy nhất (idempotency key, business key, inbox, ví trùng). */
 export class DuplicateKeyError extends Error {
   override name = 'DuplicateKeyError';
+
+  /** Nơi phát sinh trùng khóa, để use case phân biệt (vd. inbox: bình thường; sổ cái: bất thường). */
+  constructor(
+    message: string,
+    readonly source?: 'inbox' | 'ledger',
+  ) {
+    super(message);
+  }
 }

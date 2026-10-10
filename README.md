@@ -53,7 +53,7 @@ Cổng thanh toán giả lập. Thiết kế: [`docs/superpowers/specs/2026-10-0
 
 ```bash
 # 1. Tạo schema (DB billing_payment phải tồn tại; xem deploy/compose.billing.yml).
-#    Migration cần tài khoản db_owner: đặt thêm PAYMENT_MIGRATOR_DB_USER/PASSWORD (để trống thì dùng tài khoản ứng dụng).
+#    Migration cần tài khoản db_owner: đặt thêm PAYMENT_MIGRATOR_DB_USER/PASSWORD (thực tế bắt buộc vì Kysely Migrator cần db_owner; để trống chỉ chạy được khi chính tài khoản ứng dụng là db_owner, tức môi trường local/dev).
 PAYMENT_DB_HOST=... PAYMENT_DB_NAME=billing_payment PAYMENT_DB_USER=... PAYMENT_DB_PASSWORD=... \
   PAYMENT_MIGRATOR_DB_USER=... PAYMENT_MIGRATOR_DB_PASSWORD=... \
   corepack pnpm db:migrate:payment
@@ -82,6 +82,8 @@ quyết định: ADR-0002, ADR-0006, ADR-0007.
 
 ```bash
 # 1. Cấp phát các tenant (tạo schema t_<tenant> rồi migrate; biến môi trường: services/wallet/.env.example)
+#    Cần tài khoản migrator (db_owner) vì Kysely Migrator đòi quyền đó; bỏ trống *_MIGRATOR_DB_* chỉ chạy được khi
+#    chính tài khoản ứng dụng là db_owner (local/dev). Tài khoản ứng dụng ở production chỉ có DML.
 WALLET_DB_HOST=... WALLET_DB_NAME=billing_wallet WALLET_DB_USER=... WALLET_DB_PASSWORD=... \
   WALLET_MIGRATOR_DB_USER=... WALLET_MIGRATOR_DB_PASSWORD=... WALLET_TENANTS=acme,beta \
   corepack pnpm db:migrate:wallet

@@ -16,7 +16,7 @@ export class KyselyInbox implements Inbox {
         .execute();
     } catch (error) {
       if (isUniqueViolation(error)) {
-        throw new DuplicateKeyError(`message already processed: ${consumer}/${messageId}`);
+        throw new DuplicateKeyError(`message already processed: ${consumer}/${messageId}`, 'inbox');
       }
       throw error;
     }

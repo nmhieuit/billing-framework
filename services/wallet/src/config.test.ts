@@ -105,12 +105,20 @@ describe('loadConfig', () => {
     ['PORT', '0'],
     ['PAYMENT_TIMEOUT_MS', '0'],
     ['PAYMENT_TIMEOUT_MS', '999999'],
+    ['PAYMENT_TIMEOUT_MS', '50001'],
     ['WORKER_INTERVAL_MS', '0'],
     ['WORKER_INTERVAL_MS', 'abc'],
   ])('rejects %s=%s', (name, value) => {
     expect(problemsOf({ ...minimal, [name]: value })).toEqual([
       expect.stringContaining(`${name} must be an integer`),
     ]);
+  });
+
+  it('states the 1..50000 range for PAYMENT_TIMEOUT_MS and accepts its upper bound', () => {
+    expect(problemsOf({ ...minimal, PAYMENT_TIMEOUT_MS: '50001' })).toEqual([
+      'PAYMENT_TIMEOUT_MS must be an integer in 1..50000',
+    ]);
+    expect(problemsOf({ ...minimal, PAYMENT_TIMEOUT_MS: '50000' })).toEqual([]);
   });
 
   it('reports a bad database port together with the other problems', () => {

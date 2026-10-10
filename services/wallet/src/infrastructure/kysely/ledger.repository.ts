@@ -23,7 +23,7 @@ export class KyselyLedgerRepository implements LedgerRepository {
         .execute();
     } catch (error) {
       if (isUniqueViolation(error)) {
-        throw new DuplicateKeyError(`business key already posted: ${p.businessKey}`);
+        throw new DuplicateKeyError(`business key already posted: ${p.businessKey}`, 'ledger');
       }
       throw error;
     }
