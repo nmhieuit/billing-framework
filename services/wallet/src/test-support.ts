@@ -1,8 +1,12 @@
 import { createDatabase } from '@billing/database';
+import type { Currency } from '@billing/money';
 import { FakeClock, createTestDatabase } from '@billing/testing';
 import { sql, type Kysely } from 'kysely';
 import { expect } from 'vitest';
+import { CreateWallet } from './application/create-wallet.js';
 import type { IdGenerator } from './application/ports.js';
+import { RequestTopup } from './application/request-topup.js';
+import { CustomerId } from './domain/customer-id.js';
 import { TenantId } from './domain/tenant-id.js';
 import { ConfigTenantRegistry } from './infrastructure/tenant-registry.js';
 import type { WalletDatabase } from './infrastructure/kysely/schema.js';
@@ -84,4 +88,58 @@ export async function expectLedgerInvariants(h: Harness, tenant: TenantId): Prom
     unbalanced.rows.map((r) => r.transaction_id),
     'unbalanced transactions',
   ).toEqual([]);
+}
+
+export interface SeededTopup {
+  tenant: TenantId;
+  customer: string;
+  topupId: string;
+  chargeId: string;
+  amount: number;
+  currency: Currency;
+}
+
+let seedCounter = 0;
+
+/** Dựng nhanh một ví và một lần nạp ở trạng thái mong muốn, bằng chính các use case và aggregate thật. */
+export async function seedTopup(
+  h: Harness,
+  options: {
+    tenant?: TenantId;
+    customer?: string;
+    amount?: number;
+    currency?: Currency;
+    state?: 'REQUESTED' | 'PENDING' | 'FAILED_UNAVAILABLE' | 'FAILED_REJECTED';
+  } = {},
+): Promise<SeededTopup> {
+  const tenant = options.tenant ?? h.acme;
+  const currency = options.currency ?? 'VND';
+  const amount = options.amount ?? 150000;
+  const customer = options.customer ?? `seed${++seedCounter}`;
+  const customerId = CustomerId.parse(customer);
+  await new CreateWallet({ uow: h.uow, clock: h.clock }).execute({ tenant, customerId, currency });
+  const { body } = await new RequestTopup({
+    uow: h.uow,
+    clock: h.clock,
+    ids: h.ids,
+    submitter: { submitSoon: () => undefined },
+  }).execute({ tenant, customerId, idempotencyKey: `seed-key-${++seedCounter}`, amount });
+
+  const chargeId = `ch_${body.topupId}`;
+  const state = options.state ?? 'PENDING';
+  if (state !== 'REQUESTED') {
+    await h.uow.run(tenant, async ({ topups }) => {
+      const topup = await topups.lockById(body.topupId);
+      if (!topup) throw new Error('seeded topup disappeared');
+      const now = h.clock.now();
+      const next =
+        state === 'PENDING'
+          ? topup.recordSubmitted(chargeId)
+          : state === 'FAILED_REJECTED'
+            ? topup.recordRejected(now)
+            : topup.recordUnavailable(now, []);
+      await topups.save(next);
+    });
+  }
+  return { tenant, customer, topupId: body.topupId, chargeId, amount, currency };
 }
