@@ -88,6 +88,11 @@ describe('HttpSettlementSource', () => {
       () => json({ items: [item(1, { amount: 1.5 })], nextCursor: null }),
       () => json({ items: [item(1, { status: 'PENDING' })], nextCursor: null }),
       () => json({ items: [item(1, { chargeId: '' })], nextCursor: null }),
+      () => json({ items: [item(1, { chargeId: 'c'.repeat(65) })], nextCursor: null }),
+      () => json({ items: [item(1, { reference: 'r'.repeat(65) })], nextCursor: null }),
+      () => json({ items: [item(1, { currency: 'VNDX' })], nextCursor: null }),
+      () => json({ items: [item(1, { currency: 'VN' })], nextCursor: null }),
+      () => json({ items: [item(1)], nextCursor: '' }),
       () => new Response('not json', { status: 200 }),
     ];
     for (const handler of cases) {
@@ -103,5 +108,32 @@ describe('HttpSettlementSource', () => {
       ReconciliationTooLargeError,
     );
     expect(await source.fetchDay('2026-10-10', 3)).toHaveLength(3);
+  });
+
+  it('fails fast instead of looping when the cursor does not advance', async () => {
+    const { source, urls } = build(() => json({ items: [item(1)], nextCursor: 'same' }));
+    await expect(source.fetchDay('2026-10-10', 100)).rejects.toBeInstanceOf(
+      SettlementUnavailableError,
+    );
+    expect(urls).toHaveLength(2);
+  });
+
+  it('fails when a page is empty but still carries a cursor', async () => {
+    const { source, urls } = build(() => json({ items: [], nextCursor: 'X' }));
+    await expect(source.fetchDay('2026-10-10', 100)).rejects.toBeInstanceOf(
+      SettlementUnavailableError,
+    );
+    expect(urls).toHaveLength(1);
+  });
+
+  it('fails when the page count exceeds ceil(maxCharges / page limit) + 1', async () => {
+    // maxCharges = 100 => tối đa 2 trang; mỗi trang có cursor mới nhưng chỉ 1 charge.
+    const { source, urls } = build((_url, call) =>
+      json({ items: [item(call)], nextCursor: `c${call}` }),
+    );
+    await expect(source.fetchDay('2026-10-10', 100)).rejects.toBeInstanceOf(
+      SettlementUnavailableError,
+    );
+    expect(urls).toHaveLength(2);
   });
 });
