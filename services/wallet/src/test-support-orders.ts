@@ -29,25 +29,35 @@ export async function queueDepth(access: BrokerAccess, queue: string): Promise<n
   }
 }
 
-/** Đọc (không ack) message đầu của một queue để kiểm tra nội dung và header. */
-export async function peekQueue(
-  access: BrokerAccess,
-  queue: string,
-): Promise<{
+export interface PeekedMessage {
   body: string;
   headers: Record<string, unknown>;
   messageId: string | undefined;
-} | null> {
+}
+
+/** Xem tối đa `limit` message đầu của một queue (nội dung, header) rồi trả lại queue (nack + requeue): không lấy mất message. */
+export async function peekQueue(
+  access: BrokerAccess,
+  queue: string,
+  limit = 1,
+): Promise<PeekedMessage[]> {
   const connection = await connect(access);
   try {
     const channel = await connection.createChannel();
-    const message = await channel.get(queue, { noAck: true });
-    if (message === false) return null;
-    return {
-      body: message.content.toString('utf8'),
-      headers: message.properties.headers ?? {},
-      messageId: message.properties.messageId,
-    };
+    const peeked: PeekedMessage[] = [];
+    let last: Awaited<ReturnType<typeof channel.get>> = false;
+    while (peeked.length < limit) {
+      const message = await channel.get(queue, { noAck: false });
+      if (message === false) break;
+      last = message;
+      peeked.push({
+        body: message.content.toString('utf8'),
+        headers: message.properties.headers ?? {},
+        messageId: message.properties.messageId,
+      });
+    }
+    if (last !== false) channel.nack(last, true, true);
+    return peeked;
   } finally {
     await connection.close().catch(() => undefined);
   }

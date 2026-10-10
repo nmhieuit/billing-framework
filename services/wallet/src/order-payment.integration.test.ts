@@ -10,6 +10,7 @@ let h: Harness;
 let payment: FakePaymentServer;
 let counter = 0;
 const DLQ = 'wallet.order-payments.dlq';
+const WORK_QUEUE = 'wallet.order-payments';
 
 beforeAll(async () => {
   h = await createHarness();
@@ -264,6 +265,7 @@ describe('order payment over RabbitMQ (wallet + simulated orders)', () => {
 
   it('dead-letters unreadable, schema-invalid and unknown-tenant messages without touching any wallet', async () => {
     const before = await queueDepth(stack.broker.admin, DLQ);
+    const resultsBefore = stack.orders.results.length;
     const customer = newCustomer();
     await fundWallet(h, { customer, amount: 5000 });
     await stack.orders.publishRaw('{this is not json');
@@ -273,8 +275,16 @@ describe('order payment over RabbitMQ (wallet + simulated orders)', () => {
       timeoutMs: 15_000,
     });
     expect(await balance(customer)).toBe(5000);
-    const dead = await peekQueue(stack.broker.admin, DLQ);
-    expect(String(dead?.headers['x-dead-letter-reason'] ?? '')).not.toBe('');
+    const dead = (await peekQueue(stack.broker.admin, DLQ, before + 3)).slice(before);
+    expect(dead).toHaveLength(3);
+    for (const letter of dead) {
+      expect(String(letter.headers['x-dead-letter-reason'] ?? '')).not.toBe('');
+    }
+    // Peeking must have left the dead letters in place.
+    expect(await queueDepth(stack.broker.admin, DLQ)).toBe(before + 3);
+    // Nothing was reported back to orders for the rejected messages.
+    await quiet();
+    expect(stack.orders.results).toHaveLength(resultsBefore);
   });
 });
 
@@ -314,12 +324,15 @@ describe('order payment — failure modes', () => {
 
   it('survives a consumer that dies after the payment committed but before it acknowledged', async () => {
     let killed = false;
-    const holder: { broker?: TestBroker } = {};
+    let calls = 0;
+    // `closed` is set only once the management API really closed the wallet's connection(s).
+    const holder: { broker?: TestBroker; closed?: number } = {};
     const stack = await startStack({
       afterOrderHandled: async () => {
+        calls++;
         if (killed || !holder.broker) return;
         killed = true;
-        await holder.broker.closeConnections({ user: 'billing_wallet' });
+        holder.closed = await holder.broker.closeConnections({ user: 'billing_wallet' });
       },
     });
     holder.broker = stack.broker;
@@ -333,8 +346,26 @@ describe('order payment — failure modes', () => {
         timeoutMs: 60_000,
         intervalMs: 200,
       });
+      // The kill itself takes a few seconds (management API); wait until it really happened.
+      await waitFor(() => holder.closed !== undefined, { timeoutMs: 60_000, intervalMs: 200 });
+      expect(holder.closed).toBeGreaterThan(0);
+      // Positive evidence of the redelivery: the handler (and so the hook) ran a second time,
+      // and the work queue has nothing left to deliver.
+      await waitFor(() => calls >= 2, { timeoutMs: 60_000, intervalMs: 200 });
+      await waitFor(async () => (await queueDepth(stack.broker.admin, WORK_QUEUE)) === 0, {
+        timeoutMs: 30_000,
+        intervalMs: 200,
+      });
       await quiet(2500);
-      expect(killed).toBe(true);
+      expect(calls).toBe(2);
+      const inbox = await h.db
+        .withSchema('t_acme')
+        .selectFrom('processed_messages')
+        .select('message_id')
+        .where('consumer', '=', 'orders-events')
+        .where('message_id', '=', event.eventId)
+        .execute();
+      expect(inbox).toHaveLength(1);
       expect(stack.orders.resultsFor(event.orderId)).toHaveLength(1);
       expect(await balance(customer)).toBe(55000);
       expect(await ledgerCount(event.orderId)).toBe(1);
@@ -351,7 +382,7 @@ describe('order payment — failure modes', () => {
           ...configFor(broker),
           broker: { ...broker.wallet, vhost: 'no-such-vhost' },
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/ConnectionOpenOk; got <ConnectionClose/);
     } finally {
       await broker.drop();
     }
