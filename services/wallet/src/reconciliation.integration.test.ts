@@ -8,8 +8,13 @@ import {
   type TestBroker,
   type TestDatabase,
 } from '@billing/testing';
+import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { CreateWallet } from './application/create-wallet.js';
+import { RequestTopup } from './application/request-topup.js';
+import { CustomerId } from './domain/customer-id.js';
+import { KyselyTenantUnitOfWork } from './infrastructure/kysely/unit-of-work.js';
 import { startService, type RunningService } from './bootstrap.js';
 import type { WalletConfig } from './config.js';
 import { TenantId } from './domain/tenant-id.js';
@@ -203,5 +208,34 @@ describe('reconciliation in the running service', () => {
     await service.stop();
 
     expect((await statusOf()).status).toBe('COMPLETED');
+  });
+
+  it('keeps submitting topups while a slow daily reconciliation is still reading the settlement', async () => {
+    settlementDelayMs = 3000;
+    // Ngày khác với các test trên (chúng dùng chung database) để lượt định kỳ của hôm qua chưa có.
+    clock.set('2026-11-10T10:00:00.000Z');
+    await start();
+    // Đối soát định kỳ đang bị chặn ở /settlements (chậm).
+    await waitFor(() => fake.requests.some((r) => r.url.startsWith('/settlements')));
+
+    // Lần nạp REQUESTED chỉ được Worker chính gửi (không có submitSoon vì tạo thẳng bằng use case).
+    const uow = new KyselyTenantUnitOfWork(db);
+    const customerId = CustomerId.parse(`slow${++counter}`);
+    await new CreateWallet({ uow, clock }).execute({ tenant: acme, customerId, currency: 'VND' });
+    const { body } = await new RequestTopup({
+      uow,
+      clock,
+      ids: {
+        topupId: () => `tp_${randomUUID()}`,
+        transactionId: () => `tx_${randomUUID()}`,
+        eventId: () => randomUUID(),
+      },
+      submitter: { submitSoon: () => undefined },
+    }).execute({ tenant: acme, customerId, idempotencyKey: `slow-key-${counter}`, amount: 5000 });
+
+    const begin = Date.now();
+    await waitFor(async () => (await topupRow(body.topupId)).charge_id !== null);
+    expect(Date.now() - begin).toBeLessThan(2000);
+    expect((await topupRow(body.topupId)).status).toBe('PENDING');
   });
 });

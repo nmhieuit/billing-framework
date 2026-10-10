@@ -218,10 +218,18 @@ export async function startService(
   };
   const worker = new Worker({
     intervalMs: config.workerIntervalMs,
-    tasks: [submitDueForAllTenants, relayOutboxForAllTenants, reconcileDailyForAllTenants],
+    tasks: [submitDueForAllTenants, relayOutboxForAllTenants],
     onError: (error) => log.error({ err: error }, 'worker task failed'),
   });
   worker.start();
+  // Đối soát có Worker riêng: một lượt dài (đọc sao kê chậm) không được chặn việc gửi lần nạp và relay outbox,
+  // và các tick của hai Worker chạy độc lập.
+  const reconcileWorker = new Worker({
+    intervalMs: config.workerIntervalMs,
+    tasks: [reconcileDailyForAllTenants],
+    onError: (error) => log.error({ err: error }, 'reconciliation worker task failed'),
+  });
+  reconcileWorker.start();
 
   return {
     app,
@@ -229,6 +237,7 @@ export async function startService(
       runAll([
         () => broker.stopConsuming(),
         () => worker.stop(),
+        () => reconcileWorker.stop(),
         () => app.close(),
         () => submitter.drain(),
         () => background.drain(),
