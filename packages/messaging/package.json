@@ -1,0 +1,15 @@
+{
+  "name": "@billing/messaging",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "amqplib": "^2.2.0"
+  },
+  "devDependencies": {
+    "@billing/testing": "workspace:^"
+  }
+}
