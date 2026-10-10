@@ -1,0 +1,41 @@
+# Pact Broker dùng chung cho billing và ecommerce (hợp đồng hai chiều). Chạy cục bộ hoặc trên máy dùng chung:
+#   cp deploy/.env.example deploy/.env   # điền PACT_BROKER_*
+#   docker compose -f deploy/compose.pact-broker.yml --env-file deploy/.env up -d
+# Manifest K8s cho môi trường thật thuộc hạ tầng chung (Bước 6), không nằm trong file này.
+name: pact-broker
+
+services:
+  pact-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pact
+      POSTGRES_PASSWORD: ${PACT_BROKER_DB_PASSWORD:?set in deploy/.env}
+      POSTGRES_DB: pact
+    volumes:
+      - pact-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U pact -d pact']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  pact-broker:
+    # Ghim phiên bản cụ thể khi triển khai thật; `latest` chỉ để thử cục bộ.
+    image: pactfoundation/pact-broker:latest
+    restart: unless-stopped
+    depends_on:
+      pact-db:
+        condition: service_healthy
+    ports:
+      - '${PACT_BROKER_PORT:-9292}:9292'
+    environment:
+      PACT_BROKER_DATABASE_ADAPTER: postgres
+      # Mật khẩu nằm trong URL nên chỉ dùng ký tự an toàn cho URL (chữ, số, `-`, `_`).
+      PACT_BROKER_DATABASE_URL: postgres://pact:${PACT_BROKER_DB_PASSWORD}@pact-db/pact
+      PACT_BROKER_BASIC_AUTH_USERNAME: ${PACT_BROKER_USERNAME:?set in deploy/.env}
+      PACT_BROKER_BASIC_AUTH_PASSWORD: ${PACT_BROKER_PASSWORD:?set in deploy/.env}
+      PACT_BROKER_ALLOW_PUBLIC_READ: 'false'
+
+volumes:
+  pact-db-data:
