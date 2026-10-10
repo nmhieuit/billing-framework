@@ -1,5 +1,10 @@
 import type { Channel } from 'amqplib';
 
+/**
+ * Quy tắc: mỗi cặp (`workExchange`, `retryExchange`) chỉ dành cho MỘT queue consumer. Routing key retry/DLQ
+ * (`retry.<giây>`, `dlq`) và `workRoutingKey` không gắn với tên queue, nên hai queue dùng chung exchange sẽ nhận
+ * bản sao message retry/DLQ của nhau. `BrokerClient.consume` từ chối cấu hình vi phạm.
+ */
 export interface ConsumerTopology {
   queue: string;
   workExchange: string;

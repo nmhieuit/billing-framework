@@ -65,4 +65,16 @@ describe('ConfirmPublisher', () => {
     );
     expect(results.every((r) => r.kind === 'delivered')).toBe(true);
   });
+  it('attributes returns to the right publish even when concurrent publishes share a messageId', async () => {
+    // Dùng queue `ecommerce.results` đã bind ở ca trước cho `order-paid.v1`; `order-payment-failed.v1` chưa có queue.
+    for (let pair = 0; pair < 20; pair++) {
+      const id = `same-id-${pair}`;
+      const unbound = { ...paid(id), routingKey: 'order-payment-failed.v1' };
+      const batch = pair % 2 === 0 ? [paid(id), unbound] : [unbound, paid(id)];
+      const results = await Promise.all(batch.map((m) => client.publisher.publish(m)));
+      const byKey = Object.fromEntries(batch.map((m, i) => [m.routingKey, results[i]]));
+      expect(byKey['order-paid.v1']).toEqual({ kind: 'delivered' });
+      expect(byKey['order-payment-failed.v1']).toEqual({ kind: 'unroutable' });
+    }
+  });
 });

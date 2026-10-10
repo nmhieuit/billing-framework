@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Channel, ConsumeMessage } from 'amqplib';
-import type { ConfirmPublisher } from './publisher.js';
+import { PUBLISH_ID_HEADER, type ConfirmPublisher } from './publisher.js';
 import { DLQ_ROUTING_KEY, retryRoutingKey, type ConsumerTopology } from './topology.js';
 import type { BrokerLogger, HandlerResult, IncomingMessage, MessageHandler } from './types.js';
 
@@ -13,13 +13,34 @@ export interface ConsumerSpec {
 export interface RunningConsumer {
   /** Hủy đăng ký rồi chờ mọi handler đang chạy xong (kể cả ack). */
   stop(): Promise<void>;
+  /** Số handler đang chạy (chưa settle xong). */
+  inflight(): number;
 }
 
 const RETRY_COUNT = 'x-retry-count';
 
-/** Header do broker thêm khi dead-letter; không chép sang bản republish. */
-const isBrokerHeader = (name: string): boolean =>
-  name === 'x-death' || name.startsWith('x-first-death') || name.startsWith('x-last-death');
+const REQUEUE_DELAY_MS = 1_000;
+
+/**
+ * Header không được chép sang bản republish: header do broker thêm khi dead-letter, `CC`/`BCC` (RabbitMQ định tuyến
+ * theo chúng nên nếu tin tưởng từ upstream thì message có thể bị chuyển sang nơi khác) và token publish của publisher.
+ */
+const isDroppedHeader = (name: string): boolean => {
+  const lower = name.toLowerCase();
+  return (
+    lower === 'x-death' ||
+    lower.startsWith('x-first-death') ||
+    lower.startsWith('x-last-death') ||
+    lower === 'cc' ||
+    lower === 'bcc' ||
+    lower === PUBLISH_ID_HEADER
+  );
+};
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -29,8 +50,13 @@ export async function startConsumer(options: {
   publisher: ConfirmPublisher;
   spec: ConsumerSpec;
   log: BrokerLogger;
+  /** Broker hủy consumer (queue bị xóa, failover...): bên gọi cần bật lại. */
+  onCancel?: () => void;
+  /** Chờ trước khi `nack(requeue)` để lỗi forward kéo dài không gây vòng lặp nóng. Mặc định 1 s. */
+  requeueDelayMs?: number;
 }): Promise<RunningConsumer> {
   const { channel, publisher, spec, log } = options;
+  const requeueDelayMs = options.requeueDelayMs ?? REQUEUE_DELAY_MS;
   const { topology } = spec;
   const inflight = new Set<Promise<void>>();
 
@@ -40,7 +66,7 @@ export async function startConsumer(options: {
     extra: Record<string, unknown>,
   ): Promise<void> => {
     const headers = Object.fromEntries(
-      Object.entries(raw.properties.headers ?? {}).filter(([name]) => !isBrokerHeader(name)),
+      Object.entries(raw.properties.headers ?? {}).filter(([name]) => !isDroppedHeader(name)),
     );
     const result = await publisher.publish(
       {
@@ -79,8 +105,11 @@ export async function startConsumer(options: {
   };
 
   const process = async (raw: ConsumeMessage): Promise<void> => {
+    // Không tin header upstream: không phải số nguyên >= 0 thì coi là 0; vượt số bậc thì chặn ở số bậc (=> DLQ).
     const rawCount = Number(raw.properties.headers?.[RETRY_COUNT] ?? 0);
-    const retryCount = Number.isInteger(rawCount) && rawCount >= 0 ? rawCount : 0;
+    const retryCount = Number.isInteger(rawCount)
+      ? Math.min(Math.max(rawCount, 0), topology.retryDelaysSeconds.length)
+      : 0;
     const incoming: IncomingMessage = {
       body: raw.content,
       messageId: raw.properties.messageId,
@@ -107,6 +136,7 @@ export async function startConsumer(options: {
         { err: errorText(error), messageId: raw.properties.messageId },
         'could not settle message; requeueing',
       );
+      await sleep(requeueDelayMs);
       try {
         channel.nack(raw, false, true);
       } catch {
@@ -119,7 +149,10 @@ export async function startConsumer(options: {
   const { consumerTag } = await channel.consume(
     topology.queue,
     (raw) => {
-      if (raw === null) return;
+      if (raw === null) {
+        options.onCancel?.();
+        return;
+      }
       const task: Promise<void> = process(raw).finally(() => {
         inflight.delete(task);
       });
@@ -129,6 +162,7 @@ export async function startConsumer(options: {
   );
 
   return {
+    inflight: () => inflight.size,
     async stop() {
       try {
         await channel.cancel(consumerTag);
