@@ -28,6 +28,8 @@ let counter = 0;
 const running: RunningService[] = [];
 /** Sao kê giả của payment theo ngày. */
 const settlements = new Map<string, unknown[]>();
+/** Độ trễ của /settlements; chỉ test dừng service giữa chừng mới đặt > 0. */
+let settlementDelayMs = 0;
 
 beforeAll(async () => {
   testDb = await createTestDatabase('recsvc');
@@ -42,6 +44,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   settlements.clear();
+  settlementDelayMs = 0;
   clock = new FakeClock('2026-10-10T10:00:00.000Z');
   fake = await FakePaymentServer.start();
   fake.setFallback((number, request) => {
@@ -51,6 +54,7 @@ beforeEach(async () => {
       return {
         status: 200,
         body: { date, items: settlements.get(date) ?? [], nextCursor: null, totals: [] },
+        delayMs: settlementDelayMs,
       };
     }
     return { status: 202, body: { chargeId: `ch_e2e_${number}`, status: 'PENDING' } };
@@ -58,6 +62,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   while (running.length > 0) await running.pop()?.stop();
+  settlementDelayMs = 0;
   await fake.close();
 });
 
@@ -175,6 +180,7 @@ describe('reconciliation in the running service', () => {
   });
 
   it('finishes a manual run that is still in flight when the service stops', async () => {
+    settlementDelayMs = 600;
     const service = await start();
     const started = await service.app.inject({
       method: 'POST',
@@ -183,15 +189,19 @@ describe('reconciliation in the running service', () => {
       payload: { date: '2026-10-08' },
     });
     const { runId } = started.json<{ runId: string }>();
+    const statusOf = () =>
+      db
+        .withSchema('t_acme')
+        .selectFrom('reconciliation_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+
+    // Chứng minh lượt chạy đang dở dang trước khi dừng service.
+    expect((await statusOf()).status).toBe('RUNNING');
 
     await service.stop();
 
-    const run = await db
-      .withSchema('t_acme')
-      .selectFrom('reconciliation_runs')
-      .select('status')
-      .where('id', '=', runId)
-      .executeTakeFirstOrThrow();
-    expect(run.status).not.toBe('RUNNING');
+    expect((await statusOf()).status).toBe('COMPLETED');
   });
 });
