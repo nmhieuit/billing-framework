@@ -39,7 +39,7 @@ Ba event mới, JSON phẳng, camelCase. Tên kiểu `{Event}V{N}`, schema `{Eve
 
 - Exchange topic bền: `orders.events`, `billing.events` (khai báo bởi script init, không bởi service).
 - Wallet: queue `wallet.order-payments` gắn vào `orders.events` với key `order-ready-for-payment.v1`.
-- Retry: mỗi bậc backoff một queue riêng `wallet.order-payments.retry.<giây>` (đặt `x-message-ttl`, dead-letter về queue chính qua default exchange); hết bậc thì vào `wallet.order-payments.dlq`. Mặc định bậc `5,30,120` giây (`ORDER_RETRY_DELAYS`).
+- Retry: wallet tự khai báo hai exchange `direct` bền `wallet.work` và `wallet.retry` (tiền tố `wallet.` nằm trong quyền configure). Queue chính gắn vào `wallet.work` (key `order-payments`) và vào `orders.events`. Mỗi bậc backoff một queue `wallet.order-payments.retry.<giây>` gắn vào `wallet.retry` (key `retry.<giây>`), đặt `x-message-ttl` và dead-letter về `wallet.work`; hết bậc thì publish vào `wallet.retry` với key `dlq` tới queue `wallet.order-payments.dlq`. Mặc định bậc `5,30,120` giây (`ORDER_RETRY_DELAYS`). **Không dùng default exchange** (`amq.default`) làm DLX hay để publish: quyền ghi `amq.default` cho phép ghi vào mọi queue trong vhost, mâu thuẫn với bảng quyền bên dưới (đã kiểm chứng bằng probe).
 - Ecommerce tự khai báo queue của họ (tiền tố `ecommerce.`) gắn vào `billing.events` với key `order-paid.v1` và `order-payment-failed.v1`.
 
 ### Quyền (script `deploy/scripts/init-rabbitmq.sh`)
@@ -53,7 +53,7 @@ Ba event mới, JSON phẳng, camelCase. Tên kiểu `{Event}V{N}`, schema `{Eve
 ### Gói `@billing/messaging`
 
 - `declareTopology(channel, spec)`: khai báo idempotent exchange/queue/binding/retry/DLQ.
-- `Publisher`: publish JSON với thuộc tính ở mục 2, dùng confirm channel; trả lỗi rõ khi broker không xác nhận hoặc nack.
+- `Publisher`: publish JSON với thuộc tính ở mục 2, dùng confirm channel và cờ `mandatory`. Message không có queue nào nhận (broker trả `NO_ROUTE`) bị coi là **thất bại**, không phải thành công: broker vẫn confirm các message không định tuyến được, và nếu không đặt `mandatory` thì chúng bị bỏ lặng lẽ (đã kiểm chứng). Dòng outbox khi đó giữ `PENDING` và được thử lại, nên khi ecommerce chưa khai báo queue thì không mất kết quả. Trả lỗi rõ khi broker nack hoặc mất kết nối.
 - `Consumer`: prefetch cấu hình được (`ORDER_CONSUMER_PREFETCH`, mặc định 10); handler trả `ack`, `retry` hoặc `reject`; `retry` đẩy sang bậc tiếp theo (đếm bằng header `x-retry-count`), hết bậc thì sang DLQ; `reject` vào DLQ ngay. Tự kết nối lại; dừng êm chờ message đang xử lý.
 - Không import code domain của service; chỉ phụ thuộc `amqplib`.
 
@@ -156,9 +156,7 @@ Code phía ecommerce; manifest K8s của Pact Broker; đối soát Wallet ↔ Or
 
 ## 9. Rủi ro cần kiểm chứng sớm và câu hỏi mở
 
-- `amqplib`: publisher confirm, prefetch, và retry/DLQ bằng TTL + dead-letter (cần probe thật trước khi viết plan).
-- `@pact-foundation/pact` message pact chạy được dưới pnpm/Vitest; `can-i-deploy` đúng với broker thật.
-- Sửa ràng buộc `CHECK` loại giao dịch ledger trên SQL Server trong migration theo từng schema.
-- `globalSetup` của test tích hợp phải dựng thêm RabbitMQ (và Postgres + broker cho Pact) mà không làm chậm cả bộ test.
+- **Đã kiểm chứng bằng probe thật** (RabbitMQ 3 qua testcontainers, `amqplib` 2.2.0, `@pact-foundation/pact` 17.1.4, Pact Broker + Postgres, SQL Server 2022): publisher confirm và `mandatory`/`return`; retry theo bậc TTL, DLQ và header `x-retry-count`; phạm vi quyền của user wallet và ecommerce (xem lưu ý về `amq.default` ở mục 3); message pact chạy dưới Vitest (mặc định spec 3.0.0, khớp PactNet 5 của ecommerce) và verify provider từ broker kèm publish kết quả; `can-i-deploy` trả "không" khi chưa verify và "có" sau khi verify; `ALTER TABLE … DROP CONSTRAINT` rồi `ADD CONSTRAINT … CHECK` trên bảng đã có dữ liệu và trigger bất biến, ràng buộc vẫn tin cậy (`is_not_trusted = 0`).
+- `globalSetup` của test tích hợp dựng thêm RabbitMQ song song với SQL Server (không tăng thời gian chờ đáng kể); Pact Broker và Postgres chỉ chạy khi kiểm tay hoặc ở bước Jenkins, không nằm trong `globalSetup`.
 - Ecommerce hiện chưa có consumer/publisher RabbitMQ thật (ADR-0011 của họ), MassTransit ghim 8.x: cách cấu hình gửi JSON thuần cần xác nhận cùng team ecommerce.
 - Danh sách tenant của gateway ecommerce và `WALLET_TENANTS` phải khớp (mở từ Bước 3); instance RabbitMQ dùng chung và cách truy cập từ máy phát triển (ADR-0004).
