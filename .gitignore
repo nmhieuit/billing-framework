@@ -5,3 +5,6 @@ coverage/
 *.log
 .DS_Store
 /pacts/
+
+# Tham số rule/dashboard Kibana cục bộ
+/deploy/kibana/params.local.json

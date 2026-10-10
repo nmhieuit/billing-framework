@@ -1,0 +1,96 @@
+# wallet + payment + job migrate + job kibana-import cho môi trường local (xem compose.infra.yml).
+x-dev: &dev
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile.dev
+  image: billing-dev:local
+  networks: [backbone]
+  working_dir: /app
+
+x-sources: &sources
+  - ../services/wallet/src:/app/services/wallet/src:ro
+  - ../services/payment/src:/app/services/payment/src:ro
+  - ../packages/contracts/src:/app/packages/contracts/src:ro
+  - ../packages/database/src:/app/packages/database/src:ro
+  - ../packages/messaging/src:/app/packages/messaging/src:ro
+  - ../packages/money/src:/app/packages/money/src:ro
+  - ../packages/observability/src:/app/packages/observability/src:ro
+  - ../packages/runtime/src:/app/packages/runtime/src:ro
+
+services:
+  migrate:
+    <<: *dev
+    restart: 'no'
+    depends_on:
+      billing-sql-init: { condition: service_completed_successfully }
+    environment:
+      WALLET_DB_HOST: sqlserver
+      WALLET_DB_NAME: billing_wallet
+      WALLET_DB_USER: billing_wallet_app
+      WALLET_DB_PASSWORD: ${BILLING_WALLET_DB_PASSWORD}
+      WALLET_MIGRATOR_DB_USER: billing_wallet_migrator
+      WALLET_MIGRATOR_DB_PASSWORD: ${BILLING_WALLET_MIGRATOR_DB_PASSWORD}
+      WALLET_TENANTS: ${LOCAL_TENANTS:-acme,beta}
+      PAYMENT_DB_HOST: sqlserver
+      PAYMENT_DB_NAME: billing_payment
+      PAYMENT_DB_USER: billing_payment_app
+      PAYMENT_DB_PASSWORD: ${BILLING_PAYMENT_DB_PASSWORD}
+      PAYMENT_MIGRATOR_DB_USER: billing_payment_migrator
+      PAYMENT_MIGRATOR_DB_PASSWORD: ${BILLING_PAYMENT_MIGRATOR_DB_PASSWORD}
+    command: ['sh', '-c', 'corepack pnpm db:migrate:wallet && corepack pnpm db:migrate:payment']
+
+  payment:
+    <<: *dev
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      otel-collector: { condition: service_started }
+    ports: ['${LOCAL_PAYMENT_PORT:-3002}:3002']
+    volumes: *sources
+    environment:
+      PAYMENT_DB_HOST: sqlserver
+      PAYMENT_DB_NAME: billing_payment
+      PAYMENT_DB_USER: billing_payment_app
+      PAYMENT_DB_PASSWORD: ${BILLING_PAYMENT_DB_PASSWORD}
+      WEBHOOK_URL: http://wallet:3001/webhooks/payment
+      WEBHOOK_SECRET: ${LOCAL_WEBHOOK_SECRET:?set in deploy/.env}
+      PORT: '3002'
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: payment
+    command: ['corepack', 'pnpm', '--filter', '@billing/payment-service', 'dev']
+
+  wallet:
+    <<: *dev
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      billing-rabbitmq-init: { condition: service_completed_successfully }
+      otel-collector: { condition: service_started }
+    ports: ['${LOCAL_WALLET_PORT:-3001}:3001']
+    volumes: *sources
+    environment:
+      WALLET_DB_HOST: sqlserver
+      WALLET_DB_NAME: billing_wallet
+      WALLET_DB_USER: billing_wallet_app
+      WALLET_DB_PASSWORD: ${BILLING_WALLET_DB_PASSWORD}
+      WALLET_TENANTS: ${LOCAL_TENANTS:-acme,beta}
+      PAYMENT_BASE_URL: http://payment:3002
+      PAYMENT_WEBHOOK_SECRET: ${LOCAL_WEBHOOK_SECRET:?set in deploy/.env}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: billing_wallet
+      RABBITMQ_PASSWORD: ${BILLING_WALLET_MQ_PASSWORD}
+      PORT: '3001'
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: wallet
+    command: ['corepack', 'pnpm', '--filter', '@billing/wallet-service', 'dev']
+
+  # Áp tham số rule/dashboard vào Kibana (lần dựng đầu và mỗi khi chạy lại job này).
+  # `kibana:apply` được thêm ở Task 10: trước đó hãy chạy với --scale kibana-import=0.
+  kibana-import:
+    <<: *dev
+    restart: 'no'
+    depends_on:
+      kibana: { condition: service_healthy }
+    volumes:
+      - ../deploy/kibana:/app/deploy/kibana
+    environment:
+      KIBANA_URL: http://kibana:5601
+    command: ['corepack', 'pnpm', 'kibana:apply']

@@ -1,0 +1,6 @@
+# Điểm vào một lệnh: gộp hạ tầng và service.
+#   docker compose -f deploy/compose.local.yml --env-file deploy/.env up -d --build
+name: billing-local
+include:
+  - compose.infra.yml
+  - compose.services.yml

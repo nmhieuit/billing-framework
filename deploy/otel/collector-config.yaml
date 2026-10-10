@@ -1,0 +1,32 @@
+# Collector cho stack local của billing: nhận OTLP từ wallet/payment, ghi metric vào Elasticsearch
+# (mapping `otel`, cùng cách với stack ecommerce) và in ra log để gỡ lỗi.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  debug:
+    verbosity: normal
+  elasticsearch:
+    endpoints: [http://elasticsearch:9200]
+    mapping:
+      mode: otel
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, elasticsearch]
+  telemetry:
+    logs:
+      level: warn
