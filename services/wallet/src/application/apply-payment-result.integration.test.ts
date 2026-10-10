@@ -367,6 +367,7 @@ describe('ApplyPaymentResult — inconsistent events', () => {
       clock: h.clock,
       ids: {
         topupId: () => h.ids.topupId(),
+        eventId: () => h.ids.eventId(),
         transactionId: () => {
           throw new Error('id generator down');
         },

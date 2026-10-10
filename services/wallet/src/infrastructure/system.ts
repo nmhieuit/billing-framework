@@ -15,4 +15,8 @@ export class RandomIdGenerator implements IdGenerator {
   transactionId(): string {
     return `tx_${randomUUID().replaceAll('-', '')}`;
   }
+
+  eventId(): string {
+    return randomUUID();
+  }
 }

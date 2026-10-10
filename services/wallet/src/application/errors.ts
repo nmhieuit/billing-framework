@@ -37,7 +37,7 @@ export class DuplicateKeyError extends Error {
   /** Nơi phát sinh trùng khóa, để use case phân biệt (vd. inbox: bình thường; sổ cái: bất thường). */
   constructor(
     message: string,
-    readonly source?: 'inbox' | 'ledger',
+    readonly source?: 'inbox' | 'ledger' | 'order_payment',
   ) {
     super(message);
   }
