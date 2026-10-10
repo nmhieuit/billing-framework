@@ -1,6 +1,13 @@
 import type { Money } from '@billing/money';
 import type { Account } from '../domain/account.js';
 import type { LedgerTransaction } from '../domain/ledger-transaction.js';
+import type {
+  AutofixAction,
+  CaseStatus,
+  GatewayCharge,
+  ReconciliationKind,
+  WalletTopupView,
+} from '../domain/reconciliation.js';
 import type { TenantId } from '../domain/tenant-id.js';
 import type { Topup } from '../domain/topup.js';
 
@@ -94,6 +101,7 @@ export interface Repositories {
   inbox: Inbox;
   orderPayments: OrderPaymentRepository;
   outbox: OutboxRepository;
+  reconciliation: ReconciliationRepository;
 }
 
 export interface TenantUnitOfWork {
@@ -170,4 +178,101 @@ export type PublishOutcome =
 export interface EventPublisher {
   /** Không bao giờ ném: mọi lỗi trả về dưới dạng `unroutable` hoặc `failed`. */
   publish(message: OutboxMessage): Promise<PublishOutcome>;
+}
+
+export type RunStatus = 'RUNNING' | 'COMPLETED' | 'FAILED';
+export type RunTrigger = 'SCHEDULED' | 'MANUAL';
+
+export interface ReconciliationRun {
+  id: string;
+  day: string;
+  status: RunStatus;
+  triggeredBy: RunTrigger;
+  failureReason: string | null;
+  gatewayTotals: Record<string, number>;
+  walletTotals: Record<string, number>;
+  itemCount: number;
+  startedAt: Date;
+  finishedAt: Date | null;
+}
+
+export interface NewReconciliationItem {
+  id: string;
+  kind: ReconciliationKind;
+  chargeId: string | null;
+  topupId: string | null;
+  amountGateway: number | null;
+  amountWallet: number | null;
+  currency: string | null;
+  detail: Record<string, unknown>;
+  action: AutofixAction;
+}
+
+export interface ReconciliationItem extends NewReconciliationItem {
+  /** Số thứ tự tăng dần toàn schema; dùng làm cursor phân trang. */
+  seq: number;
+  runId: string;
+  caseStatus: CaseStatus;
+  resolvedBy: string | null;
+  resolutionNote: string | null;
+  resolvedAt: Date | null;
+  createdAt: Date;
+}
+
+export interface ReconciliationRepository {
+  /** `false` khi lượt `SCHEDULED` của ngày này đã có (đang chạy hoặc đã xong): không tạo lượt trùng. */
+  startRun(run: {
+    id: string;
+    day: string;
+    triggeredBy: RunTrigger;
+    startedAt: Date;
+  }): Promise<boolean>;
+  /** Ghi các dòng lệch và đóng lượt `COMPLETED`. Dòng `AUTO_APPLIED` được ghi sẵn ở trạng thái `RESOLVED` bởi `system`. */
+  completeRun(
+    id: string,
+    input: {
+      gatewayTotals: Record<string, number>;
+      walletTotals: Record<string, number>;
+      items: readonly NewReconciliationItem[];
+      finishedAt: Date;
+    },
+  ): Promise<void>;
+  failRun(id: string, reason: string, finishedAt: Date): Promise<void>;
+  /** Đánh dấu `FAILED` các lượt còn `RUNNING` bắt đầu trước `startedBefore`; trả về số lượt bị đóng. */
+  failStaleRuns(startedBefore: Date, reason: string, now: Date): Promise<number>;
+  findRun(id: string): Promise<ReconciliationRun | null>;
+  /** Số lượt định kỳ của ngày theo trạng thái, và lúc lượt `FAILED` gần nhất kết thúc. */
+  scheduledRunsFor(day: string): Promise<{
+    running: number;
+    completed: number;
+    failed: number;
+    lastFailedAt: Date | null;
+  }>;
+  listItems(query: {
+    runId: string;
+    caseStatus: CaseStatus | null;
+    afterSeq: number;
+    limit: number;
+  }): Promise<ReconciliationItem[]>;
+  /** Đọc và khóa (UPDLOCK) một dòng lệch. */
+  lockItem(id: string): Promise<ReconciliationItem | null>;
+  /** Chỉ đóng dòng còn `OPEN`. */
+  resolveItem(
+    id: string,
+    resolution: { status: 'RESOLVED' | 'IGNORED'; resolvedBy: string; note: string; at: Date },
+  ): Promise<void>;
+  findTopupsByIds(ids: readonly string[]): Promise<WalletTopupView[]>;
+  /** Lần nạp `SUCCEEDED` có `completed_at` trong `[from, to)`. */
+  listSucceededTopups(from: Date, to: Date): Promise<WalletTopupView[]>;
+  /** Giao dịch có tổng các dòng khác 0 (tối đa 1000). */
+  findUnbalancedTransactions(): Promise<Array<{ transactionId: string; total: number }>>;
+  /** Tài khoản có số dư cache khác tổng các dòng sổ cái của nó (tối đa 1000). */
+  findBalanceMismatches(): Promise<
+    Array<{ accountId: string; balance: number; ledgerTotal: number }>
+  >;
+}
+
+export interface SettlementSource {
+  /** Mọi charge hoàn tất trong ngày UTC `day` (mọi tenant). Ném `SettlementUnavailableError` hoặc `ReconciliationTooLargeError`. */
+  fetchDay(day: string, maxCharges: number): Promise<GatewayCharge[]>;
 }
