@@ -80,6 +80,41 @@ describe('loadConfig', () => {
     ]);
   });
 
+  it('applies the reconciliation defaults and reads overrides', () => {
+    expect(loadConfig(minimal).reconciliation).toEqual({
+      autofix: true,
+      atUtcHour: 2,
+      maxAttempts: 3,
+      maxItems: 50_000,
+    });
+    expect(
+      loadConfig({
+        ...minimal,
+        RECONCILE_AUTOFIX: 'false',
+        RECONCILE_AT_UTC_HOUR: '23',
+        RECONCILE_MAX_ATTEMPTS: '5',
+        RECONCILE_MAX_ITEMS: '100',
+      }).reconciliation,
+    ).toEqual({ autofix: false, atUtcHour: 23, maxAttempts: 5, maxItems: 100 });
+  });
+
+  it('rejects invalid reconciliation settings together', () => {
+    expect(
+      problemsOf({
+        ...minimal,
+        RECONCILE_AUTOFIX: 'yes',
+        RECONCILE_AT_UTC_HOUR: '24',
+        RECONCILE_MAX_ATTEMPTS: '0',
+        RECONCILE_MAX_ITEMS: '1000001',
+      }),
+    ).toEqual([
+      'RECONCILE_AUTOFIX must be "true" or "false"',
+      'RECONCILE_AT_UTC_HOUR must be an integer in 0..23',
+      'RECONCILE_MAX_ATTEMPTS must be an integer in 1..20',
+      'RECONCILE_MAX_ITEMS must be an integer in 1..1000000',
+    ]);
+  });
+
   it('has no default for the secret and treats blank as missing', () => {
     expect(problemsOf({ ...minimal, PAYMENT_WEBHOOK_SECRET: '  ' })).toEqual([
       'PAYMENT_WEBHOOK_SECRET is required',
