@@ -14,7 +14,13 @@ import { InlineTopupSubmitter } from './application/inline-topup-submitter.js';
 import { ListEntries } from './application/list-entries.js';
 import { ListReconciliationItems } from './application/list-reconciliation-items.js';
 import { PayOrder } from './application/pay-order.js';
-import type { Clock, IdGenerator, Logger } from './application/ports.js';
+import {
+  noopMetrics,
+  type Clock,
+  type IdGenerator,
+  type Logger,
+  type Metrics,
+} from './application/ports.js';
 import { DEFAULT_OUTBOX_BACKOFF_SECONDS, RelayOutbox } from './application/relay-outbox.js';
 import { RequestTopup } from './application/request-topup.js';
 import { ResolveReconciliationItem } from './application/resolve-reconciliation-item.js';
@@ -41,6 +47,8 @@ export interface StartOverrides {
   ids?: IdGenerator;
   /** Móc cho test: chạy sau khi PayOrder đã commit, trước khi trả ack cho broker (mô phỏng consumer chết giữa chừng). */
   afterOrderHandled?: () => Promise<void>;
+  /** Cổng đo đạc vận hành; mặc định không làm gì (chạy trần và test không đổi hành vi). */
+  metrics?: Metrics;
 }
 
 export interface RunningService {
@@ -77,6 +85,9 @@ export async function startService(
     throw error;
   }
 
+  const metrics = overrides.metrics ?? noopMetrics;
+  // Tạo sẵn các chuỗi bộ đếm ở 0 để lần tăng đầu tiên nhìn thấy được như một mức tăng.
+  metrics.prime(config.tenants.map((t) => t.value));
   const clock = overrides.clock ?? new SystemClock();
   const ids = overrides.ids ?? new RandomIdGenerator();
   const registry = new ConfigTenantRegistry(config.tenants);
@@ -92,12 +103,13 @@ export async function startService(
     clock,
     log,
     backoffSeconds: config.topupBackoffSeconds,
+    metrics,
   });
   const submitter = new InlineTopupSubmitter({ submit, log });
   const submitDue = new SubmitDueTopups({ submit });
 
   // Dùng chung một ApplyPaymentResult cho webhook và đối soát (đường ghi sổ duy nhất, chống trùng sẵn).
-  const applyPaymentResult = new ApplyPaymentResult({ uow, clock, ids, log });
+  const applyPaymentResult = new ApplyPaymentResult({ uow, clock, ids, log, metrics });
   const background = new BackgroundRuns(log);
   const reconciliation = new RunReconciliation({
     uow,
@@ -113,6 +125,7 @@ export async function startService(
       autofix: config.reconciliation.autofix,
       maxItems: config.reconciliation.maxItems,
     },
+    metrics,
   });
   const scheduleDaily = new ScheduleDailyReconciliation({
     uow,
@@ -133,13 +146,14 @@ export async function startService(
     log,
     backoffSeconds: DEFAULT_OUTBOX_BACKOFF_SECONDS,
   });
-  const orderReady = createOrderReadyHandler({ registry, payOrder, log });
+  const orderReady = createOrderReadyHandler({ registry, payOrder, log, metrics });
 
   let app: NestFastifyApplication;
   try {
     await broker.consume({
       topology: orderPaymentsTopology(config.orders.retryDelaysSeconds),
       prefetch: config.orders.prefetch,
+      onSettled: (result) => metrics.consumerMessage(result),
       handler: async (message) => {
         const result = await orderReady(message);
         await overrides.afterOrderHandled?.();

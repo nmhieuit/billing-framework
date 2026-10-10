@@ -11,15 +11,17 @@ import {
 import type { TenantId } from '../domain/tenant-id.js';
 import type { ApplyPaymentResult } from './apply-payment-result.js';
 import { ReconciliationTooLargeError } from './errors.js';
-import type {
-  Clock,
-  IdGenerator,
-  Logger,
-  NewReconciliationItem,
-  ReconciliationRun,
-  RunTrigger,
-  SettlementSource,
-  TenantUnitOfWork,
+import {
+  noopMetrics,
+  type Clock,
+  type IdGenerator,
+  type Logger,
+  type Metrics,
+  type NewReconciliationItem,
+  type ReconciliationRun,
+  type RunTrigger,
+  type SettlementSource,
+  type TenantUnitOfWork,
 } from './ports.js';
 
 export interface RunHandle {
@@ -37,6 +39,7 @@ export interface RunReconciliationDeps {
   ids: IdGenerator;
   log: Logger;
   options: { autofix: boolean; maxItems: number };
+  metrics?: Metrics;
 }
 
 interface GatewayCheck {
@@ -149,6 +152,9 @@ export class RunReconciliation {
       reconciliation.findRun(runId),
     );
     if (run === null) throw new Error(`reconciliation run ${runId} disappeared`);
+    if (run.status === 'COMPLETED' || run.status === 'FAILED') {
+      (this.deps.metrics ?? noopMetrics).reconciliationRun(tenant.value, run.status);
+    }
     return run;
   }
 
@@ -231,6 +237,7 @@ export class RunReconciliation {
         tenant,
         eventId: `reconcile:${runId}:${d.chargeId}`,
         type: 'charge.succeeded',
+        source: 'reconciliation',
         chargeId: d.chargeId,
         reference: topupId,
         amount: d.amountGateway,

@@ -4,7 +4,15 @@ import { LedgerTransaction } from '../domain/ledger-transaction.js';
 import type { TenantId } from '../domain/tenant-id.js';
 import type { Topup, TopupProps } from '../domain/topup.js';
 import { DuplicateKeyError } from './errors.js';
-import type { Clock, IdGenerator, Logger, Repositories, TenantUnitOfWork } from './ports.js';
+import {
+  noopMetrics,
+  type Clock,
+  type IdGenerator,
+  type Logger,
+  type Metrics,
+  type Repositories,
+  type TenantUnitOfWork,
+} from './ports.js';
 
 export type PaymentEventType = 'charge.succeeded' | 'charge.failed';
 
@@ -18,6 +26,8 @@ export interface ApplyPaymentResultInput {
   amount: number;
   currency: string;
   failureCode?: string | undefined;
+  /** Nguồn sự kiện, chỉ để gắn nhãn metric: webhook (mặc định) hay đối soát tự ghi bù. */
+  source?: 'webhook' | 'reconciliation' | undefined;
 }
 
 export type ApplyOutcome = 'APPLIED' | 'DUPLICATE' | 'UNKNOWN_TOPUP' | 'MISMATCH' | 'IGNORED';
@@ -33,9 +43,19 @@ interface ApplyResult {
 }
 
 export class ApplyPaymentResult {
+  private readonly metrics: Metrics;
+
   constructor(
-    private readonly deps: { uow: TenantUnitOfWork; clock: Clock; ids: IdGenerator; log: Logger },
-  ) {}
+    private readonly deps: {
+      uow: TenantUnitOfWork;
+      clock: Clock;
+      ids: IdGenerator;
+      log: Logger;
+      metrics?: Metrics;
+    },
+  ) {
+    this.metrics = deps.metrics ?? noopMetrics;
+  }
 
   async execute(input: ApplyPaymentResultInput): Promise<ApplyOutcome> {
     let result: ApplyResult;
@@ -52,12 +72,24 @@ export class ApplyPaymentResult {
             `ledger already holds topup:${input.reference} but the topup is not SUCCEEDED; inconsistent`,
           );
         }
+        this.count(input, 'duplicate');
         return 'DUPLICATE';
       }
       throw error;
     }
     this.report(result, input);
+    this.count(input, this.label(result.outcome, input));
     return result.outcome;
+  }
+
+  private count(input: ApplyPaymentResultInput, outcome: string): void {
+    this.metrics.topup(input.tenant.value, input.source ?? 'webhook', outcome);
+  }
+
+  private label(outcome: ApplyOutcome, input: ApplyPaymentResultInput): string {
+    if (outcome === 'APPLIED') return input.type === 'charge.succeeded' ? 'succeeded' : 'failed';
+    if (outcome === 'UNKNOWN_TOPUP') return 'unknown_topup';
+    return outcome.toLowerCase();
   }
 
   private async apply(

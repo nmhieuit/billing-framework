@@ -1,11 +1,13 @@
 import type { TenantId } from '../domain/tenant-id.js';
 import type { Topup } from '../domain/topup.js';
-import type {
-  Clock,
-  GatewayChargeResult,
-  Logger,
-  PaymentGateway,
-  TenantUnitOfWork,
+import {
+  noopMetrics,
+  type Clock,
+  type GatewayChargeResult,
+  type Logger,
+  type Metrics,
+  type PaymentGateway,
+  type TenantUnitOfWork,
 } from './ports.js';
 
 export type SubmitOutcome =
@@ -20,6 +22,7 @@ const DEFAULT_LEASE_SECONDS = 60;
  */
 export class SubmitTopup {
   private readonly leaseSeconds: number;
+  private readonly metrics: Metrics;
 
   constructor(
     private readonly deps: {
@@ -29,9 +32,11 @@ export class SubmitTopup {
       log: Logger;
       backoffSeconds: readonly number[];
       leaseSeconds?: number;
+      metrics?: Metrics;
     },
   ) {
     this.leaseSeconds = deps.leaseSeconds ?? DEFAULT_LEASE_SECONDS;
+    this.metrics = deps.metrics ?? noopMetrics;
   }
 
   async executeFor(tenant: TenantId, topupId: string): Promise<SubmitOutcome> {
@@ -97,6 +102,7 @@ export class SubmitTopup {
     });
     // Ghi log SAU khi transaction kết quả đã commit; không bao giờ ghi bí mật hay thân yêu cầu.
     this.report(outcome, tenant, props.id, result, attempts);
+    this.metrics.topup(tenant.value, 'submit', outcome.toLowerCase());
     return outcome;
   }
 

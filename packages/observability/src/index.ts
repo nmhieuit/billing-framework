@@ -14,3 +14,5 @@ export type {
   Telemetry,
   TelemetryOptions,
 } from './telemetry.js';
+export { recordingTelemetry } from './recording-telemetry.js';
+export type { CollectedMetrics } from './recording-telemetry.js';

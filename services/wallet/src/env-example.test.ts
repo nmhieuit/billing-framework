@@ -30,6 +30,7 @@ describe('services/wallet/.env.example', () => {
   it('documents exactly the variables the service and the migrate command read', () => {
     expect(Object.keys(example).sort()).toEqual(
       [
+        'METRICS_SAMPLE_INTERVAL_SECONDS',
         'ORDER_CONSUMER_PREFETCH',
         'ORDER_RETRY_DELAYS',
         'OUTBOX_BATCH',

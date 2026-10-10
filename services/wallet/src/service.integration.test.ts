@@ -68,6 +68,7 @@ const configFor = (overrides: Partial<WalletConfig> = {}): WalletConfig => ({
   reconciliation: { autofix: true, atUtcHour: 23, maxAttempts: 3, maxItems: 1000 },
   topupBackoffSeconds: [1, 5],
   workerIntervalMs: 20,
+  telemetry: { sampleIntervalSeconds: 15 },
   ...overrides,
 });
 

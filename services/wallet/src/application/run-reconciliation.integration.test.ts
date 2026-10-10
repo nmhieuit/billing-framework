@@ -15,6 +15,7 @@ import {
   seedSucceededTopup,
   startDay,
 } from '../test-support-reconciliation.js';
+import { RecordingMetrics } from '../test-support-metrics.js';
 import { ApplyPaymentResult, type ApplyOutcome } from './apply-payment-result.js';
 import { SettlementUnavailableError } from './errors.js';
 import type { Logger } from './ports.js';
@@ -54,6 +55,7 @@ function build(
   options: Partial<RunReconciliationDeps['options']> = {},
   applyPayment?: RunReconciliationDeps['applyPayment'],
   log: Logger = silentLogger,
+  metrics?: RecordingMetrics,
 ): RunReconciliation {
   return new RunReconciliation({
     uow: h.uow,
@@ -65,6 +67,7 @@ function build(
     ids: h.ids,
     log,
     options: { autofix: true, maxItems: 1000, ...options },
+    ...(metrics ? { metrics } : {}),
   });
 }
 
@@ -571,5 +574,48 @@ describe('runs', () => {
     expect(
       await reconciliation.begin({ tenant: h.acme, day, triggeredBy: 'MANUAL' }),
     ).not.toBeNull();
+  });
+});
+
+describe('metrics', () => {
+  it('counts a completed run and passes the reconciliation source to applyPayment', async () => {
+    const day = startDay(h);
+    const topup = await seedTopup(h, { state: 'PENDING', amount: 90000 });
+    settlement.set(day, [chargeFor(topup)]);
+    const metrics = new RecordingMetrics();
+    const sources: Array<string | undefined> = [];
+    const inner = new ApplyPaymentResult({
+      uow: h.uow,
+      clock: h.clock,
+      ids: h.ids,
+      log: silentLogger,
+    });
+    const result = await run(
+      day,
+      h.acme,
+      build(
+        {},
+        {
+          execute: (input) => {
+            sources.push(input.source);
+            return inner.execute(input);
+          },
+        },
+        silentLogger,
+        metrics,
+      ),
+    );
+    expect(result?.status).toBe('COMPLETED');
+    expect(sources).toEqual(['reconciliation']);
+    expect(metrics.calls).toEqual([['reconciliationRun', 'acme', 'COMPLETED']]);
+  });
+
+  it('counts a run that failed because the gateway is down', async () => {
+    const day = startDay(h);
+    settlement.failWith = new SettlementUnavailableError('gateway down');
+    const metrics = new RecordingMetrics();
+    const result = await run(day, h.acme, build({}, undefined, silentLogger, metrics));
+    expect(result?.status).toBe('FAILED');
+    expect(metrics.calls).toEqual([['reconciliationRun', 'acme', 'FAILED']]);
   });
 });

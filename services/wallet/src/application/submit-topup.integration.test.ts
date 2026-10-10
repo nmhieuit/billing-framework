@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomerId } from '../domain/customer-id.js';
 import type { TenantId } from '../domain/tenant-id.js';
 import { createHarness, type Harness } from '../test-support.js';
+import { RecordingMetrics } from '../test-support-metrics.js';
 import { CreateWallet } from './create-wallet.js';
 import type { GatewayChargeRequest, GatewayChargeResult, PaymentGateway } from './ports.js';
 import { RequestTopup } from './request-topup.js';
@@ -32,6 +33,7 @@ interface LogLine {
 }
 
 let logs: LogLine[];
+let metrics: RecordingMetrics;
 let h: Harness;
 let gateway: ScriptedGateway;
 let submit: SubmitTopup;
@@ -63,6 +65,7 @@ beforeEach(async () => {
   }
   gateway = new ScriptedGateway();
   logs = [];
+  metrics = new RecordingMetrics();
   submit = new SubmitTopup({
     uow: h.uow,
     gateway,
@@ -74,6 +77,7 @@ beforeEach(async () => {
     },
     backoffSeconds: [1, 5],
     leaseSeconds: 60,
+    metrics,
   });
   h.clock.set('2026-10-10T10:00:00.000Z');
 });
@@ -307,5 +311,47 @@ describe('SubmitTopup', () => {
     ]);
     expect(outcomes).toEqual(['SUBMITTED', 'SUBMITTED']);
     expect(new Set(gateway.requests.map((r) => r.reference)).size).toBe(2);
+  });
+});
+
+describe('SubmitTopup — metrics', () => {
+  it('records submitted, rejected, retry_scheduled, failed and superseded, but nothing for NOT_DUE', async () => {
+    const ok = await seed();
+    await submit.executeFor(ok.tenant, ok.topupId);
+
+    const rejected = await seed();
+    gateway.enqueue({ kind: 'rejected', status: 422, message: 'bad' });
+    await submit.executeFor(rejected.tenant, rejected.topupId);
+
+    const flaky = await seed();
+    gateway.enqueue(
+      ...Array.from({ length: 3 }, () => ({ kind: 'unavailable', error: 'down' }) as const),
+    );
+    await submit.executeFor(flaky.tenant, flaky.topupId);
+    expect(await submit.executeFor(flaky.tenant, flaky.topupId)).toBe('NOT_DUE');
+    h.clock.advanceSeconds(1);
+    await submit.executeFor(flaky.tenant, flaky.topupId);
+    h.clock.advanceSeconds(5);
+    await submit.executeFor(flaky.tenant, flaky.topupId);
+
+    const late = await seed();
+    gateway.enqueue({ kind: 'rejected', status: 400, message: 'x' });
+    gateway.onCall = async () => {
+      await h.uow.run(late.tenant, async ({ topups }) => {
+        const topup = await topups.lockById(late.topupId);
+        if (!topup) throw new Error('missing topup');
+        await topups.save(topup.applySucceeded('ch_w', h.clock.now()));
+      });
+    };
+    await submit.executeFor(late.tenant, late.topupId);
+
+    expect(metrics.calls).toEqual([
+      ['topup', 'acme', 'submit', 'submitted'],
+      ['topup', 'acme', 'submit', 'rejected'],
+      ['topup', 'acme', 'submit', 'retry_scheduled'],
+      ['topup', 'acme', 'submit', 'retry_scheduled'],
+      ['topup', 'acme', 'submit', 'failed'],
+      ['topup', 'acme', 'submit', 'superseded'],
+    ]);
   });
 });

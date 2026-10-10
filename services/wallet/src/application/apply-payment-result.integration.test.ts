@@ -9,6 +9,7 @@ import {
   type Harness,
   type SeededTopup,
 } from '../test-support.js';
+import { RecordingMetrics } from '../test-support-metrics.js';
 import { ApplyPaymentResult, type ApplyPaymentResultInput } from './apply-payment-result.js';
 import type { Logger } from './ports.js';
 
@@ -21,6 +22,7 @@ interface LogLine {
 let h: Harness;
 let apply: ApplyPaymentResult;
 let logs: LogLine[];
+let metrics: RecordingMetrics;
 let eventCounter = 0;
 
 beforeAll(async () => {
@@ -31,12 +33,13 @@ afterAll(async () => {
 });
 beforeEach(() => {
   logs = [];
+  metrics = new RecordingMetrics();
   const log: Logger = {
     info: (details, message) => logs.push({ level: 'info', details, message }),
     warn: (details, message) => logs.push({ level: 'warn', details, message }),
     error: (details, message) => logs.push({ level: 'error', details, message }),
   };
-  apply = new ApplyPaymentResult({ uow: h.uow, clock: h.clock, ids: h.ids, log });
+  apply = new ApplyPaymentResult({ uow: h.uow, clock: h.clock, ids: h.ids, log, metrics });
   h.clock.set('2026-10-10T10:00:00.000Z');
 });
 afterEach(async () => {
@@ -385,5 +388,41 @@ describe('ApplyPaymentResult — inconsistent events', () => {
     // Nếu inbox không được rollback, lần xử lý lại sẽ bị coi là DUPLICATE và tiền không bao giờ được ghi.
     expect(await apply.execute(first)).toBe('APPLIED');
     expect(await balance(h.acme, `wallet:${seeded.customer}`)).toBe(150000);
+  });
+});
+
+describe('ApplyPaymentResult — metrics', () => {
+  it('records a succeeded and a failed top-up on the webhook stage', async () => {
+    const ok = await seedTopup(h);
+    await apply.execute(event(ok));
+    const bad = await seedTopup(h);
+    await apply.execute(event(bad, { type: 'charge.failed', failureCode: 'card_declined' }));
+    expect(metrics.calls).toEqual([
+      ['topup', 'acme', 'webhook', 'succeeded'],
+      ['topup', 'acme', 'webhook', 'failed'],
+    ]);
+  });
+
+  it('records duplicate, ignored, mismatch and unknown_topup', async () => {
+    const seeded = await seedTopup(h);
+    const first = event(seeded);
+    await apply.execute(first);
+    await apply.execute(first);
+    await apply.execute(event(seeded));
+    await apply.execute(event(await seedTopup(h), { amount: 1 }));
+    await apply.execute(event(seeded, { reference: 'tp_missing' }));
+    expect(metrics.calls.map((c) => c[3])).toEqual([
+      'succeeded',
+      'duplicate',
+      'ignored',
+      'mismatch',
+      'unknown_topup',
+    ]);
+  });
+
+  it('uses the reconciliation stage when the input says so', async () => {
+    const seeded = await seedTopup(h);
+    await apply.execute(event(seeded, { source: 'reconciliation' }));
+    expect(metrics.calls).toEqual([['topup', 'acme', 'reconciliation', 'succeeded']]);
   });
 });
