@@ -5,20 +5,27 @@ import { Worker, once, runAll } from '@billing/runtime';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Kysely } from 'kysely';
 import { ApplyPaymentResult } from './application/apply-payment-result.js';
+import { BackgroundRuns } from './application/background-runs.js';
 import { CreateWallet } from './application/create-wallet.js';
+import { GetReconciliationRun } from './application/get-reconciliation-run.js';
 import { GetTopup } from './application/get-topup.js';
 import { GetWallet } from './application/get-wallet.js';
 import { InlineTopupSubmitter } from './application/inline-topup-submitter.js';
 import { ListEntries } from './application/list-entries.js';
+import { ListReconciliationItems } from './application/list-reconciliation-items.js';
 import { PayOrder } from './application/pay-order.js';
 import type { Clock, IdGenerator, Logger } from './application/ports.js';
 import { DEFAULT_OUTBOX_BACKOFF_SECONDS, RelayOutbox } from './application/relay-outbox.js';
 import { RequestTopup } from './application/request-topup.js';
+import { ResolveReconciliationItem } from './application/resolve-reconciliation-item.js';
+import { RunReconciliation } from './application/run-reconciliation.js';
+import { StartManualReconciliation } from './application/start-manual-reconciliation.js';
 import { SubmitDueTopups } from './application/submit-due-topups.js';
 import { SubmitTopup } from './application/submit-topup.js';
 import type { WalletConfig } from './config.js';
 import { AmqpEventPublisher } from './infrastructure/amqp-event-publisher.js';
 import { HttpPaymentGateway } from './infrastructure/http-payment-gateway.js';
+import { HttpSettlementSource } from './infrastructure/http-settlement-source.js';
 import type { WalletDatabase } from './infrastructure/kysely/schema.js';
 import { assertMigrated } from './infrastructure/kysely/provisioning.js';
 import { KyselyTenantUnitOfWork } from './infrastructure/kysely/unit-of-work.js';
@@ -88,6 +95,25 @@ export async function startService(
   const submitter = new InlineTopupSubmitter({ submit, log });
   const submitDue = new SubmitDueTopups({ submit });
 
+  // Dùng chung một ApplyPaymentResult cho webhook và đối soát (đường ghi sổ duy nhất, chống trùng sẵn).
+  const applyPaymentResult = new ApplyPaymentResult({ uow, clock, ids, log });
+  const background = new BackgroundRuns(log);
+  const reconciliation = new RunReconciliation({
+    uow,
+    settlement: new HttpSettlementSource({
+      baseUrl: config.payment.baseUrl,
+      timeoutMs: config.payment.timeoutMs,
+    }),
+    applyPayment: applyPaymentResult,
+    clock,
+    ids,
+    log,
+    options: {
+      autofix: config.reconciliation.autofix,
+      maxItems: config.reconciliation.maxItems,
+    },
+  });
+
   const payOrder = new PayOrder({ uow, clock, ids, log });
   const relay = new RelayOutbox({
     uow,
@@ -119,7 +145,11 @@ export async function startService(
       listEntries: new ListEntries({ uow }),
       requestTopup: new RequestTopup({ uow, clock, ids, submitter }),
       getTopup: new GetTopup({ uow }),
-      applyPaymentResult: new ApplyPaymentResult({ uow, clock, ids, log }),
+      applyPaymentResult,
+      startReconciliation: new StartManualReconciliation({ run: reconciliation, background }),
+      getReconciliationRun: new GetReconciliationRun({ uow }),
+      listReconciliationItems: new ListReconciliationItems({ uow }),
+      resolveReconciliationItem: new ResolveReconciliationItem({ uow, clock }),
     });
   } catch (error) {
     await broker.close().catch(() => undefined);
@@ -173,6 +203,7 @@ export async function startService(
         () => worker.stop(),
         () => app.close(),
         () => submitter.drain(),
+        () => background.drain(),
         () => broker.close(),
         () => db.destroy(),
       ]),

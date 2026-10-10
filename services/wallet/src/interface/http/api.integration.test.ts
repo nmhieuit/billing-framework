@@ -55,6 +55,10 @@ function buildDeps(overrides: Partial<AppDeps> = {}): AppDeps {
       ids: h.ids,
       log: logger,
     }),
+    startReconciliation: { execute: () => Promise.reject(new Error('not used')) },
+    getReconciliationRun: { execute: () => Promise.reject(new Error('not used')) },
+    listReconciliationItems: { execute: () => Promise.reject(new Error('not used')) },
+    resolveReconciliationItem: { execute: () => Promise.reject(new Error('not used')) },
     ...overrides,
   };
 }
