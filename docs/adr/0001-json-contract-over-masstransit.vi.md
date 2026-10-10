@@ -1,6 +1,7 @@
 # ADR-0001: Hợp đồng JSON thuần, không dùng envelope MassTransit
 
 **Trạng thái:** Chấp nhận — 2026-10-09
+**Cập nhật 2026-10-10:** hình dạng message (envelope) được thay bằng ADR-0008; quyết định "JSON thuần, không bám MassTransit" vẫn đúng.
 
 ## Bối cảnh
 

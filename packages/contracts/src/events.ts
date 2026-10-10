@@ -1,5 +1,13 @@
 import type { FromSchema } from 'json-schema-to-ts';
 
+/** Trường chung của mọi event: quy ước event của ecommerce (JSON phẳng, không envelope). */
+const commonProperties = {
+  eventId: { type: 'string', format: 'uuid' },
+  occurredAtUtc: { type: 'string', format: 'date-time' },
+  tenantId: { type: 'string', minLength: 1 },
+  correlationId: { type: 'string', minLength: 1 },
+} as const;
+
 const moneyProperties = {
   amount: {
     type: 'integer',
@@ -10,33 +18,56 @@ const moneyProperties = {
 } as const;
 
 export const orderReadyForPaymentV1 = {
-  $id: 'urn:billing:schema:orders.order-ready-for-payment:v1',
+  $id: 'urn:billing:schema:OrderReadyForPayment:v1',
   type: 'object',
-  required: ['orderId', 'customerId', 'amount', 'currency'],
+  required: [
+    'eventId',
+    'occurredAtUtc',
+    'tenantId',
+    'correlationId',
+    'orderId',
+    'customerId',
+    'amount',
+    'currency',
+  ],
   properties: {
-    orderId: { type: 'string', minLength: 1 },
+    ...commonProperties,
+    orderId: { type: 'string', format: 'uuid' },
     customerId: { type: 'string', minLength: 1 },
     ...moneyProperties,
   },
 } as const;
 
 export const orderPaidV1 = {
-  $id: 'urn:billing:schema:billing.order-paid:v1',
+  $id: 'urn:billing:schema:OrderPaid:v1',
   type: 'object',
-  required: ['orderId', 'walletTransactionId', 'paidAt'],
+  required: [
+    'eventId',
+    'occurredAtUtc',
+    'tenantId',
+    'correlationId',
+    'orderId',
+    'walletTransactionId',
+    'amount',
+    'currency',
+    'paidAtUtc',
+  ],
   properties: {
-    orderId: { type: 'string', minLength: 1 },
+    ...commonProperties,
+    orderId: { type: 'string', format: 'uuid' },
     walletTransactionId: { type: 'string', minLength: 1 },
-    paidAt: { type: 'string', format: 'date-time' },
+    ...moneyProperties,
+    paidAtUtc: { type: 'string', format: 'date-time' },
   },
 } as const;
 
 export const orderPaymentFailedV1 = {
-  $id: 'urn:billing:schema:billing.order-payment-failed:v1',
+  $id: 'urn:billing:schema:OrderPaymentFailed:v1',
   type: 'object',
-  required: ['orderId', 'reason'],
+  required: ['eventId', 'occurredAtUtc', 'tenantId', 'correlationId', 'orderId', 'reason'],
   properties: {
-    orderId: { type: 'string', minLength: 1 },
+    ...commonProperties,
+    orderId: { type: 'string', format: 'uuid' },
     reason: {
       type: 'string',
       enum: ['INSUFFICIENT_FUNDS', 'WALLET_NOT_FOUND', 'CURRENCY_MISMATCH', 'CONFLICT'],
@@ -44,14 +75,33 @@ export const orderPaymentFailedV1 = {
   },
 } as const;
 
-export const eventSchemas = {
-  'orders.order-ready-for-payment.v1': orderReadyForPaymentV1,
-  'billing.order-paid.v1': orderPaidV1,
-  'billing.order-payment-failed.v1': orderPaymentFailedV1,
+/** Mỗi event: schema, routing key (khóa định tuyến trên exchange) và tên file schema phát hành. */
+export const eventCatalog = {
+  OrderReadyForPaymentV1: {
+    schema: orderReadyForPaymentV1,
+    routingKey: 'order-ready-for-payment.v1',
+    schemaFile: 'OrderReadyForPayment.v1.schema.json',
+  },
+  OrderPaidV1: {
+    schema: orderPaidV1,
+    routingKey: 'order-paid.v1',
+    schemaFile: 'OrderPaid.v1.schema.json',
+  },
+  OrderPaymentFailedV1: {
+    schema: orderPaymentFailedV1,
+    routingKey: 'order-payment-failed.v1',
+    schemaFile: 'OrderPaymentFailed.v1.schema.json',
+  },
 } as const;
 
-export type EventType = keyof typeof eventSchemas;
+export type EventName = keyof typeof eventCatalog;
 
 export type OrderReadyForPaymentV1 = FromSchema<typeof orderReadyForPaymentV1>;
 export type OrderPaidV1 = FromSchema<typeof orderPaidV1>;
 export type OrderPaymentFailedV1 = FromSchema<typeof orderPaymentFailedV1>;
+
+export interface EventPayloads {
+  OrderReadyForPaymentV1: OrderReadyForPaymentV1;
+  OrderPaidV1: OrderPaidV1;
+  OrderPaymentFailedV1: OrderPaymentFailedV1;
+}

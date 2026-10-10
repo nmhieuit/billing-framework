@@ -99,29 +99,21 @@ DB riêng, user SQL riêng; health/readiness endpoint; log có `correlationId`; 
 - Exchange `topic`: `orders.events` (ecommerce sở hữu), `billing.events` (billing sở hữu). Mỗi bên chỉ publish vào exchange của mình, chỉ consume từ exchange của bên kia.
 - Mỗi consumer có queue riêng, retry queue (backoff) và DLQ.
 
-### Envelope chung (JSON thuần)
+### Hình dạng event (JSON phẳng, theo quy ước của ecommerce)
 
-```json
-{
-  "messageId": "uuid",
-  "type": "billing.order-paid.v1",
-  "occurredAt": "2026-10-09T10:00:00Z",
-  "correlationId": "uuid",
-  "causationId": "uuid",
-  "tenantId": "...",
-  "data": {}
-}
-```
-
-Version nằm trong `type`. Thêm field là tương thích; đổi nghĩa thì tạo `v2` chạy song song. Người nhận theo "tolerant reader".
+Mỗi event là một JSON phẳng như `OrderPlacedV1` của ecommerce: `eventId`, `occurredAtUtc`, `tenantId`, `correlationId` cùng
+các trường nghiệp vụ; không có envelope (xem ADR-0008). Version nằm trong tên event (`OrderPaidV1`, schema
+`OrderPaid.v1.schema.json`) và routing key (`order-paid.v1`). Thêm trường tùy chọn là tương thích; đổi nghĩa hoặc thêm
+trường bắt buộc thì tạo `V2` chạy song song. Người nhận theo "tolerant reader". Chi tiết ở
+`docs/superpowers/specs/2026-10-10-order-payment-integration-design.md`.
 
 ### Event luồng thanh toán order
 
 | Event | Bên phát | Bên nhận | Ý nghĩa |
 |---|---|---|---|
-| `orders.order-ready-for-payment.v1` | orders | wallet | Order hoàn tất, cần thu tiền. `data`: `orderId`, `customerId`, `amount`, `currency` |
-| `billing.order-paid.v1` | wallet | orders | Đã trừ tiền. `data`: `orderId`, `walletTransactionId`, `paidAt` |
-| `billing.order-payment-failed.v1` | wallet | orders | Từ chối. `data`: `orderId`, `reason` (`INSUFFICIENT_FUNDS`, `WALLET_NOT_FOUND`, `CURRENCY_MISMATCH`, `CONFLICT`) |
+| `OrderReadyForPaymentV1` | orders | wallet | Order hoàn tất, cần thu tiền. Trường nghiệp vụ: `orderId`, `customerId`, `amount`, `currency` |
+| `OrderPaidV1` | wallet | orders | Đã trừ tiền. `orderId`, `walletTransactionId`, `amount`, `currency`, `paidAtUtc` |
+| `OrderPaymentFailedV1` | wallet | orders | Từ chối. `orderId`, `reason` (`INSUFFICIENT_FUNDS`, `WALLET_NOT_FOUND`, `CURRENCY_MISMATCH`, `CONFLICT`) |
 
 ### Nạp tiền (nội bộ billing)
 
