@@ -27,3 +27,8 @@ export class LedgerInvariantError extends Error {
 export class StateTransitionError extends Error {
   override name = 'StateTransitionError';
 }
+
+/** Đầu vào đối soát không hợp lệ (ngày, ghi chú, người xử lý, trạng thái đóng ca). */
+export class InvalidReconciliationError extends Error {
+  override name = 'InvalidReconciliationError';
+}
