@@ -1,0 +1,61 @@
+{
+  "dashboard": { "timeRange": "now-6h", "refreshSeconds": 60 },
+  "rules": {
+    "billing-dlq-not-empty": {
+      "enabled": true,
+      "severity": "critical",
+      "intervalMinutes": 1,
+      "windowMinutes": 5,
+      "minDepth": 0
+    },
+    "billing-outbox-stuck": {
+      "enabled": true,
+      "severity": "high",
+      "intervalMinutes": 1,
+      "windowMinutes": 5,
+      "thresholdSeconds": 300
+    },
+    "billing-topups-stuck": {
+      "enabled": true,
+      "severity": "high",
+      "intervalMinutes": 1,
+      "windowMinutes": 5,
+      "thresholdSeconds": 300
+    },
+    "billing-ledger-integrity": {
+      "enabled": true,
+      "severity": "critical",
+      "intervalMinutes": 1,
+      "windowMinutes": 5,
+      "minOpenItems": 0
+    },
+    "billing-reconciliation-stale-cases": {
+      "enabled": true,
+      "severity": "warning",
+      "intervalMinutes": 15,
+      "windowMinutes": 30,
+      "maxAgeHours": 24
+    },
+    "billing-reconciliation-missed": {
+      "enabled": true,
+      "severity": "high",
+      "intervalMinutes": 15,
+      "windowMinutes": 30,
+      "maxAgeHours": 26
+    },
+    "billing-reconciliation-failed-run": {
+      "enabled": true,
+      "severity": "high",
+      "intervalMinutes": 5,
+      "windowMinutes": 30
+    },
+    "billing-service-silent": {
+      "enabled": true,
+      "severity": "high",
+      "intervalMinutes": 1,
+      "windowMinutes": 5,
+      "silentMinutes": 5,
+      "lookbackHours": 6
+    }
+  }
+}
