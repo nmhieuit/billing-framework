@@ -7,6 +7,8 @@ import type { BrokerConfig, BrokerLogger } from './types.js';
 interface Registration {
   spec: ConsumerSpec;
   running: RunningConsumer | undefined;
+  /** Channel mà `running` đang gắn vào: consumer gắn với channel đã bị thay thế/đóng thì coi như không chạy. */
+  channel: Channel | undefined;
 }
 
 const RESTART_BASE_MS = 200;
@@ -119,7 +121,7 @@ export class BrokerClient {
           );
         }
       }
-      const registration: Registration = { spec, running: undefined };
+      const registration: Registration = { spec, running: undefined, channel: undefined };
       this.#registrations.push(registration);
       const model = this.#channelModel;
       const channel = this.#consumeChannel;
@@ -258,7 +260,7 @@ export class BrokerClient {
     model: ChannelModel,
     channel: Channel,
   ): Promise<void> {
-    if (this.#closing || registration.running) return;
+    if (this.#closing || this.#isLive(registration)) return;
     try {
       await this.#start(registration, model, channel);
     } catch (error) {
@@ -270,8 +272,19 @@ export class BrokerClient {
 
   async #restartOne(registration: Registration, model: ChannelModel): Promise<void> {
     const channel = this.#consumeChannel;
-    if (this.#closing || this.#channelModel !== model || !channel || registration.running) return;
+    if (this.#closing || this.#channelModel !== model || !channel || this.#isLive(registration)) {
+      return;
+    }
     await this.#start(registration, model, channel);
+  }
+
+  /** Consumer chỉ "đang chạy" khi nó gắn với consume channel hiện hành (channel cũ đã đóng thì không tính). */
+  #isLive(registration: Registration): boolean {
+    return (
+      registration.running !== undefined &&
+      registration.channel !== undefined &&
+      registration.channel === this.#consumeChannel
+    );
   }
 
   async #start(registration: Registration, model: ChannelModel, channel: Channel): Promise<void> {
@@ -284,6 +297,8 @@ export class BrokerClient {
       await declaring.close().catch(() => undefined);
     }
     const queue = registration.spec.topology.queue;
+    // Trong lúc khai báo topology, channel có thể đã bị đóng/thay hoặc client đang đóng.
+    if (this.#closing || this.#consumeChannel !== channel) return;
     const running: RunningConsumer = await startConsumer({
       channel,
       publisher: this.publisher,
@@ -296,7 +311,15 @@ export class BrokerClient {
         this.#retryLater(`consumer:${queue}`, 0, () => this.#restartOne(registration, model));
       },
     });
+    // Channel có thể bị đóng ngay sau consume-ok (hoặc client bắt đầu đóng): consumer này đã chết. Hủy nó và bỏ
+    // qua; handler "channel close" đã lên lịch mở lại channel và bật lại consumer trên channel mới.
+    if (this.#closing || this.#consumeChannel !== channel) {
+      this.#log.warn({ queue }, 'consume channel changed while starting consumer; discarding it');
+      await running.stop().catch(() => undefined);
+      return;
+    }
     registration.running = running;
+    registration.channel = channel;
     const current = new Set(this.#registrations.map((r) => r.running));
     for (const consumer of this.#started) {
       if (!current.has(consumer) && consumer.inflight() === 0) this.#started.delete(consumer);

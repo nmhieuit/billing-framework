@@ -21,7 +21,7 @@ Yêu cầu bắt buộc của wallet: **chống thanh toán trùng** và **đố
 | 2 | Mô hình tiền | Ví nạp trước: nạp qua payment → số dư; trả order bằng cách trừ số dư |
 | 3 | Framework | wallet: NestJS; payment: Fastify; cả hai TypeScript strict |
 | 4 | Truy cập dữ liệu | Kysely (SQL-first) trên SQL Server; migration SQL tường minh |
-| 5 | Thiếu tiền | Từ chối ngay (`order-payment-failed`), order giữ `Unpaid`; không có trạng thái treo |
+| 5 | Thiếu tiền | Từ chối ngay (`OrderPaymentFailedV1`), order giữ `Unpaid`; không có trạng thái treo |
 | 6 | Hạ tầng | Lai: dùng chung nền tảng (K8s, CI, observability, Vault); DB, user SQL, vhost RabbitMQ riêng |
 | 7 | Mô hình sổ | Ledger ghi sổ kép bất biến; số dư là cache kiểm chứng được |
 | 8 | Repo | Repo riêng, tách hẳn khỏi repo ecommerce |
@@ -121,14 +121,14 @@ Wallet gọi payment `POST /charges` (HTTP, có idempotency key); payment trả 
 
 ### Idempotency của luồng order
 
-Khóa chống trùng là `orderId`. Nhận lại `order-ready-for-payment` cho order đã trả thì **không trừ thêm**, phát lại `order-paid` cùng `walletTransactionId`.
+Khóa chống trùng là `orderId`. Nhận lại `OrderReadyForPaymentV1` cho order đã trả thì **không trừ thêm**, phát lại `OrderPaidV1` cùng `walletTransactionId`.
 
 ### Phần việc cho team ecommerce
 
-1. Thêm trạng thái `Unpaid`/`Paid` cho Order (nếu chưa có); chuyển `Unpaid → Paid` chỉ khi nhận `order-paid`, bỏ qua nếu đã `Paid`.
-2. Publish `order-ready-for-payment` qua outbox khi order hoàn tất (phụ thuộc SCRUM-18/31, ADR-0011 của ecommerce).
+1. Thêm trạng thái `Unpaid`/`Paid` cho Order (nếu chưa có); chuyển `Unpaid → Paid` chỉ khi nhận `OrderPaidV1`, bỏ qua nếu đã `Paid`.
+2. Publish `OrderReadyForPaymentV1` qua outbox khi order hoàn tất (phụ thuộc SCRUM-18/31, ADR-0011 của ecommerce).
 3. Adapter RabbitMQ nói JSON thuần cho 3 event trên.
-4. Xử lý `order-payment-failed`: ghi nhận lý do, order giữ `Unpaid`.
+4. Xử lý `OrderPaymentFailedV1`: ghi nhận lý do, order giữ `Unpaid`.
 5. Pact hai chiều, publish lên Pact Broker.
 6. Lấy schema từ package `contracts` của billing.
 
@@ -145,7 +145,7 @@ Nhiều lớp phòng thủ; lớp cuối ở DB.
 | 5. Dedup webhook | Webhook gửi lại | Khóa `chargeId + eventType` |
 | 6. Ràng buộc DB | Lỗi code lọt qua | `CHECK (balance >= 0)`, unique index, user ứng dụng không có quyền `UPDATE/DELETE` trên `ledger_entries` |
 
-**Xử lý khi gặp trùng.** Trùng hợp lệ (đã xử lý thành công) → trả lại kết quả cũ, không lỗi. Trùng `orderId` nhưng khác số tiền → không trừ tiền, phát `order-payment-failed` với `CONFLICT`, ghi cảnh báo.
+**Xử lý khi gặp trùng.** Trùng hợp lệ (đã xử lý thành công) → trả lại kết quả cũ, không lỗi. Trùng `orderId` nhưng khác số tiền → không trừ tiền, phát `OrderPaymentFailedV1` với `CONFLICT`, ghi cảnh báo.
 
 **Chứng minh bằng test.** Bắn cùng một message N lần song song → đúng 1 bút toán trừ tiền. Kill consumer sau khi ghi bút toán, trước khi ack, rồi khởi động lại → vẫn đúng 1 bút toán.
 
@@ -160,7 +160,7 @@ Nhiều lớp phòng thủ; lớp cuối ở DB.
    - Có ở wallet, thiếu ở gateway: không tự sửa, tạo ca xử lý thủ công.
    - Lệch số tiền/trạng thái: không tự sửa, tạo ca xử lý thủ công.
    - Tổng kiểm: tổng tiền nạp trong ngày ở gateway bằng tổng `TOPUP` ở wallet.
-3. **Wallet ↔ Orders.** Mọi bút toán `ORDER_PAYMENT` phải có order `Paid` tương ứng và ngược lại. Thiếu event thì phát lại `order-paid` từ outbox. Cần một API đọc hoặc snapshot phía orders; hình thức cụ thể chốt trong spec đối soát cùng team ecommerce.
+3. **Wallet ↔ Orders.** Mọi bút toán `ORDER_PAYMENT` phải có order `Paid` tương ứng và ngược lại. Thiếu event thì phát lại `OrderPaidV1` từ outbox. Cần một API đọc hoặc snapshot phía orders; hình thức cụ thể chốt trong spec đối soát cùng team ecommerce.
 
 ### Mô hình lưu
 
@@ -199,7 +199,7 @@ TDD cho domain/ledger; coverage ngưỡng cao cho `domain` và `ledger`; mỗi b
 
 - Cùng cụm K8s, namespace `billing`; ESO + Vault cấp secret; mỗi service có DB, user SQL, user RabbitMQ riêng.
 - Compose overlay `deploy/compose.billing.yml` cho local, nối vào hạ tầng ecommerce qua network và host cấu hình bằng biến môi trường.
-- Feature flag Unleash để bật dần luồng `order-ready-for-payment`; rollback không cần redeploy.
+- Feature flag Unleash để bật dần luồng `OrderReadyForPaymentV1`; rollback không cần redeploy.
 - OpenTelemetry → Elastic; `correlationId` xuyên suốt từ order tới bút toán.
 
 ## 8. Lộ trình (mỗi bước: spec → plan riêng)

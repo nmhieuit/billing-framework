@@ -111,7 +111,11 @@ Khi ecommerce hoàn tất một order, nó publish `OrderReadyForPaymentV1` vào
 wallet trừ ví một lần duy nhất cho mỗi `orderId` và trả `OrderPaidV1` hoặc `OrderPaymentFailedV1` qua `billing.events`.
 Thiết kế: [`docs/superpowers/specs/2026-10-10-order-payment-integration-design.md`](docs/superpowers/specs/2026-10-10-order-payment-integration-design.md);
 quyết định: ADR-0008, ADR-0009; bàn giao cho ecommerce: [`docs/integration/orders-handoff.vi.md`](docs/integration/orders-handoff.vi.md);
-Pact Broker: [`docs/integration/pact-broker.vi.md`](docs/integration/pact-broker.vi.md).
+Pact Broker: [`docs/integration/pact-broker.vi.md`](docs/integration/pact-broker.vi.md);
+xử lý hàng đợi chết `wallet.order-payments.dlq`: [`docs/integration/dlq-runbook.vi.md`](docs/integration/dlq-runbook.vi.md).
+
+`BILLING_ECOMMERCE_MQ_PASSWORD` (cùng các `BILLING_*_MQ_PASSWORD` khác) phải được đặt trong `deploy/.env` **trước** khi chạy
+`billing-rabbitmq-init`. Mật khẩu chỉ gồm chữ, số, `-` và `_` (không có `"` hoặc `\`) vì script nhúng nó vào JSON.
 
 ```bash
 # 1. Tạo vhost, user và exchange tích hợp trên RabbitMQ dùng chung (xem deploy/compose.billing.yml)

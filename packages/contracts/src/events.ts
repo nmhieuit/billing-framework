@@ -4,14 +4,15 @@ import type { FromSchema } from 'json-schema-to-ts';
 const commonProperties = {
   eventId: { type: 'string', format: 'uuid' },
   occurredAtUtc: { type: 'string', format: 'date-time' },
-  tenantId: { type: 'string', minLength: 1 },
-  correlationId: { type: 'string', minLength: 1 },
+  tenantId: { type: 'string', minLength: 1, maxLength: 64 },
+  correlationId: { type: 'string', minLength: 1, maxLength: 100 },
 } as const;
 
 const moneyProperties = {
   amount: {
     type: 'integer',
     minimum: 1,
+    maximum: 9007199254740991,
     description: 'Số nguyên minor unit (VND: đồng, USD: cent)',
   },
   currency: { type: 'string', enum: ['VND', 'USD'] },
@@ -33,7 +34,7 @@ export const orderReadyForPaymentV1 = {
   properties: {
     ...commonProperties,
     orderId: { type: 'string', format: 'uuid' },
-    customerId: { type: 'string', minLength: 1 },
+    customerId: { type: 'string', minLength: 1, maxLength: 64 },
     ...moneyProperties,
   },
 } as const;

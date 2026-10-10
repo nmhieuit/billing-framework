@@ -21,7 +21,8 @@ services:
       retries: 20
 
   pact-broker:
-    # Ghim phiên bản cụ thể khi triển khai thật; `latest` chỉ để thử cục bộ.
+    # Ghim phiên bản (hoặc digest) cụ thể khi triển khai thật; `latest` chỉ để thử cục bộ. Image pact-cli của
+    # Jenkinsfile đã ghim theo digest (biến PACT_CLI_IMAGE); broker nên được ghim tương tự.
     image: pactfoundation/pact-broker:latest
     restart: unless-stopped
     depends_on:

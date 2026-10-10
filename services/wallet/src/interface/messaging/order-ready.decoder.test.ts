@@ -24,6 +24,13 @@ describe('decodeOrderReady', () => {
     }
   });
 
+  it('accepts .NET style fractional-second timestamps', () => {
+    const result = decodeOrderReady(
+      JSON.stringify({ ...valid, occurredAtUtc: '2026-10-10T10:00:00.1234567Z' }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
   it('refuses a body that is not JSON', () => {
     expect(decodeOrderReady('{not json')).toEqual({ ok: false, reason: 'body is not valid JSON' });
   });

@@ -9,7 +9,9 @@ import { TenantId } from '../domain/tenant-id.js';
 import { createOrderReadyHandler } from '../interface/messaging/order-ready.handler.js';
 import { silentLogger } from '../test-support.js';
 
-const { like, uuid, integer, regex, datetime } = MatchersV3;
+const { like, uuid, integer, regex } = MatchersV3;
+// RFC 3339 date-time: optional fractional seconds (.NET emits 7 digits) and Z or an offset.
+const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const pactDir = fileURLToPath(new URL('../../../../pacts', import.meta.url));
 const acme = TenantId.parse('acme');
 
@@ -46,7 +48,7 @@ describe('wallet as a consumer of the orders service', () => {
       .expectsToReceive('an OrderReadyForPaymentV1 event')
       .withContent({
         eventId: uuid('3f1f3c6e-6a4e-4d0f-8a4b-9f1d7b6f0c02'),
-        occurredAtUtc: datetime("yyyy-MM-dd'T'HH:mm:ss'Z'", '2026-10-10T10:00:00Z'),
+        occurredAtUtc: regex(RFC3339, '2026-10-10T10:00:00Z'),
         tenantId: like('acme'),
         correlationId: like('corr-1'),
         orderId: uuid('0b1f3c6e-6a4e-4d0f-8a4b-9f1d7b6f0c11'),

@@ -38,7 +38,7 @@ describe('loadConfig', () => {
         user: 'billing_wallet',
         password: 'mq-secret',
       },
-      orders: { prefetch: 10, retryDelaysSeconds: [5, 30, 120], outboxBatch: 50 },
+      orders: { prefetch: 10, retryDelaysSeconds: [5, 30, 120, 600, 1800], outboxBatch: 50 },
       topupBackoffSeconds: [1, 5, 30, 120, 600],
       workerIntervalMs: 500,
     });

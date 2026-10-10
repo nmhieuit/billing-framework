@@ -1,6 +1,8 @@
 #!/bin/sh
 # Tạo vhost "billing", các user riêng và hai exchange tích hợp qua management API. Idempotent (PUT).
 # Quyền lấy nguyên văn từ spec Bước 4 mục 3; tools/rabbitmq-init.test.ts chống lệch với @billing/testing.
+# Mật khẩu (WALLET_MQ_PASSWORD, ECOMMERCE_MQ_PASSWORD, PAYMENT_MQ_PASSWORD) chỉ được gồm chữ, số, `-` và `_`:
+# chúng được nhúng thẳng vào JSON nên `"` hoặc `\` làm hỏng request.
 set -eu
 
 base="http://${RABBITMQ_HOST}:${RABBITMQ_MGMT_PORT}/api"

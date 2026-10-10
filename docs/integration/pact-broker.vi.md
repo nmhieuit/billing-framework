@@ -55,13 +55,17 @@ docker run --rm --network pact-broker_default \
 
 ## Jenkins
 
-Stage `Contract tests (Pact)` chỉ chạy khi tham số `PACT_BROKER_BASE_URL` khác rỗng. Credential kiểu username/password
-(`PACT_BROKER_CREDENTIALS_ID`, mặc định `pact-broker`) được truyền cho container bằng tên biến môi trường. `can-i-deploy` "no"
-chỉ làm build `UNSTABLE` cho đến khi bật `PACT_ENFORCE_CAN_I_DEPLOY`. Giả định agent có Docker trực tiếp trên host
-(đường dẫn `-v "$WORKSPACE/pacts"` phải đổi nếu agent là container lồng nhau).
+Stage `Contract tests (Pact)` chỉ chạy khi biến môi trường `PACT_BROKER_BASE_URL` của job/folder khác rỗng. Địa chỉ broker
+**không** là tham số build và credentials id là hằng `pact-broker` (credential username/password trong Jenkins): nếu để
+người chạy build tự nhập địa chỉ, họ sẽ gửi được mật khẩu broker tới một host tùy ý. Hãy định nghĩa
+`PACT_BROKER_BASE_URL` ở cấu hình job hoặc folder (Environment variables / Folder properties). Credential được truyền cho
+container bằng tên biến môi trường. Image `pact-cli` ghim theo digest trong `Jenkinsfile` (biến `PACT_CLI_IMAGE`,
+hiện là pact-cli 1.78.0); muốn nâng cấp, đổi digest rồi chạy lại `docker run --rm <image> pact-broker --help`.
+`can-i-deploy` "no" chỉ làm build `UNSTABLE` cho đến khi bật `PACT_ENFORCE_CAN_I_DEPLOY`. Giả định agent có Docker trực
+tiếp trên host (đường dẫn `-v "$WORKSPACE/pacts"` phải đổi nếu agent là container lồng nhau).
 
 ## Giới hạn hiện tại
 
 - Ecommerce chưa nối CI vào broker: pact `orders → wallet` lấy từ pact mẫu khi chạy cục bộ và từ broker khi ecommerce đã publish.
 - Manifest K8s và Vault cho broker thuộc hạ tầng chung (Bước 6).
-- Ghim phiên bản image `pactfoundation/pact-broker` khi triển khai thật.
+- Ghim phiên bản image `pactfoundation/pact-broker` khi triển khai thật (image `pact-cli` của Jenkins đã ghim theo digest).

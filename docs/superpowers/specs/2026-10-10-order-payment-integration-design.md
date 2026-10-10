@@ -39,7 +39,7 @@ Ba event mới, JSON phẳng, camelCase. Tên kiểu `{Event}V{N}`, schema `{Eve
 
 - Exchange topic bền: `orders.events`, `billing.events` (khai báo bởi script init, không bởi service).
 - Wallet: queue `wallet.order-payments` gắn vào `orders.events` với key `order-ready-for-payment.v1`.
-- Retry: wallet tự khai báo hai exchange `direct` bền `wallet.work` và `wallet.retry` (tiền tố `wallet.` nằm trong quyền configure). Queue chính gắn vào `wallet.work` (key `order-payments`) và vào `orders.events`. Mỗi bậc backoff một queue `wallet.order-payments.retry.<giây>` gắn vào `wallet.retry` (key `retry.<giây>`), đặt `x-message-ttl` và dead-letter về `wallet.work`; hết bậc thì publish vào `wallet.retry` với key `dlq` tới queue `wallet.order-payments.dlq`. Mặc định bậc `5,30,120` giây (`ORDER_RETRY_DELAYS`). **Không dùng default exchange** (`amq.default`) làm DLX hay để publish: quyền ghi `amq.default` cho phép ghi vào mọi queue trong vhost, mâu thuẫn với bảng quyền bên dưới (đã kiểm chứng bằng probe).
+- Retry: wallet tự khai báo hai exchange `direct` bền `wallet.work` và `wallet.retry` (tiền tố `wallet.` nằm trong quyền configure). Queue chính gắn vào `wallet.work` (key `order-payments`) và vào `orders.events`. Mỗi bậc backoff một queue `wallet.order-payments.retry.<giây>` gắn vào `wallet.retry` (key `retry.<giây>`), đặt `x-message-ttl` và dead-letter về `wallet.work`; hết bậc thì publish vào `wallet.retry` với key `dlq` tới queue `wallet.order-payments.dlq`. Mặc định bậc `5,30,120,600,1800` giây (`ORDER_RETRY_DELAYS`; tổng ~43 phút trước khi vào DLQ). **Không dùng default exchange** (`amq.default`) làm DLX hay để publish: quyền ghi `amq.default` cho phép ghi vào mọi queue trong vhost, mâu thuẫn với bảng quyền bên dưới (đã kiểm chứng bằng probe).
 - Ecommerce tự khai báo queue của họ (tiền tố `ecommerce.`) gắn vào `billing.events` với key `order-paid.v1` và `order-payment-failed.v1`.
 
 ### Quyền (script `deploy/scripts/init-rabbitmq.sh`)
@@ -106,7 +106,7 @@ Một tác vụ trong `Worker` hiện có, duyệt từng tenant (lỗi một te
 |---|---|---|
 | `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_VHOST`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | Kết nối broker | host/user/password bắt buộc; cổng `5672`; vhost `billing` |
 | `ORDER_CONSUMER_PREFETCH` | Số message xử lý đồng thời | `10` |
-| `ORDER_RETRY_DELAYS` | Các bậc retry của consumer (giây) | `5,30,120` |
+| `ORDER_RETRY_DELAYS` | Các bậc retry của consumer (giây) | `5,30,120,600,1800` |
 | `OUTBOX_BATCH` | Số dòng outbox tối đa mỗi tenant mỗi lượt | `50` |
 
 Thiếu hoặc sai thì từ chối khởi động và liệt kê mọi vấn đề cùng lúc (như `loadConfig` hiện tại). Mật khẩu RabbitMQ không có giá trị mặc định và không bao giờ vào log.
@@ -125,14 +125,14 @@ Message do mỗi bên tạo hoặc đọc còn phải qua JSON Schema của `pac
 ### Pact Broker
 
 - `deploy/compose.pact-broker.yml`: `pactfoundation/pact-broker` + Postgres riêng (volume, mật khẩu qua `deploy/.env`, không có giá trị mặc định cho bí mật), chạy được ở local và trong test.
-- Jenkinsfile của billing thêm các bước: publish pact của wallet, verify provider wallet, `can-i-deploy`. Chỉ chạy khi có `PACT_BROKER_BASE_URL` và token trong credential Jenkins; nếu chưa có thì bỏ qua và ghi log rõ, để build không vỡ trước khi broker thật sẵn sàng.
+- Jenkinsfile của billing thêm các bước: publish pact của wallet, verify provider wallet, `can-i-deploy`. Chỉ chạy khi job/folder Jenkins định nghĩa biến môi trường `PACT_BROKER_BASE_URL` (không phải tham số build, để không ai chuyển được credential cố định `pact-broker` tới host tùy ý); image `pact-cli` ghim theo digest; nếu chưa có thì bỏ qua và ghi log rõ, để build không vỡ trước khi broker thật sẵn sàng.
 - Ngoài phạm vi: manifest K8s của broker (hạ tầng chung/Bước 6) và việc ecommerce nối CI của họ vào broker.
 
 ### Tài liệu bàn giao cho ecommerce (`docs/integration/orders-handoff.vi.md`)
 
-1. Thêm trạng thái `Unpaid`/`Paid` cho Order; chỉ `Unpaid → Paid` khi nhận `OrderPaidV1`, bỏ qua nếu đã `Paid`.
+1. Thêm trạng thái `Unpaid`/`Paid` cho Order; chỉ `Unpaid → Paid` khi nhận `OrderPaidV1`, bỏ qua nếu đã `Paid`. `Paid` là trạng thái cuối.
 2. Publish `OrderReadyForPaymentV1` qua outbox khi order hoàn tất; đổi `total` thành `amount` minor unit kèm `currency`.
-3. Consume `billing.events` (hai event); `OrderPaymentFailedV1` ghi lý do và giữ `Unpaid`.
+3. Consume `billing.events` (hai event); `OrderPaymentFailedV1` ghi lý do và giữ `Unpaid`, và **phải bị bỏ qua nếu order đã `Paid`** (có thể đến sau `OrderPaidV1`, ví dụ `CONFLICT` sau lần gửi lại khác chi tiết). Kết quả của cùng một `orderId` có thể đến không theo thứ tự và nhiều lần: áp dụng theo trạng thái, không theo thứ tự đến. Message hết bậc retry vì sự cố hạ tầng vào DLQ mà không có phản hồi; publish lại cùng `orderId` với `eventId` mới là an toàn (`docs/integration/dlq-runbook.vi.md`).
 4. Cấu hình MassTransit gửi JSON thuần vào vhost `billing` với user `ecommerce_orders`.
 5. Đưa schema vào `shared/EventContracts` (test bất biến), viết và verify Pact, nối broker.
 

@@ -71,8 +71,46 @@ describe('validateEvent', () => {
     ['missing tenantId', { tenantId: undefined }],
     ['empty tenantId', { tenantId: '' }],
     ['missing correlationId', { correlationId: undefined }],
+    ['correlationId over 100 chars', { correlationId: 'c'.repeat(101) }],
+    ['tenantId over 64 chars', { tenantId: 't'.repeat(65) }],
+    ['customerId over 64 chars', { customerId: 'u'.repeat(65) }],
+    ['amount above MAX_SAFE_INTEGER', { amount: 9007199254740992 }],
   ])('rejects OrderReadyForPaymentV1 with %s', (_name, patch) => {
     expect(validateEvent('OrderReadyForPaymentV1', { ...ready, ...patch }).ok).toBe(false);
+  });
+
+  it('accepts OrderReadyForPaymentV1 values exactly at the bounds', () => {
+    const atBounds = {
+      ...ready,
+      correlationId: 'c'.repeat(100),
+      tenantId: 't'.repeat(64),
+      customerId: 'u'.repeat(64),
+      amount: Number.MAX_SAFE_INTEGER,
+    };
+    expect(validateEvent('OrderReadyForPaymentV1', atBounds).ok).toBe(true);
+  });
+
+  it('bounds the common fields and amount of the result events too', () => {
+    expect(validateEvent('OrderPaidV1', { ...paid, correlationId: 'c'.repeat(101) }).ok).toBe(
+      false,
+    );
+    expect(validateEvent('OrderPaidV1', { ...paid, amount: 9007199254740992 }).ok).toBe(false);
+    expect(
+      validateEvent('OrderPaidV1', {
+        ...paid,
+        correlationId: 'c'.repeat(100),
+        amount: Number.MAX_SAFE_INTEGER,
+      }).ok,
+    ).toBe(true);
+    expect(validateEvent('OrderPaymentFailedV1', { ...failed, tenantId: 't'.repeat(65) }).ok).toBe(
+      false,
+    );
+  });
+
+  it('accepts fractional-second and offset RFC 3339 timestamps', () => {
+    for (const occurredAtUtc of ['2026-10-10T10:00:00.1234567Z', '2026-10-10T17:00:00+07:00']) {
+      expect(validateEvent('OrderReadyForPaymentV1', { ...ready, occurredAtUtc }).ok).toBe(true);
+    }
   });
 
   it.each([

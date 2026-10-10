@@ -14,7 +14,10 @@ orders ◀── OrderPaidV1 / OrderPaymentFailedV1 ◀── billing.events ◀
 2. Publish `OrderReadyForPaymentV1` qua outbox khi order hoàn tất. `amount` là **số nguyên minor unit** (VND: đồng, USD: cent)
    kèm `currency`; adapter đổi từ `total decimal` của `OrderPlacedV1`.
 3. Consume `OrderPaidV1` và `OrderPaymentFailedV1` từ `billing.events`, khử trùng theo `eventId` (wallet giao ít nhất một
-   lần). `OrderPaymentFailedV1` chỉ ghi lý do và giữ order ở `Unpaid`.
+   lần). `OrderPaymentFailedV1` chỉ ghi lý do và giữ order ở `Unpaid`. **`Paid` là trạng thái cuối:** một
+   `OrderPaymentFailedV1` đến sau khi order đã `Paid` **phải bị bỏ qua** (có thể xảy ra hợp lệ, ví dụ `CONFLICT` sau khi gửi
+   lại với thông tin khác, hoặc một lần từ chối cũ đến muộn). Kết quả của cùng một `orderId` có thể đến **không theo thứ tự**
+   và nhiều lần: hãy áp dụng theo trạng thái hiện tại của order, không theo thứ tự đến.
 4. Cấu hình MassTransit gửi/nhận **JSON thuần** (không envelope MassTransit) tới vhost `billing` bằng user `ecommerce_orders`.
 5. Đưa schema vào `shared/EventContracts` (có test bất biến sẵn của repo), viết và verify Pact, nối Pact Broker.
 
@@ -30,8 +33,12 @@ của billing; lấy bản file bằng `corepack pnpm --filter @billing/contract
 | `OrderPaidV1` | wallet → orders | `order-paid.v1` | `orderId`, `walletTransactionId`, `amount`, `currency`, `paidAtUtc` |
 | `OrderPaymentFailedV1` | wallet → orders | `order-payment-failed.v1` | `orderId`, `reason` |
 
-Trường chung bắt buộc của cả ba: `eventId` (UUID), `occurredAtUtc` (ISO 8601 UTC), `tenantId`, `correlationId`.
+Trường chung bắt buộc của cả ba: `eventId` (UUID), `occurredAtUtc` (RFC 3339 date-time; chấp nhận phần giây thập phân như
+`2026-10-10T10:00:00.1234567Z` và offset như `+07:00`), `tenantId`, `correlationId`.
 `reason` ∈ `INSUFFICIENT_FUNDS`, `WALLET_NOT_FOUND`, `CURRENCY_MISMATCH`, `CONFLICT`.
+
+Giới hạn giá trị (schema từ chối nếu vượt, vì wallet không lưu được): `tenantId` và `customerId` 1..64 ký tự,
+`correlationId` 1..100 ký tự, `amount` là số nguyên từ 1 đến 9007199254740991 (`Number.MAX_SAFE_INTEGER`).
 
 Thuộc tính AMQP wallet đặt khi phát: `contentType = application/json`, `messageId = eventId`, `type =` tên event,
 `deliveryMode = 2` (persistent), header `x-correlation-id`.
@@ -95,13 +102,18 @@ Thuộc tính AMQP wallet đặt khi phát: `contentType = application/json`, `m
   publish lại `OrderReadyForPaymentV1` (cùng `orderId`, `eventId` mới) để thử lại.
 - Message sai schema hoặc `tenantId` wallet không phục vụ sẽ vào hàng đợi chết của wallet (`wallet.order-payments.dlq`) và không
   có phản hồi; hãy bảo đảm `tenantId` khớp danh sách tenant cấu hình ở wallet (`WALLET_TENANTS`).
-- Wallet không đảm bảo thứ tự giữa các order.
+- **Hết lượt retry khi hạ tầng sự cố:** message mà wallet xử lý mãi không được vì sự cố hạ tầng (database/broker; các bậc mặc định
+  5, 30, 120, 600, 1800 s, tức khoảng 43 phút) cũng vào `wallet.order-payments.dlq` **mà không có phản hồi**. Nếu sau một khoảng
+  timeout ecommerce chưa nhận kết quả cho một order, hãy publish lại cùng `orderId` với `eventId` mới: an toàn và được
+  khuyến nghị (xử lý idempotent). Quy trình vận hành xử lý DLQ: `docs/integration/dlq-runbook.vi.md`.
+- **`Paid` là cuối, kết quả có thể đến lộn xộn:** xem mục 3 ở trên; `OrderPaymentFailedV1` cho order đã `Paid` phải bị bỏ qua.
+- Wallet không đảm bảo thứ tự giữa các order, cũng không giữa các kết quả của cùng một order.
 
 ## Gợi ý MassTransit (cần xác nhận phía ecommerce)
 
 Dùng serializer/deserializer JSON thuần (`UseRawJsonSerializer`/`UseRawJsonDeserializer`), tắt tự tạo topology cho các
-exchange này và trỏ endpoint tới `orders.events`/`ecommerce.*` đã khai báo sẵn. MassTransit đang ghim 8.x (xem
-`Directory.Packages.props`); cách cấu hình cụ thể là việc của team ecommerce.
+exchange này và trỏ endpoint tới `orders.events`/`ecommerce.*` đã khai báo sẵn. MassTransit đang ghim 8.x (xem file
+`Directory.Packages.props` trong repo ecommerce); cách cấu hình cụ thể là việc của team ecommerce.
 
 ## Pact và Pact Broker
 

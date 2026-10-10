@@ -15,7 +15,7 @@ export interface WalletConfig {
 }
 
 const DEFAULT_BACKOFF = '1,5,30,120,600';
-const DEFAULT_ORDER_RETRY_DELAYS = '5,30,120';
+const DEFAULT_ORDER_RETRY_DELAYS = '5,30,120,600,1800';
 
 /** Đọc cấu hình từ môi trường; thiếu hoặc sai thì ném ConfigError liệt kê mọi vấn đề cùng lúc. */
 export function loadConfig(env: NodeJS.ProcessEnv): WalletConfig {
