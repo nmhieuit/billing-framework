@@ -32,6 +32,7 @@ describe('loadConfig', () => {
       },
       workerIntervalMs: 500,
       responseTimeoutMs: 30000,
+      telemetry: { sampleIntervalSeconds: 15 },
     });
   });
 
@@ -43,6 +44,7 @@ describe('loadConfig', () => {
       WEBHOOK_BACKOFF: '2, 4,8',
       WORKER_INTERVAL_MS: '50',
       RESPONSE_TIMEOUT_MS: '100',
+      METRICS_SAMPLE_INTERVAL_SECONDS: '5',
     });
     expect(config).toMatchObject({
       port: 4000,
@@ -50,7 +52,14 @@ describe('loadConfig', () => {
       webhook: { backoffSeconds: [2, 4, 8] },
       workerIntervalMs: 50,
       responseTimeoutMs: 100,
+      telemetry: { sampleIntervalSeconds: 5 },
     });
+  });
+
+  it.each(['0', '3601', '1.5', 'abc'])('rejects METRICS_SAMPLE_INTERVAL_SECONDS %j', (value) => {
+    expect(problemsOf({ ...minimal, METRICS_SAMPLE_INTERVAL_SECONDS: value })).toEqual([
+      'METRICS_SAMPLE_INTERVAL_SECONDS must be an integer in 1..3600',
+    ]);
   });
 
   it('refuses to start without the required settings and lists all of them', () => {

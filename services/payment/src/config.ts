@@ -6,6 +6,7 @@ export interface PaymentConfig {
   webhook: { url: string; secret: string; backoffSeconds: number[] };
   workerIntervalMs: number;
   responseTimeoutMs: number;
+  telemetry: { sampleIntervalSeconds: number };
 }
 
 const DEFAULT_BACKOFF = '1,5,30,120,600';
@@ -69,6 +70,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): PaymentConfig {
   const port = integer('PORT', 3002, 1, 65535);
   const workerIntervalMs = integer('WORKER_INTERVAL_MS', 500, 1, 3_600_000);
   const responseTimeoutMs = integer('RESPONSE_TIMEOUT_MS', 30_000, 0, 3_600_000);
+  const sampleIntervalSeconds = integer('METRICS_SAMPLE_INTERVAL_SECONDS', 15, 1, 3600);
 
   if (problems.length > 0 || database === undefined || backoffSeconds === undefined) {
     throw new ConfigError(problems);
@@ -79,5 +81,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): PaymentConfig {
     webhook: { url, secret, backoffSeconds },
     workerIntervalMs,
     responseTimeoutMs,
+    telemetry: { sampleIntervalSeconds },
   };
 }

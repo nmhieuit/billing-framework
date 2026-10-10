@@ -5,6 +5,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { paymentMigrations } from '../../../db/payment/migrations.js';
 import { startService, type RunningService } from './bootstrap.js';
 import type { PaymentConfig } from './config.js';
+import type { PaymentState } from './application/state.js';
+import { RecordingMetrics } from './test-support-metrics.js';
 
 const secret = 'whsec_e2e';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,6 +39,7 @@ function configFor(overrides: Partial<PaymentConfig> = {}): PaymentConfig {
     webhook: { url: receiver.url, secret, backoffSeconds: [1] },
     workerIntervalMs: 20,
     responseTimeoutMs: 150,
+    telemetry: { sampleIntervalSeconds: 15 },
     ...overrides,
   };
 }
@@ -201,5 +204,21 @@ describe('payment service, end to end', () => {
       type: 'charge.succeeded',
       data: { chargeId },
     });
+  });
+  it('samples the webhook backlog periodically and records charge and delivery counters', async () => {
+    const metrics = new RecordingMetrics();
+    const service = await startService(configFor({ telemetry: { sampleIntervalSeconds: 1 } }), {
+      metrics,
+    });
+    running.push(service);
+    await post(service, 'e2e-metrics', body('topup-metrics'));
+
+    await waitFor(() =>
+      metrics.calls.some(([m, r]) => m === 'webhookDelivery' && r === 'delivered'),
+    );
+    expect(metrics.calls).toContainEqual(['charge', 'SUCCEEDED']);
+    await waitFor(() => metrics.calls.some(([m]) => m === 'publishState'), { timeoutMs: 10_000 });
+    const state = metrics.calls.find(([m]) => m === 'publishState')?.[1] as PaymentState;
+    expect(typeof state.webhookPending).toBe('number');
   });
 });

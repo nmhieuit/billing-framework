@@ -7,7 +7,8 @@ import { CreateCharge } from './application/create-charge.js';
 import { DeliverDueWebhooks } from './application/deliver-due-webhooks.js';
 import { GetCharge } from './application/get-charge.js';
 import { GetSettlement } from './application/get-settlement.js';
-import type { Clock, IdGenerator } from './application/ports.js';
+import { SampleState } from './application/sample-state.js';
+import { noopMetrics, type Clock, type IdGenerator, type Metrics } from './application/ports.js';
 import type { PaymentConfig } from './config.js';
 import { HttpWebhookSender } from './infrastructure/http-webhook-sender.js';
 import type { PaymentDatabase } from './infrastructure/kysely/schema.js';
@@ -18,6 +19,8 @@ import { buildApp } from './interface/http/app.js';
 export interface StartOverrides {
   clock?: Clock;
   ids?: IdGenerator;
+  /** Cổng đo đạc vận hành; mặc định không làm gì (chạy trần và test không đổi hành vi). */
+  metrics?: Metrics;
 }
 
 export interface RunningService {
@@ -34,15 +37,17 @@ export async function startService(
   const db = createDatabase<PaymentDatabase>(config.database);
   const clock = overrides.clock ?? new SystemClock();
   const ids = overrides.ids ?? new RandomIdGenerator();
+  const metrics = overrides.metrics ?? noopMetrics;
   const uow = new KyselyUnitOfWork(db);
   const sender = new HttpWebhookSender({ url: config.webhook.url, secret: config.webhook.secret });
 
-  const completeDue = new CompleteDueCharges({ uow, clock, ids });
+  const completeDue = new CompleteDueCharges({ uow, clock, ids, metrics });
   const deliver = new DeliverDueWebhooks({
     uow,
     sender,
     clock,
     backoffSeconds: config.webhook.backoffSeconds,
+    metrics,
   });
 
   const app = await buildApp({
@@ -63,8 +68,24 @@ export async function startService(
   });
   worker.start();
 
+  // Chụp trạng thái định kỳ cho gauge; Worker riêng để không phụ thuộc nhịp của worker nghiệp vụ.
+  const sampleState = new SampleState({ uow, metrics, clock, log });
+  const sampleStateWorker = new Worker({
+    intervalMs: config.telemetry.sampleIntervalSeconds * 1000,
+    tasks: [async () => void (await sampleState.execute())],
+    onError: (error) => log.error({ err: error }, 'sampling state failed'),
+  });
+  sampleStateWorker.start();
+
   return {
     app,
-    stop: once(() => runAll([() => worker.stop(), () => app.close(), () => db.destroy()])),
+    stop: once(() =>
+      runAll([
+        () => worker.stop(),
+        () => sampleStateWorker.stop(),
+        () => app.close(),
+        () => db.destroy(),
+      ]),
+    ),
   };
 }
