@@ -70,7 +70,8 @@ hai service: dừng worker → đóng app → chờ việc đang chạy → đó
 ## Kiểm thử
 
 - `*.test.ts`: unit, không cần Docker (`corepack pnpm test`).
-- `*.integration.test.ts`: cần Docker (`corepack pnpm test:integration`). Một container SQL Server dùng chung cho cả
-  lượt chạy (`@billing/testing`), mỗi test file tự tạo database riêng bằng `createTestDatabase`.
+- `*.integration.test.ts`: cần Docker (`corepack pnpm test:integration`). Một container SQL Server và một container
+  RabbitMQ dùng chung cho cả lượt chạy (`@billing/testing`); mỗi test file tự tạo database riêng bằng
+  `createTestDatabase` hoặc vhost riêng bằng `createTestBroker`.
 - Test trong `domain/` và `application/` không import `kysely` hay `infrastructure/` (lint cấm); chúng dùng
   `services/<tên>/src/test-support.ts`.

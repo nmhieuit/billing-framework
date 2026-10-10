@@ -88,6 +88,9 @@ importers:
       '@testcontainers/mssqlserver':
         specifier: ^12.2.0
         version: 12.2.0
+      '@testcontainers/rabbitmq':
+        specifier: ^12.2.0
+        version: 12.2.0
       kysely:
         specifier: ^0.29.6
         version: 0.29.6
@@ -742,6 +745,9 @@ packages:
 
   '@testcontainers/mssqlserver@12.2.0':
     resolution: {integrity: sha512-TKqljdFoPiAPztyoHY5jRpkoMK7YrMz3g0/icJQ1bhMzwi7vo3TyDKjAbiPt0sPEdNmJSXapWw4o7On86arbgw==}
+
+  '@testcontainers/rabbitmq@12.2.0':
+    resolution: {integrity: sha512-JCN+FERjafts0etPq+q6WAfOJYjwU9c7fnX3xU+10YYdXLRmX+tgo+CgStJ29fyrcL1bklUB3WAeyX1M4AKgPg==}
 
   '@tokenizer/inflate@0.4.1':
     resolution: {integrity: sha512-2mAv+8pkG6GIZiF1kNg1jAjh27IDxEPKwdGul3snfztFerfPGI1LjDezZp3i7BElXompqEtPmoPx6c2wgtWsOA==}
@@ -2685,6 +2691,15 @@ snapshots:
   '@standard-schema/spec@1.1.0': {}
 
   '@testcontainers/mssqlserver@12.2.0':
+    dependencies:
+      testcontainers: 12.2.0
+    transitivePeerDependencies:
+      - bare-abort-controller
+      - bare-buffer
+      - react-native-b4a
+      - supports-color
+
+  '@testcontainers/rabbitmq@12.2.0':
     dependencies:
       testcontainers: 12.2.0
     transitivePeerDependencies:
