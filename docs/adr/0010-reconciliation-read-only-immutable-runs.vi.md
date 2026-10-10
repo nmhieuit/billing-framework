@@ -36,4 +36,5 @@ mà wallet chưa ghi (webhook mất).
 - Trạng thái `DONE`/`GAVE_UP` của lịch nằm trong bộ nhớ worker; khởi động lại thì tra lại DB (an toàn nhờ unique index).
 - Chưa có metric/cảnh báo (Bước 6); `reconciliation_runs` lưu đủ số liệu để đọc sau.
 - Wallet ↔ Orders chờ ecommerce cung cấp snapshot: [hợp đồng](../integration/orders-reconciliation.vi.md).
+- Mô hình tin cậy: endpoint đối soát chỉ cần header tenant và nhận `resolvedBy` do người gọi khai, nên chỉ được mở trong mạng vận hành, không đưa vào route hướng khách hàng.
 - Vận hành: [runbook](../integration/reconciliation-runbook.vi.md).

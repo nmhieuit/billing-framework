@@ -109,7 +109,7 @@ curl -s localhost:3001/wallet/entries $H
 
 Mỗi ngày (sau `RECONCILE_AT_UTC_HOUR`) wallet đối soát ngày D-1 UTC cho từng tenant: toàn vẹn ledger (giao dịch cân, số dư
 cache khớp sổ cái) và Wallet ↔ Gateway (sao kê của payment so với `topups`). Lệch `MISSING_AT_WALLET` (webhook bị mất) được tự
-ghi bù qua đường nạp bình thường; mọi lệch khác thành ca thủ công. Lượt chạy bất biến. Endpoint nội bộ (qua gateway):
+ghi bù qua đường nạp bình thường; mọi lệch khác thành ca thủ công. Lượt chạy bất biến. Endpoint chỉ dành cho **mạng vận hành**: không đưa vào bộ route hướng khách hàng của gateway (caller phía khách có header tenant sẽ chạy được đối soát và đóng ca dưới tên giả); dùng network policy hoặc route gateway riêng có xác thực vận hành:
 
 ```bash
 H='-H x-tenant-id:acme -H content-type:application/json'

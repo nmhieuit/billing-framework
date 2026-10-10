@@ -5,7 +5,7 @@ Thiết kế: [spec](../superpowers/specs/2026-10-10-reconciliation-design.md); 
 
 ## Đối soát chạy thế nào
 
-- Mỗi tenant được đối soát **ngày D-1 (UTC)** một lần mỗi ngày, bởi task `reconcile-daily` trong worker, sau
+- Mỗi tenant được đối soát **ngày D-1 (UTC)** một lần mỗi ngày, bởi task `reconcile-daily` (chạy trên worker riêng, không chặn việc gửi topup/relay outbox), sau
   `RECONCILE_AT_UTC_HOUR` (mặc định 02:00 UTC).
 - Mỗi lượt kiểm tra ledger nội bộ, rồi so sao kê của payment (ngày D) với bảng `topups`; `MISSING_AT_GATEWAY` tra cả ngày D-1.
 - Lượt là **bất biến**: chạy lại tạo lượt mới, không sửa lượt cũ. Chỉ ca (item) được đóng bằng ghi chú.
@@ -14,7 +14,7 @@ Thiết kế: [spec](../superpowers/specs/2026-10-10-reconciliation-design.md); 
 
 ## Chạy tay
 
-Mọi lời gọi cần `x-tenant-id`; ở môi trường thật chỉ gọi qua gateway (endpoint là nội bộ).
+Mọi lời gọi cần `x-tenant-id`. **Các route này chỉ dành cho mạng vận hành và KHÔNG được đưa vào bộ route hướng khách hàng của gateway**: chúng chạy đối soát (có ghi sổ khi autofix bật) và ghi `resolvedBy` do người gọi tự khai, nên một caller phía khách có header tenant sẽ chạy được đối soát và đóng ca dưới tên giả. Dùng network policy hoặc một route gateway riêng có xác thực vận hành.
 
 ```bash
 H='-H x-tenant-id:acme -H content-type:application/json'
@@ -45,20 +45,26 @@ Lỗi thường gặp: `422 INVALID_RECONCILIATION` (ngày sai/tương lai, thi�
 | `MISSING_AT_WALLET`, action `FAILED_AUTOFIX` | Tự ghi bù không thành | Xem `detail.autofix` (kết quả như `DUPLICATE`, `MISMATCH`, `UNKNOWN_TOPUP` hoặc `error`), kiểm tra topup, xử lý rồi đóng ca |
 | `MISSING_AT_WALLET`, action `NONE` | `RECONCILE_AUTOFIX=false` | Bật cờ rồi chạy lại, hoặc xử lý tay và đóng ca |
 | `UNKNOWN_CHARGE` | Payment có charge mà wallet không có topup (hoặc topup gắn charge khác): tiền đã thu nhưng không thuộc lần nạp nào | Điều tra với team payment; **không tự ghi sổ** |
-| `MISSING_AT_GATEWAY` | Wallet đã cộng tiền mà payment không có charge | Nghi ghi sổ sai; đóng băng ví nếu cần (chưa có tính năng) và điều tra |
+| `MISSING_AT_GATEWAY` | Wallet đã cộng tiền mà settlement của ngày D và D-1 không có charge | **Trước khi hành động**, tra gateway theo `chargeId`: xem settlement của ngày `detail.topupCreatedAt` và các ngày sau. Nếu `topupCompletedAt` cách `topupCreatedAt` hơn một ngày thì đây là dương tính giả quen thuộc (chạy lại tay một ngày cũ, webhook muộn): charge có thật, đóng ca `IGNORED`. Chỉ khi charge thật sự vắng mặt mới nghi ghi sổ sai; đóng băng ví nếu cần (chưa có tính năng) và điều tra |
 | `AMOUNT_MISMATCH`, `STATUS_MISMATCH` | Khác số tiền/đồng tiền hoặc khác trạng thái | Đối chiếu `detail`, quyết định bút toán điều chỉnh (chưa có API, làm ngoài hệ thống), rồi đóng ca `RESOLVED`; sai lệch chấp nhận được thì `IGNORED` kèm lý do |
-| `LEDGER_UNBALANCED`, `BALANCE_MISMATCH` | Lỗi toàn vẹn dữ liệu (giao dịch không cân, hoặc số dư cache khác tổng sổ cái): **mức cao nhất** | Dừng thay đổi ví của tenant, báo kỹ thuật ngay; log `ledger integrity check failed` |
+| `LEDGER_UNBALANCED`, `BALANCE_MISMATCH` | Lỗi toàn vẹn dữ liệu (giao dịch không cân, hoặc số dư cache khác tổng sổ cái; đã đọc lại có khóa để loại trừ lệch tạm thời do giao dịch đang commit): **mức cao nhất** | Dừng thay đổi ví của tenant, báo kỹ thuật ngay; log `ledger integrity check failed` |
 
 ## Đọc trạng thái lượt
 
 - `COMPLETED`: đã xong, xem `itemCount` và các ca `OPEN`.
-- `RUNNING`: đang chạy. Lượt `RUNNING` quá 30 phút bị coi là worker đã chết và chuyển `FAILED` ở tick lịch kế tiếp.
+- `RUNNING`: đang chạy. Lượt `RUNNING` quá 30 phút bị coi là worker đã chết và chuyển `FAILED` bởi tick lịch đầu tiên sau ngưỡng đó, chậm nhất vào ngày kế tiếp (bộ nhớ theo ngày của lịch chặn các lần quét sớm hơn), kể cả lượt `MANUAL` bị kẹt. Một lượt hợp lệ chạy lâu hơn 30 phút có thể bị đánh dấu bỏ dở khi vẫn còn sống (tiền vẫn an toàn nhờ business key sổ cái `topup:<id>`; khi đó lượt hoàn tất sẽ bị từ chối lưu item và log `error` liệt kê các topup đã ghi bù).
 - `FAILED` + `failureReason`: payment lỗi/timeout, vượt `RECONCILE_MAX_ITEMS`, hoặc lỗi bất ngờ. Không có item nào được lưu.
   **Lưu ý:** nếu lượt thất bại sau khi đã tự ghi bù, `failureReason` nêu các topup đã được ghi bù trước đó
   (dạng `N topups already auto-credited: ...`); tiền của chúng đã vào ví và đúng, không cần hoàn tác. Lượt sau sẽ thấy chúng là khớp.
 - Lượt định kỳ `FAILED` được thử lại tối đa `RECONCILE_MAX_ATTEMPTS` lần, cách nhau ít nhất 15 phút. Hết lượt thử, log
   `scheduled reconciliation gave up` (`error`): sửa nguyên nhân rồi chạy tay bằng `POST /reconciliations`. Trạng thái
   `GAVE_UP` được nhớ trong bộ nhớ worker tới hết ngày hoặc tới khi khởi động lại.
+
+## Lưu ý vận hành
+
+- Không có chạy bù: nếu mọi worker ngừng cả một ngày UTC thì ngày đó không được đối soát tự động; hãy chạy tay bằng `POST /reconciliations`.
+- Mỗi lượt của mỗi tenant tải sao kê toàn nền tảng của ngày D và D-1; `RECONCILE_MAX_ITEMS` giới hạn số charge của cả nền tảng trong một ngày, không phải của riêng một tenant.
+- Bật `RECONCILE_AUTOFIX` rồi chạy lại một ngày là an toàn: việc ghi bù đi qua đường nạp bình thường và business key `topup:<id>` của sổ cái chặn ghi trùng.
 
 ## Cấu hình
 

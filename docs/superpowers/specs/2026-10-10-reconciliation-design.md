@@ -22,7 +22,7 @@ Module `reconciliation` trong `services/wallet`, 4 lớp hexagonal, tuân các l
 - `domain`: hàm thuần phân loại lệch, tổng kiểm theo đồng tiền, validate ngày/ghi chú. Chỉ import `@billing/money`.
 - `application`: use case `RunReconciliation`, `ResolveItem`, `GetRun`/`ListItems`; port `SettlementSource` (đọc settlement theo ngày, cursor) và các port repository.
 - `infrastructure`: repository Kysely (run/item), adapter HTTP `SettlementSource` gọi `GET /settlements?date=` của payment, truy vấn kiểm tra ledger.
-- `interface`: endpoint HTTP nội bộ (cùng `caller.guard`, tenant theo header) và task `reconcile-daily` trong worker.
+- `interface`: endpoint HTTP nội bộ (chỉ cần header `x-tenant-id` qua `TenantGuard`; không có header khách hàng, không `caller.guard`) và task `reconcile-daily` chạy trên `Worker` riêng (không chung với worker gửi topup/relay outbox, để một lượt đối soát chậm không chặn chúng). **Chỉ dành cho mạng vận hành**: xem §6.
 
 Phạm vi mỗi run: một tenant × một ngày UTC; lịch lặp qua `tenantRegistry.all()` (ADR-0006).
 
@@ -30,10 +30,12 @@ Phạm vi mỗi run: một tenant × một ngày UTC; lịch lặp qua `tenantRe
 
 ### 3.1 Ledger nội bộ
 
-Hai truy vấn tổng hợp trong một transaction chỉ đọc:
+Hai truy vấn tổng hợp trong một transaction (READ COMMITTED) tìm ứng viên:
 
 - Giao dịch có tổng các dòng khác 0 → `LEDGER_UNBALANCED`.
-- Ví có số dư cache khác tổng sổ cái của ví → `BALANCE_MISMATCH`.
+- Tài khoản có số dư cache khác tổng sổ cái của nó → `BALANCE_MISMATCH`.
+
+Vì số dư và tổng các dòng được đọc ở hai thời điểm, một lần nạp/thanh toán commit giữa chừng có thể tạo lệch tạm thời (tài khoản `system:GATEWAY:*` đổi mỗi lần nạp). Do đó mỗi ứng viên được đọc lại có khóa để loại trừ lệch tạm thời: khóa hàng tài khoản (`UPDLOCK, HOLDLOCK`) rồi cộng lại chỉ các dòng của tài khoản đó (với giao dịch: cộng lại chỉ các dòng của giao dịch đó); chỉ ứng viên vẫn lệch mới thành item. Mỗi truy vấn vẫn bị chặn `TOP 1000`.
 
 Cả hai là lỗi toàn vẹn dữ liệu: log `error`, không tự sửa.
 
@@ -46,9 +48,11 @@ Lấy toàn bộ settlement của ngày (cursor, 1000/trang), giữ charge có `
 | (khớp) | Cùng `chargeId`, số tiền, đồng tiền, trạng thái (`SUCCEEDED`/`FAILED`) | Không item |
 | `MISSING_AT_WALLET` | Gateway `SUCCEEDED`, wallet có topup `REQUESTED`/`PENDING`, hoặc `FAILED` với `PAYMENT_UNAVAILABLE` | Tự ghi bù (nếu cờ bật), ngược lại ca thủ công |
 | `UNKNOWN_CHARGE` | Gateway có charge, wallet không có topup tương ứng, hoặc topup đã gắn với charge khác | Ca thủ công |
-| `MISSING_AT_GATEWAY` | Wallet topup `SUCCEEDED`, gateway không có (so với settlement của ngày D **và** D-1) | Ca thủ công |
+| `MISSING_AT_GATEWAY` | Wallet topup `SUCCEEDED` có `completed_at` trong ngày D, gateway không có (so với settlement của ngày D **và** D-1) | Ca thủ công; `detail` có `topupCreatedAt`/`topupCompletedAt` |
 | `AMOUNT_MISMATCH` | Khác số tiền hoặc đồng tiền | Ca thủ công |
 | `STATUS_MISMATCH` | Khác trạng thái | Ca thủ công |
+
+Lưu ý dương tính giả của `MISSING_AT_GATEWAY`: wallet xác định ngày theo `completed_at`, còn gateway theo lúc charge hoàn tất. Lần nạp được ghi bù hoặc nhận webhook muộn có `completed_at` là lúc đó, nên khi chạy lại tay một ngày cũ, hoặc webhook thử lại kéo dài hơn một ngày, charge nằm ngoài settlement của D và D-1 và sinh `MISSING_AT_GATEWAY` dù gateway có charge. Vì vậy `detail` mang `topupCreatedAt` và `topupCompletedAt`; khoảng cách giữa hai mốc lớn hơn một ngày là mẫu dương tính giả đã biết, cần tra gateway theo `chargeId` (settlement ngày `topupCreatedAt` và các ngày sau) trước khi coi là thật. Không gọi HTTP thêm trong lượt chạy.
 
 Tổng kiểm: tổng `SUCCEEDED` ở gateway và tổng `TOPUP` ở wallet, tách theo đồng tiền (VND và USD không cộng lẫn). Các tổng này chỉ để tham khảo (lưu trên run); chỉ phép so từng item mới sinh lệch.
 
@@ -62,11 +66,11 @@ Với mỗi `MISSING_AT_WALLET`, gọi `ApplyPaymentResult` với `eventId = rec
 
 1. Tạo run `RUNNING` (transaction riêng).
 2. Kiểm tra ledger nội bộ (3.1).
-3. Đọc dữ liệu topup của wallet, rồi gọi HTTP settlement **ngoài transaction** (không giữ transaction qua lời gọi mạng), phân loại (3.2).
+3. Gọi HTTP settlement (ngày D và D-1) **ngoài transaction** (không giữ transaction qua lời gọi mạng), rồi đọc dữ liệu topup của wallet và phân loại (3.2).
 4. Tự ghi bù (3.3) nếu cờ bật.
 5. Ghi item và tổng kiểm, đóng run `COMPLETED`.
 
-Gateway lỗi/timeout, hoặc vượt `RECONCILE_MAX_ITEMS` → run `FAILED` kèm lý do, không có item nửa vời và không ghi bù gì.
+Gateway lỗi/timeout, hoặc vượt `RECONCILE_MAX_ITEMS` → run `FAILED` kèm lý do, không có item nửa vời. Lỗi ở bước đọc sao kê thì không ghi bù gì (việc đọc sao kê đứng trước bước ghi bù); lỗi xảy ra sau khi đã ghi bù thì các lần ghi bù trước đó vẫn còn và được nêu trong `failure_reason`.
 
 **Lịch:** task `reconcile-daily` trong worker, ngày D-1 UTC cho từng tenant, chỉ chạy sau `RECONCILE_AT_UTC_HOUR`. Mỗi (tenant, ngày) chỉ có tối đa một run `SCHEDULED` không-`FAILED` (unique index lọc). Quy tắc mỗi tick:
 
@@ -89,7 +93,7 @@ Run bất biến: chạy lại tạo run mới; item cũ chỉ đổi `case_stat
 
 ## 6. API nội bộ
 
-Cùng guard và quy ước tenant/correlation như các endpoint wallet hiện có.
+Dùng `TenantGuard` (chỉ cần `x-tenant-id`, không có header khách hàng) và quy ước correlation như các endpoint wallet hiện có. **Chỉ dành cho mạng vận hành**: các route này kích hoạt ghi sổ và ghi `resolvedBy` do người gọi tự khai, nên TUYỆT ĐỐI không đưa vào bộ route hướng khách hàng của gateway (một caller phía khách có header tenant sẽ chạy được đối soát và đóng ca dưới tên giả). Cần network policy hoặc route gateway riêng có xác thực vận hành.
 
 - `POST /reconciliations` `{ "date": "YYYY-MM-DD" }` → `202` + `{ "runId", "status": "RUNNING" }`; chạy nền. Ngày sai định dạng/tương lai → `422`.
 - `GET /reconciliations/:runId` → trạng thái và tổng kiểm.
