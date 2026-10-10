@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:contract": "vitest run --config vitest.integration.config.ts services/wallet/src/contract",
     "db:migrate:payment": "tsx db/payment/migrate.ts",
     "db:migrate:wallet": "tsx db/wallet/migrate.ts",
     "lint": "eslint .",

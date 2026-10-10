@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@billing/testing": "workspace:^",
+    "@pact-foundation/pact": "17.1.4",
     "amqplib": "^2.2.0"
   }
 }
