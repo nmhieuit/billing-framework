@@ -80,6 +80,39 @@ export interface OutboxTable {
 }
 
 /** Tên bảng không có schema: repository luôn dựng trên `db.withSchema('t_<tenant>')`. */
+export interface ReconciliationRunsTable {
+  id: string;
+  run_day: string;
+  status: string;
+  triggered_by: string;
+  failure_reason: string | null;
+  gateway_totals: string;
+  wallet_totals: string;
+  item_count: number;
+  started_at: Date;
+  finished_at: Date | null;
+}
+
+export interface ReconciliationItemsTable {
+  /** identity bigint: đọc về là chuỗi, không ghi. */
+  seq: Generated<string>;
+  id: string;
+  run_id: string;
+  kind: string;
+  charge_id: string | null;
+  topup_id: string | null;
+  amount_gateway: ColumnType<string | null, number | null, number | null>;
+  amount_wallet: ColumnType<string | null, number | null, number | null>;
+  currency: string | null;
+  detail: string;
+  action: string;
+  case_status: string;
+  resolved_by: string | null;
+  resolution_note: string | null;
+  resolved_at: Date | null;
+  created_at: Date;
+}
+
 export interface WalletDatabase {
   accounts: AccountsTable;
   ledger_transactions: LedgerTransactionsTable;
@@ -89,4 +122,6 @@ export interface WalletDatabase {
   processed_messages: ProcessedMessagesTable;
   order_payments: OrderPaymentsTable;
   outbox: OutboxTable;
+  reconciliation_runs: ReconciliationRunsTable;
+  reconciliation_items: ReconciliationItemsTable;
 }
