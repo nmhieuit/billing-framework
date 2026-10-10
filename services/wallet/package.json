@@ -8,11 +8,19 @@
     "start": "tsx src/main.ts"
   },
   "dependencies": {
+    "@billing/contracts": "workspace:^",
+    "@billing/database": "workspace:^",
+    "@billing/money": "workspace:^",
     "@billing/observability": "workspace:^",
+    "@billing/runtime": "workspace:^",
     "@nestjs/common": "^12.1.2",
     "@nestjs/core": "^12.1.2",
     "@nestjs/platform-fastify": "^12.1.2",
+    "kysely": "^0.29.6",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@billing/testing": "workspace:^"
   }
 }

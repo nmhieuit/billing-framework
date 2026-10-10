@@ -1,0 +1,122 @@
+import { ConfigError } from '@billing/database';
+import { describe, expect, it } from 'vitest';
+import { loadConfig } from './config.js';
+
+const minimal = {
+  WALLET_DB_HOST: 'db',
+  WALLET_DB_NAME: 'billing_wallet',
+  WALLET_DB_USER: 'u',
+  WALLET_DB_PASSWORD: 'p',
+  WALLET_TENANTS: 'acme,beta',
+  PAYMENT_BASE_URL: 'http://payment:3002/',
+  PAYMENT_WEBHOOK_SECRET: 'whsec_x',
+};
+
+const problemsOf = (env: NodeJS.ProcessEnv): string[] => {
+  try {
+    loadConfig(env);
+  } catch (error) {
+    return (error as ConfigError).problems;
+  }
+  return [];
+};
+
+describe('loadConfig', () => {
+  it('applies the documented defaults', () => {
+    const config = loadConfig(minimal);
+    expect(config).toMatchObject({
+      port: 3001,
+      database: { host: 'db', port: 1433, database: 'billing_wallet', user: 'u', password: 'p' },
+      payment: { baseUrl: 'http://payment:3002', webhookSecret: 'whsec_x', timeoutMs: 5000 },
+      topupBackoffSeconds: [1, 5, 30, 120, 600],
+      workerIntervalMs: 500,
+    });
+    expect(config.tenants.map((t) => t.value)).toEqual(['acme', 'beta']);
+  });
+
+  it('reads overrides and trims spaces around tenants', () => {
+    const config = loadConfig({
+      ...minimal,
+      WALLET_TENANTS: ' acme , beta',
+      PORT: '4001',
+      WALLET_DB_PORT: '14333',
+      PAYMENT_TIMEOUT_MS: '250',
+      TOPUP_SUBMIT_BACKOFF: '2, 4',
+      WORKER_INTERVAL_MS: '50',
+    });
+    expect(config).toMatchObject({
+      port: 4001,
+      database: { port: 14333 },
+      payment: { timeoutMs: 250 },
+      topupBackoffSeconds: [2, 4],
+      workerIntervalMs: 50,
+    });
+    expect(config.tenants.map((t) => t.value)).toEqual(['acme', 'beta']);
+  });
+
+  it('refuses to start without the required settings and lists them all, in a fixed order', () => {
+    expect(problemsOf({})).toEqual([
+      'WALLET_DB_HOST is required',
+      'WALLET_DB_NAME is required',
+      'WALLET_DB_USER is required',
+      'WALLET_DB_PASSWORD is required',
+      'WALLET_TENANTS is required',
+      'PAYMENT_BASE_URL is required',
+      'PAYMENT_WEBHOOK_SECRET is required',
+    ]);
+  });
+
+  it('has no default for the secret and treats blank as missing', () => {
+    expect(problemsOf({ ...minimal, PAYMENT_WEBHOOK_SECRET: '  ' })).toEqual([
+      'PAYMENT_WEBHOOK_SECRET is required',
+    ]);
+  });
+
+  it.each(['ftp://x', 'not a url', 'payment:3002'])('rejects PAYMENT_BASE_URL %j', (url) => {
+    expect(problemsOf({ ...minimal, PAYMENT_BASE_URL: url })).toEqual([
+      'PAYMENT_BASE_URL must be an absolute http(s) URL',
+    ]);
+  });
+
+  it('rejects an invalid tenant id and duplicate tenants', () => {
+    expect(problemsOf({ ...minimal, WALLET_TENANTS: 'acme,Bad_Tenant' })).toEqual([
+      'WALLET_TENANTS contains an invalid tenant id "Bad_Tenant"',
+    ]);
+    expect(problemsOf({ ...minimal, WALLET_TENANTS: 'acme,acme' })).toEqual([
+      'WALLET_TENANTS contains duplicate tenant "acme"',
+    ]);
+    expect(problemsOf({ ...minimal, WALLET_TENANTS: ' , ' })).toEqual([
+      'WALLET_TENANTS is required',
+    ]);
+  });
+
+  it.each(['', '1,a', '0', '-1', '1.5', '1,,2'])('handles TOPUP_SUBMIT_BACKOFF %j', (value) => {
+    const problems = problemsOf({ ...minimal, TOPUP_SUBMIT_BACKOFF: value });
+    // Chuỗi rỗng được coi như không đặt (dùng mặc định).
+    expect(problems).toEqual(
+      value === ''
+        ? []
+        : ['TOPUP_SUBMIT_BACKOFF must be a comma-separated list of positive integers (seconds)'],
+    );
+  });
+
+  it.each([
+    ['PORT', 'abc'],
+    ['PORT', '0'],
+    ['PAYMENT_TIMEOUT_MS', '0'],
+    ['PAYMENT_TIMEOUT_MS', '999999'],
+    ['WORKER_INTERVAL_MS', '0'],
+    ['WORKER_INTERVAL_MS', 'abc'],
+  ])('rejects %s=%s', (name, value) => {
+    expect(problemsOf({ ...minimal, [name]: value })).toEqual([
+      expect.stringContaining(`${name} must be an integer`),
+    ]);
+  });
+
+  it('reports a bad database port together with the other problems', () => {
+    expect(problemsOf({ ...minimal, WALLET_DB_PORT: 'x', PAYMENT_WEBHOOK_SECRET: '' })).toEqual([
+      'WALLET_DB_PORT must be an integer in 1..65535',
+      'PAYMENT_WEBHOOK_SECRET is required',
+    ]);
+  });
+});
