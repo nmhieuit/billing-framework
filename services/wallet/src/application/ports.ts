@@ -227,7 +227,7 @@ export interface ReconciliationRepository {
     triggeredBy: RunTrigger;
     startedAt: Date;
   }): Promise<boolean>;
-  /** Ghi các dòng lệch và đóng lượt `COMPLETED`. Dòng `AUTO_APPLIED` được ghi sẵn ở trạng thái `RESOLVED` bởi `system`. */
+  /** Ghi các dòng lệch và đóng lượt `COMPLETED`; ném lỗi (rollback cả dòng lệch) nếu lượt không còn `RUNNING`. Dòng `AUTO_APPLIED` được ghi sẵn ở trạng thái `RESOLVED` bởi `system`. */
   completeRun(
     id: string,
     input: {
@@ -237,7 +237,8 @@ export interface ReconciliationRepository {
       finishedAt: Date;
     },
   ): Promise<void>;
-  failRun(id: string, reason: string, finishedAt: Date): Promise<void>;
+  /** Đánh dấu `FAILED` nếu lượt còn `RUNNING`; `false` khi lượt đã được đóng bởi nơi khác (không ghi đè). */
+  failRun(id: string, reason: string, finishedAt: Date): Promise<boolean>;
   /** Đánh dấu `FAILED` các lượt còn `RUNNING` bắt đầu trước `startedBefore`; trả về số lượt bị đóng. */
   failStaleRuns(startedBefore: Date, reason: string, now: Date): Promise<number>;
   findRun(id: string): Promise<ReconciliationRun | null>;

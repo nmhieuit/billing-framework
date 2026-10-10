@@ -117,7 +117,7 @@ describe('runs', () => {
       repo((r) => r.startRun({ id, day: '2026-09-02', triggeredBy: 'SCHEDULED', startedAt: t0 }));
     expect(await start('s1')).toBe(true);
     expect(await start('s2')).toBe(false);
-    await repo((r) => r.failRun('s1', 'gateway down', at(5)));
+    expect(await repo((r) => r.failRun('s1', 'gateway down', at(5)))).toBe(true);
     expect(await repo((r) => r.findRun('s1'))).toMatchObject({
       status: 'FAILED',
       failureReason: 'gateway down',
@@ -150,6 +150,32 @@ describe('runs', () => {
       failureReason: 'abandoned',
     });
     expect(await repo((r) => r.findRun('new'))).toMatchObject({ status: 'RUNNING' });
+  });
+
+  it('refuses to complete a run that is no longer RUNNING and rolls the items back; failRun reports it', async () => {
+    await repo((r) =>
+      r.startRun({ id: 'swept', day: '2026-09-04', triggeredBy: 'MANUAL', startedAt: at(-90) }),
+    );
+    expect(await repo((r) => r.failStaleRuns(at(-80), 'abandoned', t0))).toBeGreaterThanOrEqual(1);
+    await expect(
+      repo((r) =>
+        r.completeRun('swept', {
+          gatewayTotals: {},
+          walletTotals: {},
+          items: [item('sw1')],
+          finishedAt: at(1),
+        }),
+      ),
+    ).rejects.toThrow(/no longer RUNNING/);
+    expect(
+      await repo((r) => r.listItems({ runId: 'swept', caseStatus: null, afterSeq: 0, limit: 10 })),
+    ).toEqual([]);
+    expect(await repo((r) => r.findRun('swept'))).toMatchObject({
+      status: 'FAILED',
+      failureReason: 'abandoned',
+      itemCount: 0,
+    });
+    expect(await repo((r) => r.failRun('swept', 'again', at(2)))).toBe(false);
   });
 });
 

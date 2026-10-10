@@ -156,7 +156,7 @@ export class KyselyReconciliationRepository implements ReconciliationRepository 
         )
         .execute();
     }
-    await this.db
+    const result = await this.db
       .updateTable('reconciliation_runs')
       .set({
         status: 'COMPLETED',
@@ -167,11 +167,15 @@ export class KyselyReconciliationRepository implements ReconciliationRepository 
       })
       .where('id', '=', id)
       .where('status', '=', 'RUNNING')
-      .execute();
+      .executeTakeFirst();
+    // Lượt đã bị quét "bỏ dở" (FAILED): ném lỗi để transaction hoàn tác các dòng vừa chèn.
+    if (Number(result.numUpdatedRows) !== 1) {
+      throw new Error(`reconciliation run ${id} is no longer RUNNING; items were not stored`);
+    }
   }
 
-  async failRun(id: string, reason: string, finishedAt: Date): Promise<void> {
-    await this.db
+  async failRun(id: string, reason: string, finishedAt: Date): Promise<boolean> {
+    const result = await this.db
       .updateTable('reconciliation_runs')
       .set({
         status: 'FAILED',
@@ -180,7 +184,8 @@ export class KyselyReconciliationRepository implements ReconciliationRepository 
       })
       .where('id', '=', id)
       .where('status', '=', 'RUNNING')
-      .execute();
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows) === 1;
   }
 
   async failStaleRuns(startedBefore: Date, reason: string, now: Date): Promise<number> {

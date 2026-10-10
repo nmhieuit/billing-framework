@@ -15,8 +15,9 @@ import {
   seedSucceededTopup,
   startDay,
 } from '../test-support-reconciliation.js';
-import { ApplyPaymentResult } from './apply-payment-result.js';
+import { ApplyPaymentResult, type ApplyOutcome } from './apply-payment-result.js';
 import { SettlementUnavailableError } from './errors.js';
+import type { Logger } from './ports.js';
 import { RunReconciliation, type RunReconciliationDeps } from './run-reconciliation.js';
 
 let h: Harness;
@@ -36,9 +37,23 @@ afterEach(async () => {
   await expectLedgerInvariants(h, h.beta);
 });
 
+/** Logger ghi lại mọi dòng log để test kiểm tra. */
+function recordingLogger(): Logger & {
+  lines: Array<{ level: string; details: object; message?: string }>;
+} {
+  const lines: Array<{ level: string; details: object; message?: string }> = [];
+  const at =
+    (level: string) =>
+    (details: object, message?: string): void => {
+      lines.push(message === undefined ? { level, details } : { level, details, message });
+    };
+  return { lines, info: at('info'), warn: at('warn'), error: at('error') };
+}
+
 function build(
   options: Partial<RunReconciliationDeps['options']> = {},
   applyPayment?: RunReconciliationDeps['applyPayment'],
+  log: Logger = silentLogger,
 ): RunReconciliation {
   return new RunReconciliation({
     uow: h.uow,
@@ -48,7 +63,7 @@ function build(
       new ApplyPaymentResult({ uow: h.uow, clock: h.clock, ids: h.ids, log: silentLogger }),
     clock: h.clock,
     ids: h.ids,
-    log: silentLogger,
+    log,
     options: { autofix: true, maxItems: 1000, ...options },
   });
 }
@@ -265,6 +280,127 @@ describe('a run that fails after crediting', () => {
     expect(next?.status).toBe('COMPLETED');
     expect(await walletBalance(h.acme, topup.customer)).toBe(55000);
     expect(await ledgerCount(h.acme, topup.topupId)).toBe(1);
+  });
+});
+
+describe('a webhook that arrives in the middle of a run', () => {
+  const real = () =>
+    new ApplyPaymentResult({ uow: h.uow, clock: h.clock, ids: h.ids, log: silentLogger });
+
+  it('is treated as already settled: credited exactly once, item AUTO_APPLIED', async () => {
+    const day = startDay(h);
+    const topup = await seedTopup(h, { state: 'PENDING', amount: 65000 });
+    settlement.set(day, [chargeFor(topup)]);
+    const implementation = real();
+    const racing: RunReconciliationDeps['applyPayment'] = {
+      execute: async (input) => {
+        // Webhook thật đến ngay trước lệnh ghi bù của đối soát.
+        const webhook = await implementation.execute({
+          tenant: input.tenant,
+          eventId: 'evt_webhook_race',
+          type: 'charge.succeeded',
+          chargeId: topup.chargeId,
+          reference: topup.topupId,
+          amount: topup.amount,
+          currency: topup.currency,
+        });
+        expect(webhook).toBe('APPLIED');
+        return implementation.execute(input);
+      },
+    };
+
+    const result = await run(day, h.acme, build({}, racing));
+
+    expect(result?.status).toBe('COMPLETED');
+    const items = await itemsOf(h.acme, result!.id);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      kind: 'MISSING_AT_WALLET',
+      action: 'AUTO_APPLIED',
+      detail: { autofix: 'already settled' },
+    });
+    expect(await walletBalance(h.acme, topup.customer)).toBe(65000);
+    expect(await ledgerCount(h.acme, topup.topupId)).toBe(1);
+  });
+
+  it('does not claim a credit in the logs for the already-settled item', async () => {
+    const day = startDay(h);
+    const topup = await seedTopup(h, { state: 'PENDING', amount: 12000 });
+    settlement.set(day, [chargeFor(topup)]);
+    const log = recordingLogger();
+    const implementation = real();
+    await run(
+      day,
+      h.acme,
+      build(
+        {},
+        {
+          execute: async (input) => {
+            await implementation.execute({ ...input, eventId: 'evt_webhook_race_2' });
+            return implementation.execute(input);
+          },
+        },
+        log,
+      ),
+    );
+    const messages = log.lines.map((line) => line.message);
+    expect(messages).toContain('reconciliation auto-applied item recorded');
+    expect(messages).not.toContain('reconciliation credited a topup whose webhook was lost');
+  });
+});
+
+describe('autofix outcomes that cannot be credited', () => {
+  const stub = (outcome: ApplyOutcome): RunReconciliationDeps['applyPayment'] => ({
+    execute: () => Promise.resolve(outcome),
+  });
+
+  it.each<ApplyOutcome>(['IGNORED', 'MISMATCH', 'DUPLICATE', 'UNKNOWN_TOPUP'])(
+    'keeps %s as an open FAILED_AUTOFIX case (topup is not SUCCEEDED)',
+    async (outcome) => {
+      const day = startDay(h);
+      const topup = await seedTopup(h, { state: 'PENDING', amount: 33000 });
+      settlement.set(day, [chargeFor(topup)]);
+
+      const result = await run(day, h.acme, build({}, stub(outcome)));
+
+      const [item] = await itemsOf(h.acme, result!.id);
+      expect(item).toMatchObject({
+        action: 'FAILED_AUTOFIX',
+        caseStatus: 'OPEN',
+        detail: { autofix: outcome },
+      });
+      expect(await walletBalance(h.acme, topup.customer)).toBe(0);
+    },
+  );
+});
+
+describe('a run closed by the stale sweep while it was still working', () => {
+  it('stores no items, credits once, and logs the credited topup at error level', async () => {
+    const day = startDay(h);
+    const topup = await seedTopup(h, { state: 'PENDING', amount: 44000 });
+    settlement.set(day, [chargeFor(topup)]);
+    const log = recordingLogger();
+    const reconciliation = build({}, undefined, log);
+    const handle = await reconciliation.begin({ tenant: h.acme, day, triggeredBy: 'MANUAL' });
+    // Bộ quét đóng lượt "bỏ dở" trước khi `finish` kịp hoàn tất.
+    const swept = await h.uow.run(h.acme, ({ reconciliation: repo }) =>
+      repo.failStaleRuns(new Date(h.clock.now().getTime() + 60_000), 'abandoned', h.clock.now()),
+    );
+    expect(swept).toBeGreaterThanOrEqual(1);
+
+    const result = await reconciliation.finish(handle!);
+
+    expect(result).toMatchObject({ status: 'FAILED', failureReason: 'abandoned', itemCount: 0 });
+    expect(await itemsOf(h.acme, handle!.runId)).toEqual([]);
+    expect(await walletBalance(h.acme, topup.customer)).toBe(44000);
+    expect(await ledgerCount(h.acme, topup.topupId)).toBe(1);
+    const credited = log.lines.find(
+      (line) =>
+        line.level === 'error' &&
+        JSON.stringify(line.details).includes(topup.topupId) &&
+        line.message?.includes('already closed'),
+    );
+    expect(credited).toBeDefined();
   });
 });
 

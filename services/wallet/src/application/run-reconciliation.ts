@@ -134,9 +134,16 @@ export class RunReconciliation {
         { err: error, tenantId: tenant.value, runId, day, credited },
         'reconciliation run failed',
       );
-      await this.deps.uow.run(tenant, ({ reconciliation }) =>
+      const recorded = await this.deps.uow.run(tenant, ({ reconciliation }) =>
         reconciliation.failRun(runId, reason, this.deps.clock.now()),
       );
+      if (!recorded && credited.length > 0) {
+        // Lượt đã bị đóng (quét bỏ dở) nên lý do không ghi được: ghi log để không mất dấu các lần nạp đã ghi bù.
+        this.deps.log.error(
+          { tenantId: tenant.value, runId, day, credited },
+          'reconciliation run was already closed; topups credited by it are listed here',
+        );
+      }
     }
     const run = await this.deps.uow.run(tenant, ({ reconciliation }) =>
       reconciliation.findRun(runId),
@@ -280,7 +287,11 @@ export class RunReconciliation {
       if (item.kind === 'LEDGER_UNBALANCED' || item.kind === 'BALANCE_MISMATCH') {
         this.deps.log.error({ ...details, detail: item.detail }, 'ledger integrity check failed');
       } else if (item.action === 'AUTO_APPLIED') {
-        this.deps.log.info(details, 'reconciliation credited a topup whose webhook was lost');
+        // Log "đã ghi bù" đã được ghi ngay lúc ghi sổ (xem `autofix`); ở đây chỉ ghi nhận dòng, không khẳng định có ghi bù.
+        this.deps.log.info(
+          { ...details, autofix: item.detail.autofix },
+          'reconciliation auto-applied item recorded',
+        );
       } else {
         this.deps.log.warn(
           { ...details, action: item.action },
