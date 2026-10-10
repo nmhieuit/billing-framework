@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ConfigError, databaseConfigFromEnv } from './config.js';
+import { ConfigError, databaseConfigFromEnv, migratorConfigFromEnv } from './config.js';
 
 const full = {
   PAYMENT_DB_HOST: 'db',
@@ -50,5 +50,69 @@ describe('databaseConfigFromEnv', () => {
     expect(() =>
       databaseConfigFromEnv('PAYMENT_DB', { ...full, PAYMENT_DB_PASSWORD: '  ' }),
     ).toThrow(ConfigError);
+  });
+});
+
+describe('migratorConfigFromEnv', () => {
+  const app = {
+    WALLET_DB_HOST: 'db',
+    WALLET_DB_PORT: '14333',
+    WALLET_DB_NAME: 'billing_wallet',
+    WALLET_DB_USER: 'app',
+    WALLET_DB_PASSWORD: 'app-secret',
+  };
+  const migrator = (env: NodeJS.ProcessEnv) =>
+    migratorConfigFromEnv('WALLET_DB', 'WALLET_MIGRATOR_DB', env);
+
+  it('uses the application account when no migrator account is set', () => {
+    expect(migrator(app)).toEqual({
+      host: 'db',
+      port: 14333,
+      database: 'billing_wallet',
+      user: 'app',
+      password: 'app-secret',
+    });
+  });
+
+  it('swaps in the migrator account and keeps host, port and database', () => {
+    expect(
+      migrator({
+        ...app,
+        WALLET_MIGRATOR_DB_USER: 'owner',
+        WALLET_MIGRATOR_DB_PASSWORD: 'owner-secret',
+      }),
+    ).toEqual({
+      host: 'db',
+      port: 14333,
+      database: 'billing_wallet',
+      user: 'owner',
+      password: 'owner-secret',
+    });
+  });
+
+  it('treats blank migrator values (an untouched .env.example) as not set', () => {
+    expect(
+      migrator({ ...app, WALLET_MIGRATOR_DB_USER: '', WALLET_MIGRATOR_DB_PASSWORD: '  ' }).user,
+    ).toBe('app');
+  });
+
+  it.each([
+    [{ WALLET_MIGRATOR_DB_USER: 'owner' }],
+    [{ WALLET_MIGRATOR_DB_PASSWORD: 'owner-secret' }],
+    [{ WALLET_MIGRATOR_DB_USER: 'owner', WALLET_MIGRATOR_DB_PASSWORD: '' }],
+  ])('refuses a half-set migrator account %j', (extra) => {
+    try {
+      migrator({ ...app, ...extra });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError);
+      expect((error as ConfigError).problems).toEqual([
+        'WALLET_MIGRATOR_DB_USER and WALLET_MIGRATOR_DB_PASSWORD must be set together',
+      ]);
+    }
+  });
+
+  it('still reports missing application variables', () => {
+    expect(() => migrator({})).toThrow(ConfigError);
   });
 });
