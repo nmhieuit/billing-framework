@@ -143,4 +143,56 @@ describe('kibana params', () => {
     const defaultsPath = await tmpFile('bad.json', JSON.stringify(bad));
     await expect(loadParams({ defaultsPath })).rejects.toBeInstanceOf(ParamsError);
   });
+
+  const protoKeys = ['toString', 'constructor', 'hasOwnProperty'];
+  it.each(protoKeys)('rejects prototype-chain key %s as unknown at every level', (k) => {
+    expect(problemsOf({ [k]: 1 })).toEqual([`${k}: unknown key`]);
+    expect(problemsOf({ dashboard: { [k]: 1 } })).toEqual([`dashboard.${k}: unknown key`]);
+    expect(problemsOf({ rules: { [k]: {} } })).toEqual([`rules.${k}: unknown key`]);
+    expect(problemsOf({ rules: { 'billing-dlq-not-empty': { [k]: 1 } } })).toEqual([
+      `rules.billing-dlq-not-empty.${k}: unknown key`,
+    ]);
+  });
+
+  it('rejects a __proto__ key from local JSON and never changes the prototype', async () => {
+    const localPath = await tmpFile('params.local.json', '{"__proto__":{"x":1}}');
+    const err = await loadParams({ defaultsPath: DEFAULTS_PATH, localPath }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ParamsError);
+    expect((err as ParamsError).problems).toEqual(['__proto__: unknown key']);
+    const ok = mergeParams(defaults, { dashboard: { refreshSeconds: 5 } });
+    expect(Object.getPrototypeOf(ok)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>)['x']).toBeUndefined();
+  });
+
+  it.each(['null', '[]', '5', '"s"'])(
+    'rejects non-object local file %s naming the file',
+    async (text) => {
+      const localPath = await tmpFile('params.local.json', text);
+      const err = await loadParams({ defaultsPath: DEFAULTS_PATH, localPath }).catch(
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(ParamsError);
+      expect((err as ParamsError).message).toContain(localPath);
+    },
+  );
+
+  it('distinguishes bad defaults file from bad local file in the message', async () => {
+    const bad = { ...defaults, dashboard: { timeRange: 'x', refreshSeconds: 1 } };
+    const defaultsPath = await tmpFile('bad.json', JSON.stringify(bad));
+    const err1 = await loadParams({ defaultsPath }).catch((e: unknown) => e);
+    expect((err1 as ParamsError).message).toContain(defaultsPath);
+    const localPath = await tmpFile('params.local.json', '{"dashboard":{"refreshSeconds":-1}}');
+    const err2 = await loadParams({ defaultsPath: DEFAULTS_PATH, localPath }).catch(
+      (e: unknown) => e,
+    );
+    expect((err2 as ParamsError).message).toContain(localPath);
+  });
+
+  it.each([null, 'str'])('rejects rule value %j as not an object', (v) => {
+    expect(problemsOf({ rules: { 'billing-outbox-stuck': v } })).toEqual([
+      'rules.billing-outbox-stuck: must be an object',
+    ]);
+  });
 });

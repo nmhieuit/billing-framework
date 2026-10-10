@@ -80,7 +80,16 @@ const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !
 function deepMerge(base: unknown, over: unknown): unknown {
   if (!isObj(base) || !isObj(over)) return over === undefined ? base : over;
   const out: Obj = { ...base };
-  for (const [k, v] of Object.entries(over)) out[k] = k in base ? deepMerge(base[k], v) : v;
+  for (const [k, v] of Object.entries(over)) {
+    const merged = Object.hasOwn(base, k) ? deepMerge(base[k], v) : v;
+    // defineProperty để khoá "__proto__" luôn là thuộc tính riêng, không đổi prototype.
+    Object.defineProperty(out, k, {
+      value: merged,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
   return out;
 }
 
@@ -103,9 +112,9 @@ function checkSection(
     return;
   }
   for (const k of Object.keys(value))
-    if (!(k in checks)) problems.push(`${path}.${k}: unknown key`);
+    if (!Object.hasOwn(checks, k)) problems.push(`${path}.${k}: unknown key`);
   for (const [k, check] of Object.entries(checks)) {
-    if (k in value) check(value[k], `${path}.${k}`);
+    if (Object.hasOwn(value, k)) check(value[k], `${path}.${k}`);
     else problems.push(`${path}.${k}: is required`);
   }
 }
@@ -157,6 +166,16 @@ export function mergeParams(defaults: unknown, local: unknown): Params {
   return merged as Params;
 }
 
+function withContext<T>(file: string, fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    if (e instanceof ParamsError)
+      throw new ParamsError(e.problems, `Invalid parameters (${file}):`);
+    throw e;
+  }
+}
+
 async function readJson(path: string, optional: boolean): Promise<unknown> {
   let text: string;
   try {
@@ -166,7 +185,9 @@ async function readJson(path: string, optional: boolean): Promise<unknown> {
     throw new ParamsError([`${path}: cannot read file (${(e as Error).message})`]);
   }
   try {
-    return JSON.parse(text) as unknown;
+    const parsed = JSON.parse(text) as unknown;
+    if (!isObj(parsed)) throw new SyntaxError('top-level value must be a JSON object');
+    return parsed;
   } catch (e) {
     throw new ParamsError([`${path}: invalid JSON (${(e as Error).message})`]);
   }
@@ -178,5 +199,7 @@ export async function loadParams(options: {
 }): Promise<Params> {
   const defaults = await readJson(options.defaultsPath, false);
   const local = options.localPath ? await readJson(options.localPath, true) : {};
-  return mergeParams(defaults, local);
+  // Kiểm tra riêng defaults để phân biệt lỗi file defaults với lỗi file local.
+  withContext(options.defaultsPath, () => mergeParams(defaults, {}));
+  return withContext(options.localPath ?? options.defaultsPath, () => mergeParams(defaults, local));
 }
