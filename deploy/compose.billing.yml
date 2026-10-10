@@ -48,6 +48,7 @@ services:
       RABBITMQ_ADMIN_PASSWORD: ${BILLING_RABBITMQ_ADMIN_PASSWORD:?set in deploy/.env}
       WALLET_MQ_PASSWORD: ${BILLING_WALLET_MQ_PASSWORD:?set in deploy/.env}
       PAYMENT_MQ_PASSWORD: ${BILLING_PAYMENT_MQ_PASSWORD:?set in deploy/.env}
+      ECOMMERCE_MQ_PASSWORD: ${BILLING_ECOMMERCE_MQ_PASSWORD:?set in deploy/.env}
     volumes:
       - ./scripts/init-rabbitmq.sh:/init/init-rabbitmq.sh:ro
     entrypoint: ['/bin/sh', '/init/init-rabbitmq.sh']

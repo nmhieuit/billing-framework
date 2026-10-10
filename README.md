@@ -105,6 +105,22 @@ curl -s localhost:3001/wallet/entries $H
 `POST /topups` luôn trả `202`; số dư tăng khi payment gửi webhook `charge.succeeded` về `POST /webhooks/payment`
 (đặt `WEBHOOK_URL` của payment trỏ vào đó và dùng chung `WEBHOOK_SECRET` = `PAYMENT_WEBHOOK_SECRET`).
 
+## Thanh toán order qua RabbitMQ
+
+Khi ecommerce hoàn tất một order, nó publish `OrderReadyForPaymentV1` vào exchange `orders.events` (vhost `billing`);
+wallet trừ ví một lần duy nhất cho mỗi `orderId` và trả `OrderPaidV1` hoặc `OrderPaymentFailedV1` qua `billing.events`.
+Thiết kế: [`docs/superpowers/specs/2026-10-10-order-payment-integration-design.md`](docs/superpowers/specs/2026-10-10-order-payment-integration-design.md);
+quyết định: ADR-0008, ADR-0009; bàn giao cho ecommerce: [`docs/integration/orders-handoff.vi.md`](docs/integration/orders-handoff.vi.md);
+Pact Broker: [`docs/integration/pact-broker.vi.md`](docs/integration/pact-broker.vi.md).
+
+```bash
+# 1. Tạo vhost, user và exchange tích hợp trên RabbitMQ dùng chung (xem deploy/compose.billing.yml)
+docker compose -f deploy/compose.billing.yml --env-file deploy/.env run --rm billing-rabbitmq-init
+
+# 2. Chạy wallet với RABBITMQ_* (xem services/wallet/.env.example)
+corepack pnpm --filter @billing/wallet-service start
+```
+
 ### Test
 
 ```bash

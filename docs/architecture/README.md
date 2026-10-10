@@ -67,6 +67,13 @@ dựng từ `TenantId` đã kiểm tra. Test tích hợp luôn dựng ít nhất
 `Worker` (vòng lặp nền có `AbortSignal`), `runAll`, `once`, `createShutdownHandler`, `startOrExit` dùng chung cho cả
 hai service: dừng worker → đóng app → chờ việc đang chạy → đóng DB, luôn chạy hết các bước.
 
+## Messaging (RabbitMQ)
+
+`@billing/messaging` bọc `amqplib` 2.x. Quy tắc: publish luôn có confirm và `mandatory` (không định tuyến được là thất bại);
+không bao giờ dùng default exchange (`amq.default`) làm DLX hay để publish; consumer ack chỉ sau khi transaction DB đã
+commit; retry theo bậc TTL qua exchange riêng rồi DLQ; kết nối tự phục hồi và dựng lại channel/consumer trong `setup`.
+Exchange tích hợp (`orders.events`, `billing.events`) do script init khai báo, service chỉ kiểm tra bằng passive check.
+
 ## Kiểm thử
 
 - `*.test.ts`: unit, không cần Docker (`corepack pnpm test`).
