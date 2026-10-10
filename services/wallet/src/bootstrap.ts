@@ -1,4 +1,5 @@
 import { createDatabase } from '@billing/database';
+import { BrokerClient } from '@billing/messaging';
 import { createLogger } from '@billing/observability';
 import { Worker, once, runAll } from '@billing/runtime';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -9,11 +10,14 @@ import { GetTopup } from './application/get-topup.js';
 import { GetWallet } from './application/get-wallet.js';
 import { InlineTopupSubmitter } from './application/inline-topup-submitter.js';
 import { ListEntries } from './application/list-entries.js';
+import { PayOrder } from './application/pay-order.js';
 import type { Clock, IdGenerator, Logger } from './application/ports.js';
+import { DEFAULT_OUTBOX_BACKOFF_SECONDS, RelayOutbox } from './application/relay-outbox.js';
 import { RequestTopup } from './application/request-topup.js';
 import { SubmitDueTopups } from './application/submit-due-topups.js';
 import { SubmitTopup } from './application/submit-topup.js';
 import type { WalletConfig } from './config.js';
+import { AmqpEventPublisher } from './infrastructure/amqp-event-publisher.js';
 import { HttpPaymentGateway } from './infrastructure/http-payment-gateway.js';
 import type { WalletDatabase } from './infrastructure/kysely/schema.js';
 import { assertMigrated } from './infrastructure/kysely/provisioning.js';
@@ -21,10 +25,14 @@ import { KyselyTenantUnitOfWork } from './infrastructure/kysely/unit-of-work.js'
 import { RandomIdGenerator, SystemClock } from './infrastructure/system.js';
 import { ConfigTenantRegistry } from './infrastructure/tenant-registry.js';
 import { createApp } from './interface/http/create-app.js';
+import { createOrderReadyHandler } from './interface/messaging/order-ready.handler.js';
+import { orderPaymentsTopology } from './interface/messaging/order-payments.topology.js';
 
 export interface StartOverrides {
   clock?: Clock;
   ids?: IdGenerator;
+  /** Móc cho test: chạy sau khi PayOrder đã commit, trước khi trả ack cho broker (mô phỏng consumer chết giữa chừng). */
+  afterOrderHandled?: () => Promise<void>;
 }
 
 export interface RunningService {
@@ -53,6 +61,14 @@ export async function startService(
     throw error;
   }
 
+  let broker: BrokerClient;
+  try {
+    broker = await BrokerClient.connect({ config: config.broker, log, initialMaxRetries: 3 });
+  } catch (error) {
+    await db.destroy().catch(() => undefined);
+    throw error;
+  }
+
   const clock = overrides.clock ?? new SystemClock();
   const ids = overrides.ids ?? new RandomIdGenerator();
   const registry = new ConfigTenantRegistry(config.tenants);
@@ -72,8 +88,27 @@ export async function startService(
   const submitter = new InlineTopupSubmitter({ submit, log });
   const submitDue = new SubmitDueTopups({ submit });
 
+  const payOrder = new PayOrder({ uow, clock, ids, log });
+  const relay = new RelayOutbox({
+    uow,
+    publisher: new AmqpEventPublisher(broker.publisher),
+    clock,
+    log,
+    backoffSeconds: DEFAULT_OUTBOX_BACKOFF_SECONDS,
+  });
+  const orderReady = createOrderReadyHandler({ registry, payOrder, log });
+
   let app: NestFastifyApplication;
   try {
+    await broker.consume({
+      topology: orderPaymentsTopology(config.orders.retryDelaysSeconds),
+      prefetch: config.orders.prefetch,
+      handler: async (message) => {
+        const result = await orderReady(message);
+        await overrides.afterOrderHandled?.();
+        return result;
+      },
+    });
     app = await createApp({
       registry,
       clock,
@@ -87,6 +122,7 @@ export async function startService(
       applyPaymentResult: new ApplyPaymentResult({ uow, clock, ids, log }),
     });
   } catch (error) {
+    await broker.close().catch(() => undefined);
     await db.destroy().catch(() => undefined);
     throw error;
   }
@@ -107,9 +143,24 @@ export async function startService(
       }
     }
   };
+  const relayOutboxForAllTenants = async (signal: AbortSignal): Promise<void> => {
+    for (const tenant of registry.all()) {
+      if (signal.aborted) return;
+      try {
+        const report = await relay.execute(tenant, config.orders.outboxBatch, {
+          shouldContinue: () => !signal.aborted,
+        });
+        if (Object.values(report).some((count) => count > 0)) {
+          log.info({ tenantId: tenant.value, ...report }, 'worker relayed outbox events');
+        }
+      } catch (error) {
+        log.error({ err: error, tenantId: tenant.value }, 'relaying the outbox failed');
+      }
+    }
+  };
   const worker = new Worker({
     intervalMs: config.workerIntervalMs,
-    tasks: [submitDueForAllTenants],
+    tasks: [submitDueForAllTenants, relayOutboxForAllTenants],
     onError: (error) => log.error({ err: error }, 'worker task failed'),
   });
   worker.start();
@@ -117,7 +168,14 @@ export async function startService(
   return {
     app,
     stop: once(() =>
-      runAll([() => worker.stop(), () => app.close(), () => submitter.drain(), () => db.destroy()]),
+      runAll([
+        () => broker.stopConsuming(),
+        () => worker.stop(),
+        () => app.close(),
+        () => submitter.drain(),
+        () => broker.close(),
+        () => db.destroy(),
+      ]),
     ),
   };
 }

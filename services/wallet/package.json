@@ -23,6 +23,7 @@
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
-    "@billing/testing": "workspace:^"
+    "@billing/testing": "workspace:^",
+    "amqplib": "^2.2.0"
   }
 }

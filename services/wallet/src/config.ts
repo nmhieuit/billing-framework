@@ -1,4 +1,5 @@
 import { ConfigError, databaseConfigFromEnv, type DatabaseConfig } from '@billing/database';
+import type { BrokerConfig } from '@billing/messaging';
 import { InvalidTenantError } from './domain/errors.js';
 import { TenantId } from './domain/tenant-id.js';
 
@@ -7,11 +8,14 @@ export interface WalletConfig {
   database: DatabaseConfig;
   tenants: TenantId[];
   payment: { baseUrl: string; webhookSecret: string; timeoutMs: number };
+  broker: BrokerConfig;
+  orders: { prefetch: number; retryDelaysSeconds: number[]; outboxBatch: number };
   topupBackoffSeconds: number[];
   workerIntervalMs: number;
 }
 
 const DEFAULT_BACKOFF = '1,5,30,120,600';
+const DEFAULT_ORDER_RETRY_DELAYS = '5,30,120';
 
 /** Đọc cấu hình từ môi trường; thiếu hoặc sai thì ném ConfigError liệt kê mọi vấn đề cùng lúc. */
 export function loadConfig(env: NodeJS.ProcessEnv): WalletConfig {
@@ -89,6 +93,15 @@ export function loadConfig(env: NodeJS.ProcessEnv): WalletConfig {
 
   const webhookSecret = required('PAYMENT_WEBHOOK_SECRET');
 
+  // RabbitMQ
+  const brokerHost = required('RABBITMQ_HOST');
+  const brokerUser = required('RABBITMQ_USER');
+  const brokerPassword = required('RABBITMQ_PASSWORD');
+  const brokerPort = integer('RABBITMQ_PORT', 5672, 1, 65535);
+  const rawVhost = env.RABBITMQ_VHOST;
+  const brokerVhost =
+    rawVhost === undefined || rawVhost.trim() === '' ? 'billing' : rawVhost.trim();
+
   const rawBackoff = env.TOPUP_SUBMIT_BACKOFF;
   const backoffText =
     rawBackoff === undefined || rawBackoff.trim() === '' ? DEFAULT_BACKOFF : rawBackoff;
@@ -102,11 +115,33 @@ export function loadConfig(env: NodeJS.ProcessEnv): WalletConfig {
     );
   }
 
+  const rawRetryDelays = env.ORDER_RETRY_DELAYS;
+  const retryText =
+    rawRetryDelays === undefined || rawRetryDelays.trim() === ''
+      ? DEFAULT_ORDER_RETRY_DELAYS
+      : rawRetryDelays;
+  const retryParts = retryText.split(',').map((part) => part.trim());
+  const retryDelaysSeconds = retryParts.every((part) => /^[1-9]\d{0,5}$/.test(part))
+    ? retryParts.map(Number)
+    : undefined;
+  if (retryDelaysSeconds === undefined) {
+    problems.push(
+      'ORDER_RETRY_DELAYS must be a comma-separated list of positive integers (seconds)',
+    );
+  }
+
   const port = integer('PORT', 3001, 1, 65535);
   const timeoutMs = integer('PAYMENT_TIMEOUT_MS', 5000, 1, 50_000);
+  const prefetch = integer('ORDER_CONSUMER_PREFETCH', 10, 1, 1000);
+  const outboxBatch = integer('OUTBOX_BATCH', 50, 1, 1000);
   const workerIntervalMs = integer('WORKER_INTERVAL_MS', 500, 1, 3_600_000);
 
-  if (problems.length > 0 || database === undefined || topupBackoffSeconds === undefined) {
+  if (
+    problems.length > 0 ||
+    database === undefined ||
+    topupBackoffSeconds === undefined ||
+    retryDelaysSeconds === undefined
+  ) {
     throw new ConfigError(problems);
   }
   return {
@@ -114,6 +149,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): WalletConfig {
     database,
     tenants,
     payment: { baseUrl, webhookSecret, timeoutMs },
+    broker: {
+      host: brokerHost,
+      port: brokerPort,
+      vhost: brokerVhost,
+      user: brokerUser,
+      password: brokerPassword,
+    },
+    orders: { prefetch, retryDelaysSeconds, outboxBatch },
     topupBackoffSeconds,
     workerIntervalMs,
   };

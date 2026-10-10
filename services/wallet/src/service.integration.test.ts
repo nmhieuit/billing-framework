@@ -3,8 +3,10 @@ import { createDatabase } from '@billing/database';
 import {
   FakeClock,
   FakePaymentServer,
+  createTestBroker,
   createTestDatabase,
   waitFor,
+  type TestBroker,
   type TestDatabase,
 } from '@billing/testing';
 import type { Kysely } from 'kysely';
@@ -20,6 +22,7 @@ const acme = TenantId.parse('acme');
 const beta = TenantId.parse('beta');
 
 let testDb: TestDatabase;
+let broker: TestBroker;
 let db: Kysely<WalletDatabase>;
 let fake: FakePaymentServer;
 let clock: FakeClock;
@@ -28,12 +31,14 @@ let counter = 0;
 
 beforeAll(async () => {
   testDb = await createTestDatabase('walletsvc');
+  broker = await createTestBroker('walletsvc');
   db = createDatabase<WalletDatabase>(testDb.config);
   await provisionTenants(db as unknown as Kysely<unknown>, [acme, beta]);
 });
 afterAll(async () => {
   await db.destroy();
   await testDb.drop();
+  await broker.drop();
 });
 beforeEach(async () => {
   fake = await FakePaymentServer.start();
@@ -58,6 +63,8 @@ const configFor = (overrides: Partial<WalletConfig> = {}): WalletConfig => ({
   database: testDb.config,
   tenants: [acme, beta],
   payment: { baseUrl: fake.baseUrl, webhookSecret: SECRET, timeoutMs: 1000 },
+  broker: broker.wallet,
+  orders: { prefetch: 5, retryDelaysSeconds: [1, 2], outboxBatch: 50 },
   topupBackoffSeconds: [1, 5],
   workerIntervalMs: 20,
   ...overrides,

@@ -22,16 +22,26 @@ const filledRequired = {
   WALLET_TENANTS: 'acme,beta',
   PAYMENT_BASE_URL: 'http://payment:3002',
   PAYMENT_WEBHOOK_SECRET: 'whsec',
+  RABBITMQ_HOST: 'mq',
+  RABBITMQ_PASSWORD: 'mq-secret',
 };
 
 describe('services/wallet/.env.example', () => {
   it('documents exactly the variables the service and the migrate command read', () => {
     expect(Object.keys(example).sort()).toEqual(
       [
+        'ORDER_CONSUMER_PREFETCH',
+        'ORDER_RETRY_DELAYS',
+        'OUTBOX_BATCH',
         'PAYMENT_BASE_URL',
         'PAYMENT_TIMEOUT_MS',
         'PAYMENT_WEBHOOK_SECRET',
         'PORT',
+        'RABBITMQ_HOST',
+        'RABBITMQ_PASSWORD',
+        'RABBITMQ_PORT',
+        'RABBITMQ_USER',
+        'RABBITMQ_VHOST',
         'TOPUP_SUBMIT_BACKOFF',
         'WALLET_DB_HOST',
         'WALLET_DB_NAME',
@@ -59,6 +69,9 @@ describe('services/wallet/.env.example', () => {
       WALLET_TENANTS: 'acme,beta',
       PAYMENT_BASE_URL: 'http://payment:3002',
       PAYMENT_WEBHOOK_SECRET: 'whsec',
+      RABBITMQ_HOST: 'mq',
+      RABBITMQ_USER: example.RABBITMQ_USER ?? '',
+      RABBITMQ_PASSWORD: 'mq-secret',
     };
     expect(loadConfig(filledRequired)).toEqual(loadConfig(onlyRequired));
   });

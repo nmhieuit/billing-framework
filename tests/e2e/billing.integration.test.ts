@@ -1,5 +1,12 @@
 import { createDatabase, migrate } from '@billing/database';
-import { createTestDatabase, getFreePort, waitFor, type TestDatabase } from '@billing/testing';
+import {
+  createTestBroker,
+  createTestDatabase,
+  getFreePort,
+  waitFor,
+  type TestBroker,
+  type TestDatabase,
+} from '@billing/testing';
 import { sql, type Kysely } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { paymentMigrations } from '../../db/payment/migrations.js';
@@ -25,6 +32,7 @@ let payment: RunningPayment;
 let wallet: RunningWallet;
 let walletUrl: string;
 let paymentUrl: string;
+let broker: TestBroker;
 
 beforeAll(async () => {
   paymentDb = await createTestDatabase('e2e_payment');
@@ -36,11 +44,14 @@ beforeAll(async () => {
 
   const paymentPort = await getFreePort();
   paymentUrl = `http://127.0.0.1:${paymentPort}`;
+  broker = await createTestBroker('e2e');
   wallet = await startWallet({
     port: 0,
     database: walletDb.config,
     tenants,
     payment: { baseUrl: paymentUrl, webhookSecret: SECRET, timeoutMs: 3000 },
+    broker: broker.wallet,
+    orders: { prefetch: 5, retryDelaysSeconds: [1, 2], outboxBatch: 50 },
     topupBackoffSeconds: [1, 2, 3],
     workerIntervalMs: 50,
   });
@@ -64,6 +75,7 @@ afterAll(async () => {
   await walletAdmin?.destroy();
   await paymentDb?.drop();
   await walletDb?.drop();
+  await broker?.drop();
 });
 
 interface Reply<T> {

@@ -181,6 +181,9 @@ importers:
       '@billing/testing':
         specifier: workspace:^
         version: link:../../packages/testing
+      amqplib:
+        specifier: ^2.2.0
+        version: 2.2.0
 
 packages:
 

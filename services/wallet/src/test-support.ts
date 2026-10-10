@@ -1,4 +1,4 @@
-import { createDatabase } from '@billing/database';
+import { createDatabase, type DatabaseConfig } from '@billing/database';
 import type { Currency } from '@billing/money';
 import { FakeClock, createTestDatabase } from '@billing/testing';
 import { sql, type Kysely } from 'kysely';
@@ -35,6 +35,7 @@ export class SequentialIds implements IdGenerator {
 }
 
 export interface Harness {
+  config: DatabaseConfig;
   db: Kysely<WalletDatabase>;
   clock: FakeClock;
   ids: SequentialIds;
@@ -53,6 +54,7 @@ export async function createHarness(start = '2026-10-10T10:00:00.000Z'): Promise
   const beta = TenantId.parse('beta');
   await provisionTenants(db as unknown as Kysely<unknown>, [acme, beta]);
   return {
+    config: testDb.config,
     db,
     clock: new FakeClock(start),
     ids: new SequentialIds(),
