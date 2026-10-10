@@ -47,4 +47,10 @@ describe('FakePaymentServer', () => {
     expect(Date.now() - started).toBeGreaterThanOrEqual(50);
     expect(await res.json()).toEqual({ chargeId: 'custom_1' });
   });
+
+  it('passes the request to the fallback so a test can answer by URL', async () => {
+    server.setFallback((_number, request) => ({ status: 200, body: { url: request.url } }));
+    const response = await fetch(`${server.baseUrl}/settlements?date=2026-10-10`);
+    expect(await response.json()).toEqual({ url: '/settlements?date=2026-10-10' });
+  });
 });

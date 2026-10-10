@@ -3,6 +3,7 @@ import { assertSchemaName } from '../schema-name.js';
 import { ledgerMigration } from './001-ledger.js';
 import { topupsMigration } from './002-topups.js';
 import { ordersMigration } from './003-orders.js';
+import { reconciliationMigration } from './004-reconciliation.js';
 
 /** Các migration của một schema tenant. Tên quyết định thứ tự; chỉ thêm mới, không sửa cái đã phát hành. */
 export function walletMigrations(schema: string): Record<string, Migration> {
@@ -11,5 +12,6 @@ export function walletMigrations(schema: string): Record<string, Migration> {
     '001-ledger': ledgerMigration(schema),
     '002-topups': topupsMigration(schema),
     '003-orders': ordersMigration(schema),
+    '004-reconciliation': reconciliationMigration(schema),
   };
 }

@@ -105,6 +105,27 @@ curl -s localhost:3001/wallet/entries $H
 `POST /topups` luôn trả `202`; số dư tăng khi payment gửi webhook `charge.succeeded` về `POST /webhooks/payment`
 (đặt `WEBHOOK_URL` của payment trỏ vào đó và dùng chung `WEBHOOK_SECRET` = `PAYMENT_WEBHOOK_SECRET`).
 
+### Đối soát
+
+Mỗi ngày (sau `RECONCILE_AT_UTC_HOUR`) wallet đối soát ngày D-1 UTC cho từng tenant: toàn vẹn ledger (giao dịch cân, số dư
+cache khớp sổ cái) và Wallet ↔ Gateway (sao kê của payment so với `topups`). Lệch `MISSING_AT_WALLET` (webhook bị mất) được tự
+ghi bù qua đường nạp bình thường; mọi lệch khác thành ca thủ công. Lượt chạy bất biến. Endpoint chỉ dành cho **mạng vận hành**: không đưa vào bộ route hướng khách hàng của gateway (caller phía khách có header tenant sẽ chạy được đối soát và đóng ca dưới tên giả); dùng network policy hoặc route gateway riêng có xác thực vận hành:
+
+```bash
+H='-H x-tenant-id:acme -H content-type:application/json'
+curl -s -X POST localhost:3001/reconciliations $H -d '{"date":"2026-10-09"}'   # 202 {runId}
+curl -s localhost:3001/reconciliations/<runId> $H                               # trạng thái, tổng kiểm
+curl -s "localhost:3001/reconciliations/<runId>/items?caseStatus=OPEN" $H       # các ca còn mở
+curl -s -X POST localhost:3001/reconciliation-items/<itemId>/resolve $H \
+  -d '{"status":"RESOLVED","note":"đã xử lý","resolvedBy":"an.nguyen"}'        # đóng ca
+```
+
+Cấu hình: `RECONCILE_AUTOFIX` (`true`), `RECONCILE_AT_UTC_HOUR` (`2`), `RECONCILE_MAX_ATTEMPTS` (`3`),
+`RECONCILE_MAX_ITEMS` (`50000`). Thiết kế: [`docs/superpowers/specs/2026-10-10-reconciliation-design.md`](docs/superpowers/specs/2026-10-10-reconciliation-design.md);
+quyết định: [ADR-0010](docs/adr/0010-reconciliation-read-only-immutable-runs.vi.md);
+vận hành: [`docs/integration/reconciliation-runbook.vi.md`](docs/integration/reconciliation-runbook.vi.md);
+hợp đồng Wallet ↔ Orders (chưa chạy): [`docs/integration/orders-reconciliation.vi.md`](docs/integration/orders-reconciliation.vi.md).
+
 ## Thanh toán order qua RabbitMQ
 
 Khi ecommerce hoàn tất một order, nó publish `OrderReadyForPaymentV1` vào exchange `orders.events` (vhost `billing`);

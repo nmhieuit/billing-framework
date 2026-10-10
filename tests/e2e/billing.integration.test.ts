@@ -52,6 +52,7 @@ beforeAll(async () => {
     payment: { baseUrl: paymentUrl, webhookSecret: SECRET, timeoutMs: 3000 },
     broker: broker.wallet,
     orders: { prefetch: 5, retryDelaysSeconds: [1, 2], outboxBatch: 50 },
+    reconciliation: { autofix: true, atUtcHour: 23, maxAttempts: 3, maxItems: 1000 },
     topupBackoffSeconds: [1, 2, 3],
     workerIntervalMs: 50,
   });

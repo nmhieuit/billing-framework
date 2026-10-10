@@ -3,6 +3,13 @@ import type { BrokerConfig } from '@billing/messaging';
 import { InvalidTenantError } from './domain/errors.js';
 import { TenantId } from './domain/tenant-id.js';
 
+export interface ReconciliationConfig {
+  autofix: boolean;
+  atUtcHour: number;
+  maxAttempts: number;
+  maxItems: number;
+}
+
 export interface WalletConfig {
   port: number;
   database: DatabaseConfig;
@@ -10,6 +17,7 @@ export interface WalletConfig {
   payment: { baseUrl: string; webhookSecret: string; timeoutMs: number };
   broker: BrokerConfig;
   orders: { prefetch: number; retryDelaysSeconds: number[]; outboxBatch: number };
+  reconciliation: ReconciliationConfig;
   topupBackoffSeconds: number[];
   workerIntervalMs: number;
 }
@@ -136,6 +144,17 @@ export function loadConfig(env: NodeJS.ProcessEnv): WalletConfig {
   const outboxBatch = integer('OUTBOX_BATCH', 50, 1, 1000);
   const workerIntervalMs = integer('WORKER_INTERVAL_MS', 500, 1, 3_600_000);
 
+  const rawAutofix = env.RECONCILE_AUTOFIX?.trim();
+  let reconcileAutofix = true;
+  if (rawAutofix !== undefined && rawAutofix !== '') {
+    if (rawAutofix === 'true') reconcileAutofix = true;
+    else if (rawAutofix === 'false') reconcileAutofix = false;
+    else problems.push('RECONCILE_AUTOFIX must be "true" or "false"');
+  }
+  const reconcileAtUtcHour = integer('RECONCILE_AT_UTC_HOUR', 2, 0, 23);
+  const reconcileMaxAttempts = integer('RECONCILE_MAX_ATTEMPTS', 3, 1, 20);
+  const reconcileMaxItems = integer('RECONCILE_MAX_ITEMS', 50_000, 1, 1_000_000);
+
   if (
     problems.length > 0 ||
     database === undefined ||
@@ -157,6 +176,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): WalletConfig {
       password: brokerPassword,
     },
     orders: { prefetch, retryDelaysSeconds, outboxBatch },
+    reconciliation: {
+      autofix: reconcileAutofix,
+      atUtcHour: reconcileAtUtcHour,
+      maxAttempts: reconcileMaxAttempts,
+      maxItems: reconcileMaxItems,
+    },
     topupBackoffSeconds,
     workerIntervalMs,
   };

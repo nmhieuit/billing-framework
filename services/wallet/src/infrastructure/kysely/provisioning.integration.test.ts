@@ -31,8 +31,8 @@ describe('provisionTenants', () => {
 
   it('creates both tenant schemas, applies every migration, and is idempotent', async () => {
     expect(await provisionTenants(db, [acme, beta])).toEqual({
-      acme: ['001-ledger', '002-topups', '003-orders'],
-      beta: ['001-ledger', '002-topups', '003-orders'],
+      acme: ['001-ledger', '002-topups', '003-orders', '004-reconciliation'],
+      beta: ['001-ledger', '002-topups', '003-orders', '004-reconciliation'],
     });
     expect(await provisionTenants(db, [acme, beta])).toEqual({ acme: [], beta: [] });
     await expect(assertMigrated(db, [acme, beta])).resolves.toBeUndefined();
@@ -63,6 +63,8 @@ describe('provisionTenants', () => {
         'order_payments',
         'outbox',
         'processed_messages',
+        'reconciliation_items',
+        'reconciliation_runs',
         'topups',
       ]);
       const accounts = await sql<{ id: string; kind: string; balance: string }>`

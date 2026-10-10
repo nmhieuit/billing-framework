@@ -14,13 +14,20 @@ import {
   InvalidQueryError,
   MissingCustomerError,
   MissingTenantError,
+  ReconciliationConflictError,
+  ReconciliationItemNotFoundError,
+  ReconciliationNotFoundError,
   TopupNotFoundError,
   UnknownTenantError,
   WalletCurrencyConflictError,
   WalletNotFoundError,
 } from '../../application/errors.js';
 import type { Clock, Logger } from '../../application/ports.js';
-import { InvalidCustomerError, InvalidTopupError } from '../../domain/errors.js';
+import {
+  InvalidCustomerError,
+  InvalidReconciliationError,
+  InvalidTopupError,
+} from '../../domain/errors.js';
 import { CLOCK, LOGGER, WEBHOOK_SECRET } from './tokens.js';
 
 /** Lỗi do chính lớp HTTP phát hiện (thiếu/sai header hay body) trước khi vào use case. */
@@ -65,6 +72,26 @@ const RULES: ReadonlyArray<{ matches: (error: unknown) => boolean; status: numbe
       matches: (e) => e instanceof IdempotencyConflictError,
       status: 422,
       code: 'IDEMPOTENCY_KEY_REUSED',
+    },
+    {
+      matches: (e) => e instanceof InvalidReconciliationError,
+      status: 422,
+      code: 'INVALID_RECONCILIATION',
+    },
+    {
+      matches: (e) => e instanceof ReconciliationNotFoundError,
+      status: 404,
+      code: 'RECONCILIATION_NOT_FOUND',
+    },
+    {
+      matches: (e) => e instanceof ReconciliationItemNotFoundError,
+      status: 404,
+      code: 'RECONCILIATION_ITEM_NOT_FOUND',
+    },
+    {
+      matches: (e) => e instanceof ReconciliationConflictError,
+      status: 409,
+      code: 'RECONCILIATION_CONFLICT',
     },
   ];
 

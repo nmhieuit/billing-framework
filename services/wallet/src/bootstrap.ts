@@ -5,20 +5,28 @@ import { Worker, once, runAll } from '@billing/runtime';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Kysely } from 'kysely';
 import { ApplyPaymentResult } from './application/apply-payment-result.js';
+import { BackgroundRuns } from './application/background-runs.js';
 import { CreateWallet } from './application/create-wallet.js';
+import { GetReconciliationRun } from './application/get-reconciliation-run.js';
 import { GetTopup } from './application/get-topup.js';
 import { GetWallet } from './application/get-wallet.js';
 import { InlineTopupSubmitter } from './application/inline-topup-submitter.js';
 import { ListEntries } from './application/list-entries.js';
+import { ListReconciliationItems } from './application/list-reconciliation-items.js';
 import { PayOrder } from './application/pay-order.js';
 import type { Clock, IdGenerator, Logger } from './application/ports.js';
 import { DEFAULT_OUTBOX_BACKOFF_SECONDS, RelayOutbox } from './application/relay-outbox.js';
 import { RequestTopup } from './application/request-topup.js';
+import { ResolveReconciliationItem } from './application/resolve-reconciliation-item.js';
+import { RunReconciliation } from './application/run-reconciliation.js';
+import { ScheduleDailyReconciliation } from './application/schedule-daily-reconciliation.js';
+import { StartManualReconciliation } from './application/start-manual-reconciliation.js';
 import { SubmitDueTopups } from './application/submit-due-topups.js';
 import { SubmitTopup } from './application/submit-topup.js';
 import type { WalletConfig } from './config.js';
 import { AmqpEventPublisher } from './infrastructure/amqp-event-publisher.js';
 import { HttpPaymentGateway } from './infrastructure/http-payment-gateway.js';
+import { HttpSettlementSource } from './infrastructure/http-settlement-source.js';
 import type { WalletDatabase } from './infrastructure/kysely/schema.js';
 import { assertMigrated } from './infrastructure/kysely/provisioning.js';
 import { KyselyTenantUnitOfWork } from './infrastructure/kysely/unit-of-work.js';
@@ -88,6 +96,35 @@ export async function startService(
   const submitter = new InlineTopupSubmitter({ submit, log });
   const submitDue = new SubmitDueTopups({ submit });
 
+  // Dùng chung một ApplyPaymentResult cho webhook và đối soát (đường ghi sổ duy nhất, chống trùng sẵn).
+  const applyPaymentResult = new ApplyPaymentResult({ uow, clock, ids, log });
+  const background = new BackgroundRuns(log);
+  const reconciliation = new RunReconciliation({
+    uow,
+    settlement: new HttpSettlementSource({
+      baseUrl: config.payment.baseUrl,
+      timeoutMs: config.payment.timeoutMs,
+    }),
+    applyPayment: applyPaymentResult,
+    clock,
+    ids,
+    log,
+    options: {
+      autofix: config.reconciliation.autofix,
+      maxItems: config.reconciliation.maxItems,
+    },
+  });
+  const scheduleDaily = new ScheduleDailyReconciliation({
+    uow,
+    run: reconciliation,
+    clock,
+    log,
+    options: {
+      atUtcHour: config.reconciliation.atUtcHour,
+      maxAttempts: config.reconciliation.maxAttempts,
+    },
+  });
+
   const payOrder = new PayOrder({ uow, clock, ids, log });
   const relay = new RelayOutbox({
     uow,
@@ -119,7 +156,11 @@ export async function startService(
       listEntries: new ListEntries({ uow }),
       requestTopup: new RequestTopup({ uow, clock, ids, submitter }),
       getTopup: new GetTopup({ uow }),
-      applyPaymentResult: new ApplyPaymentResult({ uow, clock, ids, log }),
+      applyPaymentResult,
+      startReconciliation: new StartManualReconciliation({ run: reconciliation, background }),
+      getReconciliationRun: new GetReconciliationRun({ uow }),
+      listReconciliationItems: new ListReconciliationItems({ uow }),
+      resolveReconciliationItem: new ResolveReconciliationItem({ uow, clock }),
     });
   } catch (error) {
     await broker.close().catch(() => undefined);
@@ -158,12 +199,37 @@ export async function startService(
       }
     }
   };
+  // Đối soát định kỳ: mỗi tick xét từng tenant; ScheduleDailyReconciliation tự bỏ qua khi chưa tới giờ hoặc đã xong.
+  const reconcileDailyForAllTenants = async (signal: AbortSignal): Promise<void> => {
+    for (const tenant of registry.all()) {
+      if (signal.aborted) return;
+      try {
+        const outcome = await scheduleDaily.execute(tenant);
+        if (outcome === 'RAN') {
+          log.info({ tenantId: tenant.value }, 'worker ran the daily reconciliation');
+        }
+      } catch (error) {
+        log.error(
+          { err: error, tenantId: tenant.value },
+          'scheduling the daily reconciliation failed',
+        );
+      }
+    }
+  };
   const worker = new Worker({
     intervalMs: config.workerIntervalMs,
     tasks: [submitDueForAllTenants, relayOutboxForAllTenants],
     onError: (error) => log.error({ err: error }, 'worker task failed'),
   });
   worker.start();
+  // Đối soát có Worker riêng: một lượt dài (đọc sao kê chậm) không được chặn việc gửi lần nạp và relay outbox,
+  // và các tick của hai Worker chạy độc lập.
+  const reconcileWorker = new Worker({
+    intervalMs: config.workerIntervalMs,
+    tasks: [reconcileDailyForAllTenants],
+    onError: (error) => log.error({ err: error }, 'reconciliation worker task failed'),
+  });
+  reconcileWorker.start();
 
   return {
     app,
@@ -171,8 +237,10 @@ export async function startService(
       runAll([
         () => broker.stopConsuming(),
         () => worker.stop(),
+        () => reconcileWorker.stop(),
         () => app.close(),
         () => submitter.drain(),
+        () => background.drain(),
         () => broker.close(),
         () => db.destroy(),
       ]),

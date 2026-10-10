@@ -24,7 +24,8 @@ export class FakePaymentServer {
   readonly requests: FakePaymentRequest[] = [];
   readonly baseUrl: string;
   #queue: FakePaymentResponse[] = [];
-  #fallback: (requestNumber: number) => FakePaymentResponse = defaultResponse;
+  #fallback: (requestNumber: number, request: FakePaymentRequest) => FakePaymentResponse =
+    defaultResponse;
   #server: Server;
 
   private constructor(server: Server, baseUrl: string) {
@@ -39,13 +40,14 @@ export class FakePaymentServer {
       const chunks: Buffer[] = [];
       req.on('data', (chunk: Buffer) => chunks.push(chunk));
       req.on('end', () => {
-        fake?.requests.push({
+        const request: FakePaymentRequest = {
           method: req.method ?? '',
           url: req.url ?? '',
           headers: req.headers,
           body: Buffer.concat(chunks).toString('utf8'),
-        });
-        const response = fake?.nextResponse() ?? defaultResponse(0);
+        };
+        fake?.requests.push(request);
+        const response = fake?.nextResponse(request) ?? defaultResponse(0);
         setTimeout(() => {
           res.writeHead(response.status, { 'content-type': 'application/json' });
           res.end(response.body === undefined ? '' : JSON.stringify(response.body));
@@ -63,7 +65,9 @@ export class FakePaymentServer {
     return this;
   }
 
-  setFallback(fallback: (requestNumber: number) => FakePaymentResponse): this {
+  setFallback(
+    fallback: (requestNumber: number, request: FakePaymentRequest) => FakePaymentResponse,
+  ): this {
     this.#fallback = fallback;
     return this;
   }
@@ -73,7 +77,7 @@ export class FakePaymentServer {
     await new Promise<void>((resolve) => this.#server.close(() => resolve()));
   }
 
-  private nextResponse(): FakePaymentResponse {
-    return this.#queue.shift() ?? this.#fallback(this.requests.length);
+  private nextResponse(request: FakePaymentRequest): FakePaymentResponse {
+    return this.#queue.shift() ?? this.#fallback(this.requests.length, request);
   }
 }

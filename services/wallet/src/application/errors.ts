@@ -42,3 +42,26 @@ export class DuplicateKeyError extends Error {
     super(message);
   }
 }
+
+/** Không đọc được sao kê từ payment (mạng, HTTP lỗi, phản hồi sai dạng). */
+export class SettlementUnavailableError extends Error {
+  override name = 'SettlementUnavailableError';
+}
+
+/** Sao kê hoặc số dòng lệch vượt `RECONCILE_MAX_ITEMS`. */
+export class ReconciliationTooLargeError extends Error {
+  override name = 'ReconciliationTooLargeError';
+}
+
+export class ReconciliationNotFoundError extends Error {
+  override name = 'ReconciliationNotFoundError';
+}
+
+export class ReconciliationItemNotFoundError extends Error {
+  override name = 'ReconciliationItemNotFoundError';
+}
+
+/** Ca đã được đóng với giá trị khác. */
+export class ReconciliationConflictError extends Error {
+  override name = 'ReconciliationConflictError';
+}
