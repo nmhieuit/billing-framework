@@ -67,6 +67,7 @@ services:
       PORT: '3002'
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_SERVICE_NAME: payment
+      RETENTION_DRY_RUN: 'true'
     command: ['corepack', 'pnpm', '--filter', '@billing/payment-service', 'dev']
 
   wallet:

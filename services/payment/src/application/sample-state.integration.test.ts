@@ -7,7 +7,7 @@ import type { Logger, UnitOfWork } from './ports.js';
 import { SampleState } from './sample-state.js';
 
 let h: Harness;
-const silentLogger: Logger = { warn: () => {} };
+const silentLogger: Logger = { info: () => {}, warn: () => {} };
 
 beforeAll(async () => {
   h = await createHarness();
@@ -64,7 +64,7 @@ describe('SampleState', () => {
 
   it('logs a warning and does not throw when the repository fails', async () => {
     const warnings: object[] = [];
-    const log: Logger = { warn: (details) => void warnings.push(details) };
+    const log: Logger = { info: () => {}, warn: (details) => void warnings.push(details) };
     const broken: UnitOfWork = {
       run: async () => {
         throw new Error('db down');
