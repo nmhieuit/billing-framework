@@ -74,6 +74,8 @@ describe('kibana params', () => {
     ['billing-ledger-integrity', 'minOpenItems', 0, 1_000_000],
     ['billing-service-silent', 'silentMinutes', 1, 1440],
     ['billing-service-silent', 'lookbackHours', 1, 168],
+    ['billing-retention-stalled', 'maxAgeHours', 1, 720],
+    ['billing-retention-stalled', 'lookbackHours', 1, 168],
   ];
   it.each(ranges)('%s.%s boundaries', (rule, key, min, max) => {
     // Kèm giá trị phụ để ràng buộc chéo (window >= interval, silent < lookback) không che phép thử khoảng.
@@ -87,10 +89,14 @@ describe('kibana params', () => {
             : {};
     const at = (v: number): unknown => ({ rules: { [rule]: { ...companion, [key]: v } } });
     const msg = `rules.${rule}.${key}: must be between ${min} and ${max}`;
-    expect(problemsOf(at(min))).toEqual([]);
-    expect(problemsOf(at(max))).toEqual([]);
-    expect(problemsOf(at(min - 1))).toEqual([msg]);
-    expect(problemsOf(at(max + 1))).toEqual([msg]);
+    // billing-retention-stalled: maxAgeHours (tới 720) không thể thoả `< lookbackHours` (tối đa 168) ở biên;
+    // phép thử này chỉ kiểm khoảng, ràng buộc chéo có test riêng bên dưới.
+    const rangeProblems = (v: number): string[] =>
+      problemsOf(at(v)).filter((m) => !m.includes('must be less than lookbackHours ('));
+    expect(rangeProblems(min)).toEqual([]);
+    expect(rangeProblems(max)).toEqual([]);
+    expect(rangeProblems(min - 1)).toEqual([msg]);
+    expect(rangeProblems(max + 1)).toEqual([msg]);
   });
 
   it('rejects invalid severity and bad timeRange / refreshSeconds', () => {
@@ -143,6 +149,17 @@ describe('kibana params', () => {
       'rules.billing-service-silent.silentMinutes: must be less than lookbackHours * 60 (120), otherwise the rule can never fire',
     ]);
     expect(problemsOf(silent(300))).toHaveLength(1);
+  });
+
+  it('requires retention maxAgeHours < lookbackHours (one below accepted, equal rejected)', () => {
+    const retention = (maxAgeHours: number) => ({
+      rules: { 'billing-retention-stalled': { lookbackHours: 24, maxAgeHours } },
+    });
+    expect(problemsOf(retention(23))).toEqual([]);
+    expect(problemsOf(retention(24))).toEqual([
+      'rules.billing-retention-stalled.maxAgeHours: must be less than lookbackHours (24), otherwise the rule can never fire',
+    ]);
+    expect(problemsOf(retention(100))).toHaveLength(1);
   });
 
   it('loadParams tolerates a missing local file', async () => {

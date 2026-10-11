@@ -21,12 +21,12 @@ const setup = () => {
 const OUTBOX = 'billing-outbox-stuck';
 
 describe('applyRules', () => {
-  it('creates all 8 rules on an empty Kibana', async () => {
+  it('creates all 9 rules on an empty Kibana', async () => {
     const { fake, client } = setup();
     const { changes } = await applyRules(client, rulesFor(), { dryRun: false });
-    expect(changes).toHaveLength(8);
+    expect(changes).toHaveLength(9);
     expect(changes.every((c) => c.actions.join() === 'create')).toBe(true);
-    expect(fake.rules.size).toBe(8);
+    expect(fake.rules.size).toBe(9);
   });
 
   it('is idempotent: the second run is all unchanged with zero writes', async () => {
@@ -49,7 +49,7 @@ describe('applyRules', () => {
     expect(touched.map((c) => c.name)).toEqual([OUTBOX]);
     expect(touched[0]!.actions).toEqual(['update']);
     expect(touched[0]!.differences).toContain('params');
-    expect(fake.rules.size).toBe(8);
+    expect(fake.rules.size).toBe(9);
     const stored = [...fake.rules.values()].find((r) => r.name === OUTBOX)!;
     expect(JSON.stringify(stored.params)).toContain('600');
   });
@@ -58,7 +58,7 @@ describe('applyRules', () => {
     const { fake, client } = setup();
     await applyRules(client, rulesFor(), { dryRun: false });
     const creates = fake.bodies.filter((c) => c.method === 'POST' && c.body.actions !== undefined);
-    expect(creates).toHaveLength(8);
+    expect(creates).toHaveLength(9);
     expect(creates.every((c) => (c.body.actions as unknown[]).length === 0)).toBe(true);
 
     const stored = [...fake.rules.values()].find((r) => r.name === OUTBOX)!;

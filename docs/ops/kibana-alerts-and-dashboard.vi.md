@@ -41,6 +41,7 @@ connector thông báo** (email, Slack) nào được gắn, việc đó là hạ
 | `billing-reconciliation-missed`      | Lượt đối soát `COMPLETED` gần nhất của một tenant cách đây quá `maxAgeHours` giờ                    | [reconciliation-runbook](../integration/reconciliation-runbook.vi.md)           |
 | `billing-reconciliation-failed-run`  | Có lượt đối soát `FAILED` mới trong cửa sổ (tổng số lượt `FAILED` tăng thêm ở mọi tiến trình > 0)   | [reconciliation-runbook](../integration/reconciliation-runbook.vi.md)           |
 | `billing-service-silent`             | `wallet` hoặc `payment` đã từng gửi gauge trạng thái trong `lookbackHours` giờ qua nhưng im quá `silentMinutes` (gồm cả khi service sống nhưng không lấy mẫu được) | README mục Wallet; kiểm tra collector và `OTEL_EXPORTER_OTLP_ENDPOINT` của service |
+| `billing-retention-stalled`          | `wallet` hoặc `payment` đã từng báo lần retention thành công trong `lookbackHours` giờ qua nhưng lần thành công gần nhất cách đây quá `maxAgeHours` giờ | `docs/ops/retention.vi.md`                                                      |
 
 ## Bảng tham số
 
@@ -68,9 +69,10 @@ Giá trị mặc định của các khóa dùng chung:
 | `billing-reconciliation-missed`      | `true`    | `high`     | 15                | 30              |
 | `billing-reconciliation-failed-run`  | `true`    | `high`     | 5                 | 30              |
 | `billing-service-silent`             | `true`    | `high`     | 1                 | 5 (không dùng)  |
+| `billing-retention-stalled`          | `true`    | `high`     | 15                | 30 (không dùng) |
 
 `billing-service-silent` luôn dùng cửa sổ `lookbackHours * 60` phút; khóa `windowMinutes` của nó vẫn bắt buộc có và được kiểm
-tra (kể cả ràng buộc `>= intervalMinutes`), nhưng không ảnh hưởng gì. Ràng buộc chéo khác: `silentMinutes` phải **nhỏ hơn** `lookbackHours * 60`, nếu không rule không bao giờ báo được.
+tra (kể cả ràng buộc `>= intervalMinutes`), nhưng không ảnh hưởng gì (`billing-retention-stalled` cũng vậy: cửa sổ là `lookbackHours * 60`). Ràng buộc chéo khác: `silentMinutes` phải **nhỏ hơn** `lookbackHours * 60`, và `maxAgeHours` của `billing-retention-stalled` phải **nhỏ hơn** `lookbackHours`, nếu không rule không bao giờ báo được.
 
 ### Khóa riêng của từng rule
 
@@ -85,6 +87,8 @@ tra (kể cả ràng buộc `>= intervalMinutes`), nhưng không ảnh hưởng 
 | `billing-reconciliation-failed-run`  | (không có)         | Chỉ có các khóa dùng chung; báo khi có bất kỳ lượt `FAILED` mới trong cửa sổ   | -        | -                   |
 | `billing-service-silent`             | `silentMinutes`    | Số phút không có metric nào thì coi service là im                              | 5        | 1 đến 1440          |
 | `billing-service-silent`             | `lookbackHours`    | Chỉ xét service đã gửi metric trong khoảng này; im lâu hơn thì rule tự hết báo | 6        | 1 đến 168           |
+| `billing-retention-stalled`          | `maxAgeHours`      | Tuổi tối đa (giờ) của lần retention thành công gần nhất; phải **nhỏ hơn** `lookbackHours` | 3        | 1 đến 720           |
+| `billing-retention-stalled`          | `lookbackHours`    | Chỉ xét service đã báo retention thành công trong khoảng này; im lâu hơn thì rule tự hết báo | 24       | 1 đến 168           |
 
 ### Dashboard (`dashboard.<khóa>`)
 

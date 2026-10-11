@@ -45,7 +45,7 @@ const fakeEs = (failOn?: string, alerts: { total: number } | { status: number } 
   return { calls, searches, fetchImpl };
 };
 
-/** Kibana đã apply đủ 8 rule và dashboard. */
+/** Kibana đã apply đủ 9 rule và dashboard. */
 async function appliedKibana(params: Params = defaults) {
   const fake = new FakeKibana();
   const client = new KibanaClient({

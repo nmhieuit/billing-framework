@@ -229,7 +229,7 @@ const markdownEntry = (content: string, id: string, x: number, y: number, g: Gri
 });
 
 // ---------------------------------------------------------------------------
-// Định nghĩa 10 panel dữ liệu.
+// Định nghĩa 12 panel dữ liệu.
 // ---------------------------------------------------------------------------
 
 function panelSpecs(params: Params, f: Fields): PanelSpec[] {
@@ -262,6 +262,7 @@ function panelSpecs(params: Params, f: Fields): PanelSpec[] {
   const topups = rules['billing-topups-stuck'];
   const stale = rules['billing-reconciliation-stale-cases'];
   const missed = rules['billing-reconciliation-missed'];
+  const retentionRule = rules['billing-retention-stalled'];
 
   const orderPayments = lines(
     `FROM ${f.metricsIndex}`,
@@ -384,6 +385,38 @@ function panelSpecs(params: Params, f: Fields): PanelSpec[] {
         { column: 'oldest_age', axis: 'right' },
       ],
       yTitle: 'Backlog (left) / seconds (right)',
+    }),
+    xy({
+      key: 'retention-rows',
+      title: 'Retention: số dòng đã xoá / sẽ xoá (tích luỹ)',
+      esql: lines(
+        `FROM ${f.metricsIndex}`,
+        `| WHERE ${range} AND ${m('retention.rows')} IS NOT NULL`,
+        `| STATS m = MAX(${m('retention.rows')}) BY ${minute}, tenant = ${a('tenant')}, table = ${a('table')}, mode = ${a('mode')}`,
+        `| STATS rows = SUM(m) BY t, series = CONCAT(table, " / ", mode)`,
+        `| KEEP t, series, rows`,
+        `| SORT t`,
+      ),
+      x: 't',
+      y: [{ column: 'rows' }],
+      breakdown: 'series',
+      yTitle: 'Rows (cumulative)',
+    }),
+    xy({
+      key: 'retention-age',
+      title: 'Retention: số giây từ lần chạy thành công gần nhất',
+      esql: lines(
+        `FROM ${f.metricsIndex}`,
+        `| WHERE ${range} AND ${m('retention.last_success_timestamp_seconds')} IS NOT NULL`,
+        `| STATS ts_ok = LAST(${m('retention.last_success_timestamp_seconds')}, ${ts}) BY ${minute}, service = ${f.service}`,
+        `| EVAL age_seconds = TO_LONG(t) / 1000 - ts_ok, threshold = ${retentionRule.maxAgeHours * 3600}`,
+        `| KEEP t, service, age_seconds, threshold`,
+        `| SORT t`,
+      ),
+      x: 't',
+      y: [{ column: 'age_seconds' }, { column: 'threshold' }],
+      breakdown: 'service',
+      yTitle: 'Seconds',
     }),
     table({
       key: 'billing-open-reconciliation-cases',

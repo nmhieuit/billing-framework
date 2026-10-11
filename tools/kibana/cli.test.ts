@@ -88,12 +88,12 @@ describe('cli apply', () => {
     const fake = new FakeKibana();
     const deps = { ...capture(), client: clientFor(fake) };
     expect(await main(['apply', '--defaults-only'], deps)).toBe(0);
-    expect(fake.rules.size).toBe(8);
+    expect(fake.rules.size).toBe(9);
     expect(fake.imports).toHaveLength(1);
     expect(fake.imports[0]!.overwrite).toBe(true);
     const c2 = capture();
     expect(await main(['apply', '--defaults-only'], { ...c2, client: clientFor(fake) })).toBe(0);
-    expect(c2.out.filter((l) => l.startsWith('unchanged')).length).toBe(8);
+    expect(c2.out.filter((l) => l.startsWith('unchanged')).length).toBe(9);
     expect(c2.out.join('\n')).toMatch(/dashboard: imported \d+ objects/);
   });
 

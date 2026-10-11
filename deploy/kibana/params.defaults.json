@@ -56,6 +56,14 @@
       "windowMinutes": 5,
       "silentMinutes": 5,
       "lookbackHours": 6
+    },
+    "billing-retention-stalled": {
+      "enabled": true,
+      "severity": "high",
+      "intervalMinutes": 15,
+      "windowMinutes": 30,
+      "maxAgeHours": 3,
+      "lookbackHours": 24
     }
   }
 }

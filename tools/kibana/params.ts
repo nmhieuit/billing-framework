@@ -8,7 +8,8 @@ export type RuleName =
   | 'billing-reconciliation-stale-cases'
   | 'billing-reconciliation-missed'
   | 'billing-reconciliation-failed-run'
-  | 'billing-service-silent';
+  | 'billing-service-silent'
+  | 'billing-retention-stalled';
 
 export type Severity = 'critical' | 'high' | 'warning';
 
@@ -28,6 +29,7 @@ interface Extras {
   'billing-reconciliation-missed': { maxAgeHours: number };
   'billing-reconciliation-failed-run': Record<string, never>;
   'billing-service-silent': { silentMinutes: number; lookbackHours: number };
+  'billing-retention-stalled': { maxAgeHours: number; lookbackHours: number };
 }
 
 export interface Params {
@@ -69,6 +71,10 @@ const SCHEMA: Record<RuleName, Record<string, Range>> = {
   'billing-reconciliation-failed-run': {},
   'billing-service-silent': {
     silentMinutes: { min: 1, max: 1440 },
+    lookbackHours: { min: 1, max: 168 },
+  },
+  'billing-retention-stalled': {
+    maxAgeHours: { min: 1, max: 720 },
     lookbackHours: { min: 1, max: 168 },
   },
 };
@@ -174,6 +180,12 @@ export function mergeParams(defaults: unknown, local: unknown): Params {
     if (silent.silentMinutes >= silent.lookbackHours * 60) {
       problems.push(
         `params.rules.billing-service-silent.silentMinutes: must be less than lookbackHours * 60 (${silent.lookbackHours * 60}), otherwise the rule can never fire`,
+      );
+    }
+    const retention = rules['billing-retention-stalled'];
+    if (retention.maxAgeHours >= retention.lookbackHours) {
+      problems.push(
+        `params.rules.billing-retention-stalled.maxAgeHours: must be less than lookbackHours (${retention.lookbackHours}), otherwise the rule can never fire`,
       );
     }
   }
