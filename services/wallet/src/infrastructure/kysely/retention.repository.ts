@@ -36,7 +36,8 @@ export class KyselyRetentionRepository implements RetentionRepository {
         case 'reconciliation_items':
           return {
             target: sql`${t('reconciliation_items')} as x`,
-            where: sql`x.case_status in ('RESOLVED', 'IGNORED') and x.created_at < ${at}`,
+            where: sql`x.case_status in ('RESOLVED', 'IGNORED') and x.created_at < ${at}
+              and coalesce(x.resolved_at, x.created_at) < ${at}`,
           };
         case 'reconciliation_runs':
           return {

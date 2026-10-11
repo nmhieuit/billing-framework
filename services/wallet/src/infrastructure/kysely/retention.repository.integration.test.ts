@@ -282,6 +282,90 @@ describe('reconciliation_items / reconciliation_runs', () => {
   });
 });
 
+describe('reconciliation_items age basis', () => {
+  const setItem = (
+    id: string,
+    set: { created_at: Date; case_status: string; resolved_at: Date | null },
+  ) =>
+    h.db
+      .withSchema('t_acme')
+      .updateTable('reconciliation_items')
+      .set(set)
+      .where('id', '=', id)
+      .execute();
+  const itemIds = async () =>
+    (await h.db.withSchema('t_acme').selectFrom('reconciliation_items').select('id').execute())
+      .map((r) => r.id)
+      .sort();
+  const seedItems = async (ids: string[]) => {
+    await h.uow.run(h.acme, async ({ reconciliation }) => {
+      await reconciliation.startRun({
+        id: 'run-age',
+        day: '2026-01-01',
+        triggeredBy: 'MANUAL',
+        startedAt: OLD,
+      });
+      await reconciliation.completeRun('run-age', {
+        gatewayTotals: {},
+        walletTotals: {},
+        items: ids.map((id) => ({
+          id,
+          kind: 'MISSING_AT_WALLET' as const,
+          chargeId: `ch_${id}`,
+          topupId: `tp_${id}`,
+          amountGateway: 1000,
+          amountWallet: 1000,
+          currency: 'VND',
+          detail: {},
+          action: 'NONE' as const,
+        })),
+        finishedAt: OLD,
+      });
+    });
+  };
+
+  it('keeps a long-open case resolved after the cutoff, deletes old resolved/ignored ones', async () => {
+    await seedItems(['resolved-young', 'ignored-old', 'resolved-old', 'resolved-null']);
+    await setItem('resolved-young', {
+      created_at: OLD,
+      case_status: 'RESOLVED',
+      resolved_at: YOUNG,
+    });
+    await setItem('ignored-old', { created_at: OLD, case_status: 'IGNORED', resolved_at: OLD });
+    await setItem('resolved-old', { created_at: OLD, case_status: 'RESOLVED', resolved_at: OLD });
+    await setItem('resolved-null', { created_at: OLD, case_status: 'RESOLVED', resolved_at: null });
+    expect(await purge('reconciliation_items', { dryRun: true })).toBe(3);
+    expect(await purge('reconciliation_items')).toBe(3);
+    expect(await itemIds()).toEqual(['resolved-young']);
+  });
+
+  it('keeps an item exactly at the cutoff (strict <)', async () => {
+    await seedItems(['edge']);
+    await setItem('edge', { created_at: CUTOFF, case_status: 'RESOLVED', resolved_at: CUTOFF });
+    expect(await purge('reconciliation_items')).toBe(0);
+    expect(await itemIds()).toEqual(['edge']);
+  });
+
+  it('keeps a non-RUNNING run whose finished_at is NULL', async () => {
+    await h.uow.run(h.acme, ({ reconciliation }) =>
+      reconciliation.startRun({
+        id: 'run-null',
+        day: '2026-01-05',
+        triggeredBy: 'MANUAL',
+        startedAt: OLD,
+      }),
+    );
+    await h.db
+      .withSchema('t_acme')
+      .updateTable('reconciliation_runs')
+      .set({ status: 'FAILED', finished_at: null })
+      .where('id', '=', 'run-null')
+      .execute();
+    expect(await purge('reconciliation_runs')).toBe(0);
+    expect(await countOf('reconciliation_runs')).toBe(1);
+  });
+});
+
 describe('batching and dry-run', () => {
   it('honours the batch size (TOP)', async () => {
     await insertOutbox(agedSent('batch', 25));

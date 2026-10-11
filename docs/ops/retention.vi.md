@@ -17,7 +17,7 @@ số ngày`, lấy từ `Clock` của service (không dùng đồng hồ SQL Ser
 
 | Service | Chính sách (nhãn `table`) | Dòng bị xóa khi | Mặc định | Tối thiểu | Biến môi trường |
 | ------- | ------------------------- | --------------- | -------- | --------- | --------------- |
-| wallet  | `reconciliation_items`    | `case_status` là `RESOLVED` hoặc `IGNORED` và `created_at < cutoff` | 365 ngày | 30 | `RETENTION_RECONCILIATION_DAYS` |
+| wallet  | `reconciliation_items`    | `case_status` là `RESOLVED` hoặc `IGNORED` và `created_at < cutoff` và `coalesce(resolved_at, created_at) < cutoff` | 365 ngày | 30 | `RETENTION_RECONCILIATION_DAYS` |
 | wallet  | `reconciliation_runs`     | `status <> 'RUNNING'`, `finished_at < cutoff` và không còn item nào của lượt đó | 365 ngày (dùng chung biến trên) | 30 | `RETENTION_RECONCILIATION_DAYS` |
 | wallet  | `outbox_sent`             | `status = 'SENT'` và `sent_at < cutoff` | 14 ngày | 1 | `RETENTION_OUTBOX_SENT_DAYS` |
 | wallet  | `processed_messages`      | `processed_at < cutoff` | 30 ngày | 7 | `RETENTION_PROCESSED_MESSAGES_DAYS` |

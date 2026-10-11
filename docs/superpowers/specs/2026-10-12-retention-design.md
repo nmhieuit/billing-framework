@@ -34,7 +34,7 @@ Sáu quyết định chốt thêm khi lập kế hoạch triển khai (áp vào 
 | Wallet `outbox` | `status = 'SENT'` và `sent_at < cutoff` | 14 ngày (`RETENTION_OUTBOX_SENT_DAYS`) | 1 |
 | Wallet `processed_messages` | `processed_at < cutoff` | 30 ngày (`RETENTION_PROCESSED_MESSAGES_DAYS`) | 7 |
 | Wallet `idempotency_keys` | `created_at < cutoff` | 90 ngày (`RETENTION_IDEMPOTENCY_KEYS_DAYS`) | 7 |
-| Wallet `reconciliation_items` | `case_status in ('RESOLVED','IGNORED')` và `created_at < cutoff` | 365 ngày (`RETENTION_RECONCILIATION_DAYS`) | 30 |
+| Wallet `reconciliation_items` | `case_status in ('RESOLVED','IGNORED')`, `created_at < cutoff` và `coalesce(resolved_at, created_at) < cutoff` (tuổi tính từ lúc đóng ca, không xóa ngay ca mở lâu vừa đóng hôm nay) | 365 ngày (`RETENTION_RECONCILIATION_DAYS`) | 30 |
 | Wallet `reconciliation_runs` | `status <> 'RUNNING'`, `finished_at < cutoff`, không còn item nào | cùng `RETENTION_RECONCILIATION_DAYS` | 30 |
 | Payment `webhook_attempts` rồi `webhook_events` | sự kiện `DELIVERED` và `delivered_at < cutoff` (xóa lịch sử thử trước rồi mới tới sự kiện) | 30 ngày (`RETENTION_WEBHOOK_DAYS`) | 1 |
 | Payment `idempotency_keys` | `created_at < cutoff` | 90 ngày (`RETENTION_IDEMPOTENCY_KEYS_DAYS`) | 7 |
