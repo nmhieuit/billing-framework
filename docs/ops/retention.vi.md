@@ -60,7 +60,7 @@ Wallet chạy mọi chính sách cho **từng tenant** (mỗi tenant là một s
   `processed_messages` -> `idempotency_keys` (item trước run, vì run chỉ xóa được khi không còn item); payment `webhook_attempts`
   -> `webhook_events` -> `idempotency_keys` (lần thử trước sự kiện).
 - **Lỗi được cô lập**: lỗi của một (tenant, chính sách) được đếm và log `retention policy failed; continuing` (mức `warn`), rồi
-  chạy tiếp phần còn lại. Lượt kết thúc log `retention run finished` (mức `info`, kèm `dryRun`, `errors`, `rows`, `policies`) khi
+  chạy tiếp phần còn lại. Lượt kết thúc log `retention run finished` (mức `info`, kèm `dryRun`, `errors`, `rows`, `policies` và `byTable` là danh sách tenant/table/count của lượt) khi
   có dòng được xóa/đếm hoặc có lỗi. Nếu cả lượt ném lỗi bất ngờ, worker log `retention run failed` (mức `error`).
 - **Nhiều pod**: mỗi pod tự chạy retention. Hai pod làm việc trùng nhưng không sai (`readpast` giúp chúng không giẫm nhau); chấp
   nhận được. Mỗi pod báo metric của riêng nó.
@@ -72,12 +72,15 @@ Wallet chạy mọi chính sách cho **từng tenant** (mỗi tenant là một s
 Mặc định `RETENTION_ENABLED=true`, `RETENTION_DRY_RUN=true`. Ở chế độ chạy thử, mỗi chính sách chạy **một** câu đếm
 (`select count(*) from (select top (1000000) ...)`) và **không xóa gì**. Quy trình:
 
-1. **Để chạy thử vài lượt** (ít nhất vài chu kỳ `RETENTION_INTERVAL_MINUTES`, tốt nhất qua một ngày nghiệp vụ đầy đủ). Theo dõi
-   counter `billing.retention.rows` với `mode = would_delete` trên dashboard (panel "Retention: số dòng đã xoá / sẽ xoá") và log
-   `retention run finished` có `dryRun: true`.
-2. **So với kỳ vọng**: số dòng `would_delete` của từng bảng phải khớp ước lượng của bạn (ví dụ truy vấn trực tiếp số dòng cũ hơn
-   ngưỡng). Số quá lớn hoặc quá nhỏ so với thực tế nghĩa là số ngày cấu hình chưa đúng ý, hoặc dữ liệu có hình dạng bạn chưa
-   nghĩ tới: dừng và điều tra trước khi tiếp tục. Nhớ các giới hạn của số đếm thử (mục "Đọc số đếm").
+1. **Để chạy thử vài lượt** (ít nhất vài chu kỳ `RETENTION_INTERVAL_MINUTES`, tốt nhất qua một ngày nghiệp vụ đầy đủ). Mỗi lượt
+   chạy thử đếm lại **toàn bộ** dòng đủ điều kiện (vì không xóa gì) và cộng vào counter, nên counter `would_delete` là **tổng cộng
+   dồn qua các lượt chạy thử**, không phải ước lượng của một lượt. Số theo từng lượt và từng bảng lấy từ log `retention run
+   finished` có `dryRun: true` (trường `byTable`: tenant/table/count), hoặc từ mức tăng của counter giữa hai lượt liên tiếp
+   (panel "Retention: số dòng đã xoá / sẽ xoá").
+2. **So với kỳ vọng**: số đếm **một lượt** của từng bảng (từ `byTable` hoặc mức tăng giữa hai lượt, không phải giá trị cộng dồn)
+   phải khớp ước lượng của bạn (ví dụ truy vấn trực tiếp số dòng cũ hơn ngưỡng). Số quá lớn hoặc quá nhỏ so với thực tế nghĩa là
+   số ngày cấu hình chưa đúng ý, hoặc dữ liệu có hình dạng bạn chưa nghĩ tới: dừng và điều tra trước khi tiếp tục. Nhớ các giới
+   hạn của số đếm thử (mục "Đọc số đếm").
 3. **Điều chỉnh số ngày** nếu cần (`RETENTION_*_DAYS`), rồi để chạy thử thêm vài lượt để thấy số mới.
 4. **Production: sao lưu database** (`billing_wallet`, `billing_payment`) trước khi bật xóa thật. Không có archive và không có
    cách hoàn tác ngoài khôi phục từ bản sao lưu.
@@ -131,10 +134,20 @@ là cột `service`. Tham số và ràng buộc (`maxAgeHours` phải nhỏ hơn
 
 Khi rule nổ: xem log của service tìm `retention policy failed` / `retention run failed` (ví dụ DB không với tới được hoặc thiếu quyền), kiểm tra `RETENTION_ENABLED`, rồi xem mục "Sự cố thường gặp".
 
+## Hành vi cần biết
+
+- **Thứ tự tenant (wallet).** Mỗi lượt bắt đầu từ tenant đầu tiên của danh sách. Tồn đọng lớn ở một tenant đứng đầu có thể dùng hết
+  ngân sách thời gian và làm các tenant sau bị bỏ đói cho tới khi tenant đầu dọn hết; gauge vẫn báo thành công trong thời gian đó
+  (hết ngân sách không phải lỗi).
+- **`idempotency_keys` của wallet bị xóa theo tuổi** kể cả khi `topup` liên kết chưa ở trạng thái cuối. Topup kẹt được phát hiện
+  bởi cảnh báo topups-stuck, không phải bởi retention.
+- **Nhiều pod.** Panel số dòng lấy MAX qua các pod, còn rule `billing-retention-stalled` lấy giá trị LAST theo service nên một pod
+  lỗi liên tục có thể bị che khi pod khác vẫn báo thành công. Kiểm tra log `retention policy failed` của từng pod.
+
 ## Đọc số đếm: giới hạn của chế độ chạy thử
 
-- **Trần 1.000.000 dòng mỗi chính sách.** Số đếm thử không bao giờ vượt `1.000.000`; thấy đúng con số này nghĩa là "ít nhất bằng
-  ấy". Số `deleted` thật không bị trần (mỗi lượt xóa nhiều lô cho tới hết ngân sách).
+- **Trần 1.000.000 dòng mỗi chính sách trong một lượt.** Số đếm thử của một lượt không bao giờ vượt `1.000.000`; thấy đúng con
+  số này trong `byTable` (hoặc mức tăng giữa hai lượt) nghĩa là "ít nhất bằng ấy". Số `deleted` thật không bị trần (mỗi lượt xóa nhiều lô cho tới hết ngân sách).
 - **Chế độ chạy thử đếm một lần cho mỗi chính sách, không lặp.** Vì không có gì bị xóa, các chính sách phụ thuộc nhau chỉ thấy
   tình trạng hiện tại:
   - `reconciliation_runs` **đếm thiếu**: lượt còn item bị loại khỏi số đếm, trong khi ở chế độ thật item bị xóa trước (chính sách
@@ -144,6 +157,8 @@ Khi rule nổ: xem log của service tìm `retention policy failed` / `retention
   - Các chính sách còn lại (`outbox_sent`, `processed_messages`, `idempotency_keys`, `reconciliation_items`, `webhook_attempts`)
     độc lập nên số đếm thử là số dòng đủ điều kiện tại thời điểm đếm (tối đa 1.000.000).
 - Counter mỗi pod là riêng của pod đó; dashboard lấy MAX trong mỗi phút, không cộng các bản sao.
+- **Counter `would_delete` là tổng dồn qua các lượt chạy thử** (xem "Từ chạy thử sang xóa thật"), nên giá trị lớn hơn nhiều lần ước
+  lượng một lượt là bình thường.
 
 ## Tham chiếu cấu hình
 
@@ -173,10 +188,11 @@ Index phục vụ các câu xóa nằm trong migration: wallet tenant migration 
 | Triệu chứng | Nguyên nhân thường gặp | Cách xử lý |
 | ----------- | ---------------------- | ---------- |
 | Không thấy gauge/counter retention, rule không nổ | `RETENTION_ENABLED=false`, hoặc service chưa bật xuất metric (`OTEL_EXPORTER_OTLP_ENDPOINT`) | Kiểm tra biến môi trường; log lúc khởi động; với metric xem [local-stack](local-stack.vi.md) |
-| Job chạy nhưng không bao giờ báo thành công | Mỗi lượt đều có lỗi (log `retention policy failed; continuing`) hoặc worker ném lỗi (log `retention run failed`) | Đọc trường `err` của log: ví dụ mất kết nối DB, tài khoản ứng dụng thiếu quyền xóa, hoặc migration `006`/`003` chưa chạy |
-| Lỗi về index hoặc truy vấn xóa chậm, quét cả bảng | Thiếu index của migration retention (wallet `006` chưa áp cho một tenant, payment `003` chưa chạy) | Chạy lại migration (job `migrate` trên stack local); service wallet từ chối khởi động nếu còn tenant chưa migrate |
+| Job chạy nhưng không bao giờ báo thành công | Mỗi lượt đều có lỗi (log `retention policy failed; continuing`) hoặc worker ném lỗi (log `retention run failed`) | Đọc trường `err` của log: ví dụ mất kết nối DB, hoặc (chỉ với tài khoản được cấp quyền tùy chỉnh) thiếu quyền xóa; `deploy/sql/init.sql` cấp `db_datawriter` nên cấu hình mặc định đã đủ quyền |
+| Truy vấn xóa chậm, quét cả bảng | Thiếu index của migration retention (wallet `006` chưa áp cho một tenant, payment `003` chưa chạy). Migration chỉ thêm index nên thiếu index chỉ làm xóa chậm, không gây lỗi | Chạy lại migration (job `migrate` trên stack local); service wallet từ chối khởi động nếu còn tenant chưa migrate |
 | Xóa chậm, tồn đọng mãi không hết | Mỗi lượt chỉ có 60 giây và lô 1000 dòng | Nâng `RETENTION_BATCH_SIZE` (tối đa 4000), nâng `RETENTION_MAX_SECONDS_PER_RUN`, hoặc hạ `RETENTION_INTERVAL_MINUTES`; hoặc đơn giản để nhiều lượt dọn dần |
-| Số `would_delete` luôn đúng bằng 1.000.000 | Trần của chế độ chạy thử | Bình thường với tồn đọng rất lớn; số thật lớn hơn |
+| Số đếm thử của một lượt (trong `byTable` hoặc mức tăng giữa hai lượt) luôn đúng bằng 1.000.000 | Trần của chế độ chạy thử | Bình thường với tồn đọng rất lớn; số thật lớn hơn |
+| Counter `would_delete` lớn gấp nhiều lần ước lượng | Counter cộng dồn số đếm của mọi lượt chạy thử (mỗi lượt đếm lại cùng các dòng) | Không phải lỗi; dùng `byTable` hoặc mức tăng giữa hai lượt |
 | `would_delete` của `webhook_events` / `reconciliation_runs` thấp bất thường | Giới hạn đếm thử của các chính sách phụ thuộc (xem mục "Đọc số đếm") | Không phải lỗi; sau khi xóa thật các bảng con, các dòng này đủ điều kiện ở lượt sau |
 | Service không khởi động, `ConfigError` | Số ngày dưới mức tối thiểu, ngoài khoảng, hoặc boolean khác `true`/`false` | Sửa theo thông báo, đối chiếu bảng "Tham chiếu cấu hình" |
 
