@@ -230,28 +230,35 @@ describe('retention worker in the running service', () => {
 
   it('stop() waits for a retention run that is in flight', async () => {
     await seed();
-    // Giữ khóa độc quyền trên bảng outbox của acme để lượt dọn bị kẹt giữa chừng (đếm outbox_sent phải chờ khóa).
+    // Khóa độc quyền bảng processed_messages của acme: chỉ lượt dọn chạm bảng này (consumer không nhận tin nào),
+    // nên chỉ retentionWorker.stop() mới có thể là bước đang chờ trong service.stop().
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     let locked!: () => void;
     const lockTaken = new Promise<void>((resolve) => (locked = resolve));
     const holder = db.transaction().execute(async (trx) => {
-      await sql`select top (1) id from ${sql.id('t_acme', 'outbox')} with (tablockx, holdlock)`.execute(
+      await sql`select top (1) message_id from ${sql.id('t_acme', 'processed_messages')} with (tablockx, holdlock)`.execute(
         trx,
       );
       locked();
       await gate;
     });
-    await lockTaken;
+    let stopping: Promise<void> | undefined;
     try {
+      await Promise.race([lockTaken, holder]);
       const service = await start({ dryRun: true });
+      await service.app.listen({ port: 0, host: '127.0.0.1' });
+      const url = await service.app.getUrl();
       await new Promise((resolve) => setTimeout(resolve, 700));
       expect(retentionReports()).toHaveLength(0); // lượt đang kẹt
 
       let stopped = false;
-      const stopping = service.stop().then(() => (stopped = true));
+      stopping = service.stop().then(() => void (stopped = true));
       await new Promise((resolve) => setTimeout(resolve, 400));
       expect(stopped).toBe(false); // stop() phải chờ lượt đang chạy
+      // Các bước sau retentionWorker.stop() (app.close, db.destroy) chưa được chạy: HTTP vẫn nhận kết nối.
+      // Nếu stop() của Worker không chờ lượt đang chạy, app.close() sẽ chạy ngay và kết nối bị từ chối.
+      await expect(fetch(`${url}/nope`)).resolves.toBeInstanceOf(Response);
 
       release();
       await stopping;
@@ -262,6 +269,7 @@ describe('retention worker in the running service', () => {
       expect(metrics.calls).toHaveLength(afterStop);
     } finally {
       release();
+      await stopping?.catch(() => undefined);
       await holder;
     }
   });
