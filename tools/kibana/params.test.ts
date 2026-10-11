@@ -76,7 +76,16 @@ describe('kibana params', () => {
     ['billing-service-silent', 'lookbackHours', 1, 168],
   ];
   it.each(ranges)('%s.%s boundaries', (rule, key, min, max) => {
-    const at = (v: number): unknown => ({ rules: { [rule]: { [key]: v } } });
+    // Kèm giá trị phụ để ràng buộc chéo (window >= interval, silent < lookback) không che phép thử khoảng.
+    const companion: Record<string, number> =
+      key === 'intervalMinutes'
+        ? { windowMinutes: 1440 }
+        : key === 'windowMinutes'
+          ? { intervalMinutes: 1 }
+          : key === 'silentMinutes'
+            ? { lookbackHours: 168 }
+            : {};
+    const at = (v: number): unknown => ({ rules: { [rule]: { ...companion, [key]: v } } });
     const msg = `rules.${rule}.${key}: must be between ${min} and ${max}`;
     expect(problemsOf(at(min))).toEqual([]);
     expect(problemsOf(at(max))).toEqual([]);
@@ -113,6 +122,27 @@ describe('kibana params', () => {
     expect(problemsOf(local)).toEqual(expected);
     expect(problemsOf(local)).toEqual(expected);
     expect(() => mergeParams(defaults, local)).toThrow(expected.join('\n'));
+  });
+
+  it('requires windowMinutes >= intervalMinutes (boundary accepted, below rejected)', () => {
+    const rule = (windowMinutes: number) => ({
+      rules: { 'billing-dlq-not-empty': { intervalMinutes: 10, windowMinutes } },
+    });
+    expect(problemsOf(rule(10))).toEqual([]);
+    expect(problemsOf(rule(9))).toEqual([
+      'rules.billing-dlq-not-empty.windowMinutes: must be >= intervalMinutes (10), otherwise runs can miss data',
+    ]);
+  });
+
+  it('requires silentMinutes < lookbackHours * 60 (one below accepted, equal rejected)', () => {
+    const silent = (silentMinutes: number) => ({
+      rules: { 'billing-service-silent': { lookbackHours: 2, silentMinutes } },
+    });
+    expect(problemsOf(silent(119))).toEqual([]);
+    expect(problemsOf(silent(120))).toEqual([
+      'rules.billing-service-silent.silentMinutes: must be less than lookbackHours * 60 (120), otherwise the rule can never fire',
+    ]);
+    expect(problemsOf(silent(300))).toHaveLength(1);
   });
 
   it('loadParams tolerates a missing local file', async () => {

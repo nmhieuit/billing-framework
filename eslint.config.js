@@ -13,6 +13,7 @@ const FRAMEWORKS = [
   'amqplib',
   'pino',
   'pino/*',
+  '@opentelemetry/*',
 ];
 
 const layerImport = (layer) => ({

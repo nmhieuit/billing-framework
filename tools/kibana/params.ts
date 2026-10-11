@@ -159,6 +159,24 @@ export function mergeParams(defaults: unknown, local: unknown): Params {
         ),
       ),
   });
+  // Ràng buộc chéo chỉ kiểm khi các trường liên quan đã hợp lệ (lỗi kiểu/khoảng đã được báo ở trên).
+  if (problems.length === 0) {
+    const rules = (merged as Params).rules;
+    for (const name of Object.keys(SCHEMA) as RuleName[]) {
+      const r = rules[name];
+      if (r.windowMinutes < r.intervalMinutes) {
+        problems.push(
+          `params.rules.${name}.windowMinutes: must be >= intervalMinutes (${r.intervalMinutes}), otherwise runs can miss data`,
+        );
+      }
+    }
+    const silent = rules['billing-service-silent'];
+    if (silent.silentMinutes >= silent.lookbackHours * 60) {
+      problems.push(
+        `params.rules.billing-service-silent.silentMinutes: must be less than lookbackHours * 60 (${silent.lookbackHours * 60}), otherwise the rule can never fire`,
+      );
+    }
+  }
   if (problems.length > 0) {
     // Bỏ tiền tố "params." cho gọn; thứ tự theo bảng nên ổn định.
     throw new ParamsError(problems.map((m) => m.replace(/^params\./, '').replace(/^params: /, '')));
