@@ -10,7 +10,7 @@ export class RecordingMetrics implements Metrics {
   webhookDelivery(result: 'delivered' | 'retrying' | 'failed'): void {
     this.calls.push(['webhookDelivery', result]);
   }
-  publishState(state: PaymentState): void {
+  publishState(state: PaymentState | null): void {
     this.calls.push(['publishState', state]);
   }
 }

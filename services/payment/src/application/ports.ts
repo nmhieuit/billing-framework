@@ -98,7 +98,8 @@ export interface Metrics {
   /** Một charge vừa hoàn tất, theo trạng thái cuối (`SUCCEEDED` / `FAILED`). */
   charge(status: string): void;
   webhookDelivery(result: 'delivered' | 'retrying' | 'failed'): void;
-  publishState(state: PaymentState): void;
+  /** `null` = không lấy mẫu được: các gauge trạng thái ngừng báo cáo (không giữ số cũ) để rule im lặng phát hiện được. */
+  publishState(state: PaymentState | null): void;
 }
 
 export const noopMetrics: Metrics = {

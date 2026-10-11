@@ -34,7 +34,13 @@ export class OtelPaymentMetrics implements Metrics {
     this.#webhookDeliveries.add(1, { result });
   }
 
-  publishState(state: PaymentState): void {
+  publishState(state: PaymentState | null): void {
+    if (state === null) {
+      // Không lấy mẫu được: bỏ điểm dữ liệu để gauge ngừng xuất, không để số cũ mang dấu thời gian mới.
+      this.#webhookBacklog.replace([]);
+      this.#webhookOldest.replace([]);
+      return;
+    }
     this.#webhookBacklog.replace([{ value: state.webhookPending, attributes: {} }]);
     this.#webhookOldest.replace([{ value: state.webhookOldestAgeSeconds, attributes: {} }]);
   }

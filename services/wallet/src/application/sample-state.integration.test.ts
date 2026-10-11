@@ -136,7 +136,23 @@ describe('SampleState', () => {
 
     expect(state.tenants.map((x) => x.tenant)).toEqual(['acme']);
     expect(metrics.calls).toHaveLength(1);
+    // Tenant lỗi không có điểm dữ liệu trong lần publish: series của nó biến mất thay vì giữ số cũ.
+    expect(JSON.stringify(metrics.calls[0])).not.toContain('beta');
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatchObject({ tenantId: 'beta' });
+  });
+
+  it('publishes an empty tenant list when every tenant fails so the gauges stop reporting', async () => {
+    const broken: TenantUnitOfWork = {
+      run: async () => {
+        throw new Error('db down');
+      },
+    };
+    const { sampler, metrics } = build({ uow: broken });
+    const state = await sampler.execute();
+
+    expect(state.tenants).toEqual([]);
+    expect(metrics.calls).toHaveLength(1);
+    expect(metrics.calls[0]).toMatchObject(['publishState', { tenants: [] }]);
   });
 });

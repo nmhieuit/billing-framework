@@ -31,6 +31,18 @@ describe('OtelPaymentMetrics', () => {
     await telemetry.shutdown();
   });
 
+  it('stops reporting both gauges after publishState(null)', async () => {
+    const { metrics, collect, telemetry } = setup();
+    metrics.publishState({ webhookPending: 4, webhookOldestAgeSeconds: 90 });
+    expect((await collect()).get('billing.payment.webhook_backlog')?.size).toBe(1);
+
+    metrics.publishState(null);
+    const all = await collect();
+    expect(all.get('billing.payment.webhook_backlog')?.size ?? 0).toBe(0);
+    expect(all.get('billing.payment.webhook_oldest_age_seconds')?.size ?? 0).toBe(0);
+    await telemetry.shutdown();
+  });
+
   it('publishes both backlog gauges without attributes and replaces them on the next call', async () => {
     const { metrics, collect, telemetry } = setup();
     metrics.publishState({ webhookPending: 4, webhookOldestAgeSeconds: 90 });

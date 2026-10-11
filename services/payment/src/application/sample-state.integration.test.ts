@@ -73,7 +73,8 @@ describe('SampleState', () => {
     const { sampler, metrics } = build({ uow: broken, log });
 
     await expect(sampler.execute()).resolves.toBeUndefined();
-    expect(metrics.calls).toEqual([]);
+    // Gauge phải ngừng báo cáo thay vì giữ mẫu cũ.
+    expect(metrics.calls).toEqual([['publishState', null]]);
     expect(warnings).toHaveLength(1);
   });
 });
