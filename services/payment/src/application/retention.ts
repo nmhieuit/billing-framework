@@ -127,6 +127,7 @@ export class RunRetention {
           errors,
           rows: rows.reduce((sum, row) => sum + row.count, 0),
           policies: rows.length,
+          byTable: rows,
         },
         'retention run finished',
       );

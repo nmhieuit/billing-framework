@@ -57,8 +57,9 @@ function setup(
   const registry: TenantRegistry = { resolve: () => ACME, all: () => [ACME, BETA] };
   const metrics = new RecordingMetrics();
   const warnings: object[] = [];
+  const infos: Array<{ details: object; message: string }> = [];
   const log: Logger = {
-    info: () => undefined,
+    info: (details, message) => void infos.push({ details, message: message ?? '' }),
     warn: (details) => void warnings.push(details),
     error: () => undefined,
   };
@@ -70,7 +71,7 @@ function setup(
     log,
     settings: settings(overrides),
   });
-  return { useCase, calls, metrics, warnings, clock };
+  return { useCase, calls, metrics, warnings, infos, clock };
 }
 
 describe('RunRetention', () => {
@@ -101,7 +102,7 @@ describe('RunRetention', () => {
 
   it('a real run drains a policy batch by batch', async () => {
     const script = [1000, 1000, 5];
-    const { useCase, calls } = setup((c, nth) =>
+    const { useCase, calls, infos } = setup((c, nth) =>
       c.tenant === 'acme' && c.policy === 'outbox_sent' ? (script[nth] ?? 0) : 0,
     );
     const report = await useCase.execute();
@@ -109,6 +110,11 @@ describe('RunRetention', () => {
     expect(outbox).toHaveLength(3);
     expect(calls.every((c) => !c.dryRun)).toBe(true);
     expect(report.rows).toEqual([{ tenant: 'acme', table: 'outbox_sent', count: 2005 }]);
+    expect(infos).toHaveLength(1);
+    expect(infos[0]?.message).toBe('retention run finished');
+    expect(infos[0]?.details).toMatchObject({
+      byTable: [{ tenant: 'acme', table: 'outbox_sent', count: 2005 }],
+    });
   });
 
   it('stops without an error once the time budget is spent', async () => {
