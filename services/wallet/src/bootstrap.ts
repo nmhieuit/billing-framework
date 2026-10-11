@@ -25,6 +25,7 @@ import { DEFAULT_OUTBOX_BACKOFF_SECONDS, RelayOutbox } from './application/relay
 import { RequestTopup } from './application/request-topup.js';
 import { ResolveReconciliationItem } from './application/resolve-reconciliation-item.js';
 import { RunReconciliation } from './application/run-reconciliation.js';
+import { RunRetention } from './application/retention.js';
 import { SampleState } from './application/sample-state.js';
 import { ScheduleDailyReconciliation } from './application/schedule-daily-reconciliation.js';
 import { StartManualReconciliation } from './application/start-manual-reconciliation.js';
@@ -264,6 +265,29 @@ export async function startService(
   });
   sampleStateWorker.start();
 
+  // Dọn dữ liệu cũ định kỳ (mặc định chạy thử); Worker riêng để một lượt dọn dài không chặn các việc khác.
+  const runRetention = new RunRetention({
+    uow,
+    registry,
+    clock,
+    metrics,
+    log,
+    settings: {
+      dryRun: config.retention.dryRun,
+      batchSize: config.retention.batchSize,
+      maxSecondsPerRun: config.retention.maxSecondsPerRun,
+      days: config.retention.days,
+    },
+  });
+  const retentionWorker = config.retention.enabled
+    ? new Worker({
+        intervalMs: config.retention.intervalMinutes * 60_000,
+        tasks: [async (signal) => void (await runRetention.execute(signal))],
+        onError: (error) => log.error({ err: error }, 'retention run failed'),
+      })
+    : undefined;
+  retentionWorker?.start();
+
   return {
     app,
     stop: once(() =>
@@ -272,6 +296,9 @@ export async function startService(
         () => worker.stop(),
         () => reconcileWorker.stop(),
         () => sampleStateWorker.stop(),
+        async () => {
+          await retentionWorker?.stop();
+        },
         () => app.close(),
         () => submitter.drain(),
         () => background.drain(),
