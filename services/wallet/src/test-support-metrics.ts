@@ -1,4 +1,5 @@
 import type { ConsumerResult, Metrics } from './application/ports.js';
+import type { RetentionReport } from './application/retention.js';
 import type { WalletState } from './application/state.js';
 
 /** Ghi lại mọi lời gọi để test kiểm tra. */
@@ -21,5 +22,8 @@ export class RecordingMetrics implements Metrics {
   }
   publishState(state: WalletState): void {
     this.calls.push(['publishState', state]);
+  }
+  retentionRun(report: RetentionReport): void {
+    this.calls.push(['retentionRun', report]);
   }
 }

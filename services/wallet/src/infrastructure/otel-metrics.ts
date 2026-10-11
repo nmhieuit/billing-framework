@@ -1,5 +1,6 @@
 import type { Counter, Gauge, Telemetry } from '@billing/observability';
 import type { ConsumerResult, Metrics } from '../application/ports.js';
+import type { RetentionReport } from '../application/retention.js';
 import type { WalletState } from '../application/state.js';
 
 /** Hàng đợi chết của consumer order; nhãn `queue` của gauge DLQ. */
@@ -25,8 +26,12 @@ export class OtelWalletMetrics implements Metrics {
   readonly #openItems: Gauge;
   readonly #oldestOpenItem: Gauge;
   readonly #lastSuccess: Gauge;
+  readonly #retentionRows: Counter;
+  readonly #retentionLastSuccess: Gauge;
+  readonly #now: () => Date;
 
-  constructor(telemetry: Telemetry) {
+  constructor(telemetry: Telemetry, now: () => Date = () => new Date()) {
+    this.#now = now;
     this.#orderPayments = telemetry.counter('billing.order_payments', 'Order payments by outcome');
     this.#consumerMessages = telemetry.counter(
       'billing.consumer.messages',
@@ -77,6 +82,15 @@ export class OtelWalletMetrics implements Metrics {
       'Seconds since the last completed reconciliation run',
       's',
     );
+    this.#retentionRows = telemetry.counter(
+      'billing.retention.rows',
+      'Rows deleted (or that would be deleted in dry-run) by retention',
+    );
+    this.#retentionLastSuccess = telemetry.gauge(
+      'billing.retention.last_success_timestamp_seconds',
+      'Unix time of the last retention run that finished without errors',
+      's',
+    );
   }
 
   prime(tenants: readonly string[]): void {
@@ -105,6 +119,19 @@ export class OtelWalletMetrics implements Metrics {
 
   reconciliationRun(tenant: string, status: string): void {
     this.#reconciliationRuns.add(1, { tenant, status });
+  }
+
+  retentionRun(report: RetentionReport): void {
+    const mode = report.dryRun ? 'would_delete' : 'deleted';
+    for (const row of report.rows) {
+      if (row.count > 0) {
+        this.#retentionRows.add(row.count, { tenant: row.tenant, table: row.table, mode });
+      }
+    }
+    // Lượt có lỗi không làm mới mốc thành công để cảnh báo "lâu không dọn" vẫn kích hoạt.
+    if (report.errors === 0) {
+      this.#retentionLastSuccess.replace([{ value: Math.floor(this.#now().getTime() / 1000) }]);
+    }
   }
 
   publishState(state: WalletState): void {
