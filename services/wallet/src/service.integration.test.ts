@@ -11,11 +11,13 @@ import {
 } from '@billing/testing';
 import type { Kysely } from 'kysely';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { WalletState } from './application/state.js';
 import { startService, type RunningService } from './bootstrap.js';
 import type { WalletConfig } from './config.js';
 import { TenantId } from './domain/tenant-id.js';
 import { provisionTenants } from './infrastructure/kysely/provisioning.js';
 import type { WalletDatabase } from './infrastructure/kysely/schema.js';
+import { RecordingMetrics } from './test-support-metrics.js';
 
 const SECRET = 'whsec_service_e2e';
 const acme = TenantId.parse('acme');
@@ -68,6 +70,7 @@ const configFor = (overrides: Partial<WalletConfig> = {}): WalletConfig => ({
   reconciliation: { autofix: true, atUtcHour: 23, maxAttempts: 3, maxItems: 1000 },
   topupBackoffSeconds: [1, 5],
   workerIntervalMs: 20,
+  telemetry: { sampleIntervalSeconds: 15 },
   ...overrides,
 });
 
@@ -337,6 +340,26 @@ describe('wallet service, end to end with a scripted payment', () => {
       status: 'PENDING',
       charge_id: 'ch_inflight',
     });
+  });
+
+  it('samples the wallet state periodically, including the real dead-letter queue depth', async () => {
+    const metrics = new RecordingMetrics();
+    const service = await startService(configFor({ telemetry: { sampleIntervalSeconds: 1 } }), {
+      clock,
+      metrics,
+    });
+    running.push(service);
+
+    const published = () =>
+      metrics.calls.flatMap(([method, state]) =>
+        method === 'publishState' ? [state as WalletState] : [],
+      );
+    await waitFor(() => published().some((state) => state.dlqDepth !== null), {
+      timeoutMs: 10_000,
+    });
+    const state = published().find((s) => s.dlqDepth !== null);
+    expect(typeof state?.dlqDepth).toBe('number');
+    expect(state?.tenants.map((t) => t.tenant).sort()).toEqual(['acme', 'beta']);
   });
 
   it('stop() can be called more than once, concurrently', async () => {

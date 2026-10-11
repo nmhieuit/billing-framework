@@ -6,6 +6,7 @@ import { CompleteDueCharges } from './complete-due-charges.js';
 import { CreateCharge } from './create-charge.js';
 import { DeliverDueWebhooks } from './deliver-due-webhooks.js';
 import type { WebhookSender } from './ports.js';
+import { RecordingMetrics } from '../test-support-metrics.js';
 
 const secret = 'test-secret';
 const T0 = '2026-10-09T10:00:00.000Z';
@@ -243,5 +244,49 @@ describe('DeliverDueWebhooks', () => {
       expect(after[i]?.next_attempt_at).toEqual(original[i]?.next_attempt_at);
     }
     expect(receiver.received).toHaveLength(1);
+  });
+
+  describe('metrics', () => {
+    const withMetrics = () => {
+      const metrics = new RecordingMetrics();
+      const instrumented = new DeliverDueWebhooks({
+        uow: h.uow,
+        sender: createWebhookSender(receiver.url, secret),
+        clock: h.clock,
+        backoffSeconds: [1, 5],
+        leaseSeconds: 60,
+        metrics,
+      });
+      return { metrics, instrumented };
+    };
+
+    it('records a delivered event', async () => {
+      const { metrics, instrumented } = withMetrics();
+      await seed('a');
+      await instrumented.execute();
+      expect(metrics.calls).toEqual([['webhookDelivery', 'delivered']]);
+    });
+
+    it('records retrying attempts and then the final failure', async () => {
+      const { metrics, instrumented } = withMetrics();
+      receiver.setDefaultStatus(500);
+      await seed('a');
+      await instrumented.execute();
+      h.clock.advanceSeconds(1);
+      await instrumented.execute();
+      h.clock.advanceSeconds(5);
+      await instrumented.execute();
+      expect(metrics.calls).toEqual([
+        ['webhookDelivery', 'retrying'],
+        ['webhookDelivery', 'retrying'],
+        ['webhookDelivery', 'failed'],
+      ]);
+    });
+
+    it('records nothing when no event is due', async () => {
+      const { metrics, instrumented } = withMetrics();
+      await instrumented.execute();
+      expect(metrics.calls).toEqual([]);
+    });
   });
 });

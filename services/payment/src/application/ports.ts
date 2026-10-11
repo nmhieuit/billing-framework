@@ -1,5 +1,6 @@
 import type { Charge } from '../domain/charge.js';
 import type { WebhookEvent } from '../domain/webhook-event.js';
+import type { PaymentState } from './state.js';
 
 export interface Clock {
   now(): Date;
@@ -78,10 +79,40 @@ export interface WebhookSender {
   send(event: WebhookEvent, now: Date): Promise<WebhookSendResult>;
 }
 
+export interface StateSnapshot {
+  webhookPending: number;
+  webhookOldestCreatedAt: Date | null;
+}
+
+/** Đọc số liệu trạng thái cho gauge; chỉ đọc. */
+export interface StateRepository {
+  snapshot(): Promise<StateSnapshot>;
+}
+
+export interface Logger {
+  warn(details: object, message?: string): void;
+}
+
+/** Cổng đo đạc vận hành; adapter OpenTelemetry nằm ở infrastructure. */
+export interface Metrics {
+  /** Một charge vừa hoàn tất, theo trạng thái cuối (`SUCCEEDED` / `FAILED`). */
+  charge(status: string): void;
+  webhookDelivery(result: 'delivered' | 'retrying' | 'failed'): void;
+  /** `null` = không lấy mẫu được: các gauge trạng thái ngừng báo cáo (không giữ số cũ) để rule im lặng phát hiện được. */
+  publishState(state: PaymentState | null): void;
+}
+
+export const noopMetrics: Metrics = {
+  charge: () => {},
+  webhookDelivery: () => {},
+  publishState: () => {},
+};
+
 export interface Repositories {
   charges: ChargeRepository;
   idempotency: IdempotencyStore;
   webhooks: WebhookOutbox;
+  state: StateRepository;
 }
 
 export interface UnitOfWork {

@@ -4,10 +4,14 @@ import { PUBLISH_ID_HEADER, type ConfirmPublisher } from './publisher.js';
 import { DLQ_ROUTING_KEY, retryRoutingKey, type ConsumerTopology } from './topology.js';
 import type { BrokerLogger, HandlerResult, IncomingMessage, MessageHandler } from './types.js';
 
+export type ConsumerSettlement = 'processed' | 'retried' | 'dead_lettered' | 'rejected';
+
 export interface ConsumerSpec {
   topology: ConsumerTopology;
   prefetch: number;
   handler: MessageHandler;
+  /** Gọi sau khi message đã được ack/chuyển tiếp (để đo). Ngoại lệ bị nuốt: đo đạc không được làm hỏng xử lý. */
+  onSettled?: (result: ConsumerSettlement) => void;
 }
 
 export interface RunningConsumer {
@@ -91,17 +95,22 @@ export async function startConsumer(options: {
     channel.ack(raw);
   };
 
-  const retry = async (raw: ConsumeMessage, retryCount: number, reason: string): Promise<void> => {
+  const retry = async (
+    raw: ConsumeMessage,
+    retryCount: number,
+    reason: string,
+  ): Promise<'retried' | 'dead_lettered'> => {
     const delay = topology.retryDelaysSeconds[retryCount];
     if (delay === undefined) {
       await deadLetter(raw, `retries exhausted: ${reason}`);
-      return;
+      return 'dead_lettered';
     }
     await forward(raw, retryRoutingKey(delay), {
       [RETRY_COUNT]: retryCount + 1,
       'x-last-error': reason,
     });
     channel.ack(raw);
+    return 'retried';
   };
 
   const process = async (raw: ConsumeMessage): Promise<void> => {
@@ -127,9 +136,21 @@ export async function startConsumer(options: {
     }
 
     try {
-      if (result.action === 'ack') channel.ack(raw);
-      else if (result.action === 'retry') await retry(raw, retryCount, result.reason);
-      else await deadLetter(raw, result.reason);
+      let settled: ConsumerSettlement;
+      if (result.action === 'ack') {
+        channel.ack(raw);
+        settled = 'processed';
+      } else if (result.action === 'retry') {
+        settled = await retry(raw, retryCount, result.reason);
+      } else {
+        await deadLetter(raw, result.reason);
+        settled = 'rejected';
+      }
+      try {
+        spec.onSettled?.(settled);
+      } catch {
+        // Đo đạc hỏng không được phép biến thành lỗi xử lý message.
+      }
     } catch (error) {
       // Kênh đã đóng hoặc không republish được: trả message về queue; nếu kênh chết thì broker tự giao lại.
       log.error(

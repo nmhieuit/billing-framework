@@ -2,15 +2,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createHarness, resetTables, type Harness } from '../test-support.js';
 import { CompleteDueCharges } from './complete-due-charges.js';
 import { CreateCharge } from './create-charge.js';
+import { RecordingMetrics } from '../test-support-metrics.js';
 
 let h: Harness;
 let createCharge: CreateCharge;
 let completeDue: CompleteDueCharges;
+let metrics: RecordingMetrics;
 
 beforeAll(async () => {
   h = await createHarness();
   createCharge = new CreateCharge({ uow: h.uow, clock: h.clock, ids: h.ids });
-  completeDue = new CompleteDueCharges({ uow: h.uow, clock: h.clock, ids: h.ids });
+  metrics = new RecordingMetrics();
+  completeDue = new CompleteDueCharges({ uow: h.uow, clock: h.clock, ids: h.ids, metrics });
 });
 afterAll(async () => {
   await h.close();
@@ -18,6 +21,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetTables(h.db);
   h.clock.set('2026-10-09T10:00:00.000Z');
+  metrics.calls.length = 0;
 });
 
 const create = (key: string, simulate?: string) =>
@@ -109,5 +113,21 @@ describe('CompleteDueCharges', () => {
     const queued = await events();
     expect(new Set(queued.map((e) => e.charge_id)).size).toBe(4);
     expect(queued).toHaveLength(4);
+  });
+
+  it('records a charge metric per completed charge, by final status', async () => {
+    await create('a');
+    await create('b', 'fail=card_declined');
+    await create('c', 'delay=10');
+    expect(await completeDue.execute()).toBe(2);
+    expect(metrics.calls).toEqual([
+      ['charge', 'SUCCEEDED'],
+      ['charge', 'FAILED'],
+    ]);
+  });
+
+  it('records nothing when no charge is due', async () => {
+    expect(await completeDue.execute()).toBe(0);
+    expect(metrics.calls).toEqual([]);
   });
 });

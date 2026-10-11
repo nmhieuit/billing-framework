@@ -55,6 +55,7 @@ beforeAll(async () => {
     reconciliation: { autofix: true, atUtcHour: 23, maxAttempts: 3, maxItems: 1000 },
     topupBackoffSeconds: [1, 2, 3],
     workerIntervalMs: 50,
+    telemetry: { sampleIntervalSeconds: 15 },
   });
   await wallet.app.listen(0, '127.0.0.1');
   walletUrl = await wallet.app.getUrl();
@@ -65,6 +66,7 @@ beforeAll(async () => {
     webhook: { url: `${walletUrl}/webhooks/payment`, secret: SECRET, backoffSeconds: [1, 2, 3] },
     workerIntervalMs: 50,
     responseTimeoutMs: 1000,
+    telemetry: { sampleIntervalSeconds: 15 },
   });
   await payment.app.listen({ port: paymentPort, host: '127.0.0.1' });
 });

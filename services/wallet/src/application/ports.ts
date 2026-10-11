@@ -10,6 +10,7 @@ import type {
 } from '../domain/reconciliation.js';
 import type { TenantId } from '../domain/tenant-id.js';
 import type { Topup } from '../domain/topup.js';
+import type { WalletState } from './state.js';
 
 export interface TenantRegistry {
   /** Biến chuỗi thô (header, metadata) thành `TenantId` hợp lệ và có trong cấu hình. */
@@ -93,6 +94,25 @@ export interface Inbox {
   record(consumer: string, messageId: string, now: Date): Promise<void>;
 }
 
+export interface StateSnapshot {
+  outboxPending: number;
+  outboxOldestCreatedAt: Date | null;
+  topupsRequested: number;
+  topupsOldestCreatedAt: Date | null;
+  openItemsByKind: Record<string, number>;
+  oldestOpenItemCreatedAt: Date | null;
+  lastReconciliationSuccessAt: Date | null;
+}
+
+export interface StateRepository {
+  snapshot(): Promise<StateSnapshot>;
+}
+
+export interface QueueDepthReader {
+  /** Số message trong queue; `null` khi không đọc được. Không bao giờ ném. */
+  depth(queue: string): Promise<number | null>;
+}
+
 export interface Repositories {
   accounts: AccountRepository;
   ledger: LedgerRepository;
@@ -102,6 +122,7 @@ export interface Repositories {
   orderPayments: OrderPaymentRepository;
   outbox: OutboxRepository;
   reconciliation: ReconciliationRepository;
+  state: StateRepository;
 }
 
 export interface TenantUnitOfWork {
@@ -277,3 +298,25 @@ export interface SettlementSource {
   /** Mọi charge hoàn tất trong ngày UTC `day` (mọi tenant). Ném `SettlementUnavailableError` hoặc `ReconciliationTooLargeError`. */
   fetchDay(day: string, maxCharges: number): Promise<GatewayCharge[]>;
 }
+
+export type ConsumerResult = 'processed' | 'retried' | 'dead_lettered' | 'rejected';
+
+/** Đo đạc vận hành. Mọi nhãn là chuỗi ít giá trị (không bao giờ là id). */
+export interface Metrics {
+  /** Khởi tạo các chuỗi bộ đếm ở giá trị 0 để lần tăng đầu tiên (vd. lượt đối soát FAILED) nhìn thấy được như một mức tăng. */
+  prime(tenants: readonly string[]): void;
+  orderPayment(tenant: string, outcome: string): void;
+  consumerMessage(result: ConsumerResult): void;
+  topup(tenant: string, stage: 'submit' | 'webhook' | 'reconciliation', outcome: string): void;
+  reconciliationRun(tenant: string, status: 'COMPLETED' | 'FAILED'): void;
+  publishState(state: WalletState): void;
+}
+
+export const noopMetrics: Metrics = {
+  prime: () => undefined,
+  orderPayment: () => undefined,
+  consumerMessage: () => undefined,
+  topup: () => undefined,
+  reconciliationRun: () => undefined,
+  publishState: () => undefined,
+};

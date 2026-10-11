@@ -31,6 +31,7 @@ const configFor = (broker: TestBroker): WalletConfig => ({
   reconciliation: { autofix: true, atUtcHour: 23, maxAttempts: 3, maxItems: 1000 },
   topupBackoffSeconds: [1],
   workerIntervalMs: 50,
+  telemetry: { sampleIntervalSeconds: 15 },
 });
 
 interface Stack {

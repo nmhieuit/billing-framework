@@ -1,7 +1,12 @@
 import type { HandlerResult, IncomingMessage, MessageHandler } from '@billing/messaging';
 import { MissingTenantError, UnknownTenantError } from '../../application/errors.js';
 import type { PayOrder } from '../../application/pay-order.js';
-import type { Logger, TenantRegistry } from '../../application/ports.js';
+import {
+  noopMetrics,
+  type Logger,
+  type Metrics,
+  type TenantRegistry,
+} from '../../application/ports.js';
 import type { TenantId } from '../../domain/tenant-id.js';
 import { decodeOrderReady } from './order-ready.decoder.js';
 
@@ -14,7 +19,9 @@ export function createOrderReadyHandler(deps: {
   registry: TenantRegistry;
   payOrder: Pick<PayOrder, 'execute'>;
   log: Logger;
+  metrics?: Metrics;
 }): MessageHandler {
+  const metrics = deps.metrics ?? noopMetrics;
   return async (message: IncomingMessage): Promise<HandlerResult> => {
     const decoded = decodeOrderReady(message.body);
     if (!decoded.ok) {
@@ -49,6 +56,10 @@ export function createOrderReadyHandler(deps: {
       amount: event.amount,
       currency: event.currency,
     });
+    metrics.orderPayment(
+      tenant.value,
+      outcome.kind === 'REJECTED' ? `failed:${outcome.reason}` : outcome.kind.toLowerCase(),
+    );
     deps.log.info(
       {
         tenantId: tenant.value,

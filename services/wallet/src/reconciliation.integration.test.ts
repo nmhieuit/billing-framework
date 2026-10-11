@@ -81,6 +81,7 @@ const configFor = (): WalletConfig => ({
   reconciliation: { autofix: true, atUtcHour: 0, maxAttempts: 3, maxItems: 1000 },
   topupBackoffSeconds: [1, 5],
   workerIntervalMs: 20,
+  telemetry: { sampleIntervalSeconds: 15 },
 });
 
 async function start(): Promise<RunningService> {

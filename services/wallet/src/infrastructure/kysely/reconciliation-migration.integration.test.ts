@@ -66,4 +66,13 @@ describe('004-reconciliation', () => {
     expect(await sqlNumber(insertItem('i4', 'r1', 'MISSING_AT_WALLET', 'BOGUS', 'OPEN'))).toBe(547);
     expect(await sqlNumber(insertItem('i5', 'r1', 'MISSING_AT_WALLET', 'NONE', 'BOGUS'))).toBe(547);
   });
+
+  it('adds the open-items index used by the state gauges (005)', async () => {
+    const rows = await sql<{ name: string }>`
+      select i.name from sys.indexes i
+      join sys.tables tb on tb.object_id = i.object_id
+      join sys.schemas s on s.schema_id = tb.schema_id
+      where s.name = 't_acme' and tb.name = 'reconciliation_items'`.execute(db);
+    expect(rows.rows.map((r) => r.name)).toContain('ix_reconciliation_items_open');
+  });
 });

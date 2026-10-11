@@ -41,6 +41,7 @@ describe('loadConfig', () => {
       orders: { prefetch: 10, retryDelaysSeconds: [5, 30, 120, 600, 1800], outboxBatch: 50 },
       topupBackoffSeconds: [1, 5, 30, 120, 600],
       workerIntervalMs: 500,
+      telemetry: { sampleIntervalSeconds: 15 },
     });
     expect(config.tenants.map((t) => t.value)).toEqual(['acme', 'beta']);
   });
@@ -54,6 +55,7 @@ describe('loadConfig', () => {
       PAYMENT_TIMEOUT_MS: '250',
       TOPUP_SUBMIT_BACKOFF: '2, 4',
       WORKER_INTERVAL_MS: '50',
+      METRICS_SAMPLE_INTERVAL_SECONDS: '5',
     });
     expect(config).toMatchObject({
       port: 4001,
@@ -61,8 +63,15 @@ describe('loadConfig', () => {
       payment: { timeoutMs: 250 },
       topupBackoffSeconds: [2, 4],
       workerIntervalMs: 50,
+      telemetry: { sampleIntervalSeconds: 5 },
     });
     expect(config.tenants.map((t) => t.value)).toEqual(['acme', 'beta']);
+  });
+
+  it.each(['0', '3601', '1.5', 'abc'])('rejects METRICS_SAMPLE_INTERVAL_SECONDS %j', (value) => {
+    expect(problemsOf({ ...minimal, METRICS_SAMPLE_INTERVAL_SECONDS: value })).toEqual([
+      'METRICS_SAMPLE_INTERVAL_SECONDS must be an integer in 1..3600',
+    ]);
   });
 
   it('refuses to start without the required settings and lists them all, in a fixed order', () => {

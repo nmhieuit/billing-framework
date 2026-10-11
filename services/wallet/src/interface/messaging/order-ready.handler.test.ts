@@ -4,6 +4,7 @@ import { MissingTenantError, UnknownTenantError } from '../../application/errors
 import type { PayOrderInput, PayOrderOutcome } from '../../application/pay-order.js';
 import type { Logger, TenantRegistry } from '../../application/ports.js';
 import { TenantId } from '../../domain/tenant-id.js';
+import { RecordingMetrics } from '../../test-support-metrics.js';
 import { createOrderReadyHandler } from './order-ready.handler.js';
 
 const acme = TenantId.parse('acme');
@@ -38,6 +39,7 @@ const message = (body: unknown): IncomingMessage => ({
 
 function setup(outcome: PayOrderOutcome | Error) {
   const calls: PayOrderInput[] = [];
+  const metrics = new RecordingMetrics();
   const logs: Array<{ level: string; details: object }> = [];
   const log: Logger = {
     info: (details) => logs.push({ level: 'info', details }),
@@ -47,6 +49,7 @@ function setup(outcome: PayOrderOutcome | Error) {
   const handler = createOrderReadyHandler({
     registry,
     log,
+    metrics,
     payOrder: {
       execute: async (input) => {
         calls.push(input);
@@ -55,7 +58,7 @@ function setup(outcome: PayOrderOutcome | Error) {
       },
     },
   });
-  return { handler, calls, logs };
+  return { handler, calls, logs, metrics };
 }
 
 describe('createOrderReadyHandler', () => {
@@ -91,6 +94,25 @@ describe('createOrderReadyHandler', () => {
       });
     },
   );
+
+  it.each<[PayOrderOutcome, string]>([
+    [{ kind: 'PAID', walletTransactionId: 'tx_1' }, 'paid'],
+    [{ kind: 'REPLAYED', walletTransactionId: 'tx_1' }, 'replayed'],
+    [{ kind: 'DUPLICATE' }, 'duplicate'],
+    [{ kind: 'REJECTED', reason: 'INSUFFICIENT_FUNDS' }, 'failed:INSUFFICIENT_FUNDS'],
+  ])('records the order payment metric for %j as %s', async (outcome, label) => {
+    const { handler, metrics } = setup(outcome);
+    await handler(message(event));
+    expect(metrics.calls).toEqual([['orderPayment', 'acme', label]]);
+  });
+
+  it('records nothing for unreadable messages, unknown tenants or infrastructure failures', async () => {
+    const { handler, metrics } = setup(new Error('connection lost'));
+    await handler(message('{oops'));
+    await handler(message({ ...event, tenantId: 'ghost' }));
+    await expect(handler(message(event))).rejects.toThrow('connection lost');
+    expect(metrics.calls).toEqual([]);
+  });
 
   it.each([
     ['not JSON', '{oops'],

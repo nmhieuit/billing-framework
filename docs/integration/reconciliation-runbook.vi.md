@@ -60,6 +60,20 @@ Lỗi thường gặp: `422 INVALID_RECONCILIATION` (ngày sai/tương lai, thi�
   `scheduled reconciliation gave up` (`error`): sửa nguyên nhân rồi chạy tay bằng `POST /reconciliations`. Trạng thái
   `GAVE_UP` được nhớ trong bộ nhớ worker tới hết ngày hoặc tới khi khởi động lại.
 
+## Cảnh báo liên quan
+
+Rule Kibana (tag `billing`, dashboard "Billing: vận hành") báo các tình huống đối soát sau; tên rule trùng tên trong Kibana,
+ngưỡng chỉnh được theo [kibana-alerts-and-dashboard](../ops/kibana-alerts-and-dashboard.vi.md).
+
+| Rule | Khi nào báo | Việc cần làm |
+|---|---|---|
+| `billing-ledger-integrity` | Có ca mở loại `LEDGER_UNBALANCED` hoặc `BALANCE_MISMATCH` (mức critical) | Dừng thay đổi ví của tenant đó, báo kỹ thuật ngay (bảng "Loại lệch" ở trên) |
+| `billing-reconciliation-stale-cases` | Một ca còn mở quá 24 giờ (mặc định) | Xử lý và đóng ca (`RESOLVED`/`IGNORED` kèm ghi chú) |
+| `billing-reconciliation-missed` | Chưa có lượt `COMPLETED` nào quá 26 giờ (mặc định) | Xem lượt gần nhất và log `scheduled reconciliation gave up`; chạy tay bằng `POST /reconciliations` |
+| `billing-reconciliation-failed-run` | Có lượt `FAILED` trong 30 phút gần đây | Đọc `failureReason` của lượt (mục "Đọc trạng thái lượt"), sửa nguyên nhân, chạy lại |
+
+Giá trị của rule là mẫu mới nhất nên một rule có thể còn báo tối đa một cửa sổ (5 đến 30 phút) sau khi sự việc đã hết.
+
 ## Lưu ý vận hành
 
 - Không có chạy bù: nếu mọi worker ngừng cả một ngày UTC thì ngày đó không được đối soát tự động; hãy chạy tay bằng `POST /reconciliations`.
@@ -79,7 +93,7 @@ Cần thêm `PAYMENT_BASE_URL` và credential payment hiện có để đọc sa
 
 ## Giới hạn hiện tại
 
-- Chưa có metric/cảnh báo (Bước 6): theo dõi bằng log và bảng `reconciliation_runs`.
+- Cảnh báo chỉ nằm trong Kibana (chưa có connector email/Slack): xem mục "Cảnh báo liên quan" ở trên; log và bảng `reconciliation_runs` vẫn là nguồn chi tiết.
 - Charge không có `metadata.tenantId` (hoặc của tenant khác) bị bỏ qua, không báo ở tenant nào.
 - Tổng kiểm (`gatewayTotals`/`walletTotals`) chỉ để tham khảo vì lệch biên ngày; chỉ so từng item mới sinh lệch.
 - Phép Wallet ↔ Orders chưa chạy: xem [orders-reconciliation](orders-reconciliation.vi.md).

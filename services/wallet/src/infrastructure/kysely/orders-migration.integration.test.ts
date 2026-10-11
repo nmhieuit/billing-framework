@@ -93,7 +93,7 @@ describe('003-orders', () => {
       values ('tx_old', 'topup:old', 'TOPUP', ${when()})`.execute(db);
 
     expect(await provisionTenants(db, [TenantId.parse('legacy')])).toEqual({
-      legacy: ['003-orders', '004-reconciliation'],
+      legacy: ['003-orders', '004-reconciliation', '005-reconciliation-open-index'],
     });
 
     const rows = await sql<{

@@ -2,6 +2,7 @@ import { createTestBroker, waitFor, type TestBroker } from '@billing/testing';
 import type { ConfirmChannel } from 'amqplib';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { BrokerClient } from './client.js';
+import type { ConsumerSettlement } from './consumer.js';
 import { open, publishAsOrders, silentLog, testTopology } from './test-helpers.js';
 import { deadLetterQueueName } from './topology.js';
 import type { HandlerResult, IncomingMessage } from './types.js';
@@ -205,5 +206,82 @@ describe('consumer', () => {
     await stopping;
     expect(done).toBe(true);
     await waitFor(async () => (await queueDepth(t.queue)) === 0);
+  });
+  it('reports onSettled(processed) once for an acked message', async () => {
+    const t = topology([1]);
+    const settled: ConsumerSettlement[] = [];
+    await client.consume({
+      topology: t,
+      prefetch: 1,
+      handler: async () => ({ action: 'ack' }),
+      onSettled: (r) => settled.push(r),
+    });
+    await publishAsOrders(ordersChannel, { orderId: 's1' }, { messageId: 'evt-s1' });
+    await waitFor(() => settled.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(settled).toEqual(['processed']);
+  });
+
+  it('reports onSettled(retried) when the handler asks for a retry', async () => {
+    const t = topology([30]);
+    const settled: ConsumerSettlement[] = [];
+    await client.consume({
+      topology: t,
+      prefetch: 1,
+      handler: async () => ({ action: 'retry', reason: 'later' }),
+      onSettled: (r) => settled.push(r),
+    });
+    await publishAsOrders(ordersChannel, { orderId: 's2' }, { messageId: 'evt-s2' });
+    await waitFor(() => settled.length === 1);
+    expect(settled).toEqual(['retried']);
+  });
+
+  it('reports onSettled(rejected) when the handler rejects', async () => {
+    const t = topology([1]);
+    const settled: ConsumerSettlement[] = [];
+    await client.consume({
+      topology: t,
+      prefetch: 1,
+      handler: async () => ({ action: 'reject', reason: 'bad schema' }),
+      onSettled: (r) => settled.push(r),
+    });
+    await publishAsOrders(ordersChannel, { orderId: 's3' }, { messageId: 'evt-s3' });
+    await waitFor(() => settled.length === 1);
+    expect(settled).toEqual(['rejected']);
+  });
+
+  it('reports onSettled(dead_lettered) as the last settlement once the retry tiers are exhausted', async () => {
+    const t = topology([1]);
+    const settled: ConsumerSettlement[] = [];
+    await client.consume({
+      topology: t,
+      prefetch: 1,
+      handler: async () => ({ action: 'retry', reason: 'still broken' }),
+      onSettled: (r) => settled.push(r),
+    });
+    await publishAsOrders(ordersChannel, { orderId: 's4' }, { messageId: 'evt-s4' });
+    await waitFor(() => settled.length === 2, { timeoutMs: 15_000 });
+    expect(settled).toEqual(['retried', 'dead_lettered']);
+  });
+
+  it('keeps processing when onSettled throws', async () => {
+    const t = topology([1]);
+    const handled: string[] = [];
+    await client.consume({
+      topology: t,
+      prefetch: 1,
+      handler: async (m) => {
+        handled.push(m.messageId ?? '');
+        return { action: 'ack' };
+      },
+      onSettled: () => {
+        throw new Error('metrics down');
+      },
+    });
+    await publishAsOrders(ordersChannel, { n: 1 }, { messageId: 'evt-t1' });
+    await publishAsOrders(ordersChannel, { n: 2 }, { messageId: 'evt-t2' });
+    await waitFor(() => handled.length === 2);
+    await waitFor(async () => (await queueDepth(t.queue)) === 0);
+    expect(handled).toEqual(['evt-t1', 'evt-t2']);
   });
 });

@@ -136,6 +136,23 @@ export class BrokerClient {
     });
   }
 
+  /** Số message đang chờ trong queue (passive declare trên channel dùng một lần); `undefined` nếu không đọc được. */
+  async queueDepth(queue: string): Promise<number | undefined> {
+    const model = this.#channelModel;
+    if (!model || this.#closing) return undefined;
+    let channel: Channel | undefined;
+    try {
+      channel = await model.createChannel();
+      channel.on('error', () => undefined);
+      const { messageCount } = await channel.checkQueue(queue);
+      return messageCount;
+    } catch {
+      return undefined;
+    } finally {
+      await channel?.close().catch(() => undefined);
+    }
+  }
+
   async stopConsuming(): Promise<void> {
     this.#closing = true;
     this.#clearTimers();

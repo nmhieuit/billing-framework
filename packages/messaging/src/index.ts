@@ -1,6 +1,6 @@
 export { BrokerClient } from './client.js';
 export { startConsumer } from './consumer.js';
-export type { ConsumerSpec, RunningConsumer } from './consumer.js';
+export type { ConsumerSettlement, ConsumerSpec, RunningConsumer } from './consumer.js';
 export { ConfirmPublisher } from './publisher.js';
 export {
   DLQ_ROUTING_KEY,

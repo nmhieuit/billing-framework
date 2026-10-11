@@ -20,6 +20,7 @@ export interface WalletConfig {
   reconciliation: ReconciliationConfig;
   topupBackoffSeconds: number[];
   workerIntervalMs: number;
+  telemetry: { sampleIntervalSeconds: number };
 }
 
 const DEFAULT_BACKOFF = '1,5,30,120,600';
@@ -143,6 +144,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): WalletConfig {
   const prefetch = integer('ORDER_CONSUMER_PREFETCH', 10, 1, 1000);
   const outboxBatch = integer('OUTBOX_BATCH', 50, 1, 1000);
   const workerIntervalMs = integer('WORKER_INTERVAL_MS', 500, 1, 3_600_000);
+  const sampleIntervalSeconds = integer('METRICS_SAMPLE_INTERVAL_SECONDS', 15, 1, 3600);
 
   const rawAutofix = env.RECONCILE_AUTOFIX?.trim();
   let reconcileAutofix = true;
@@ -184,5 +186,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): WalletConfig {
     },
     topupBackoffSeconds,
     workerIntervalMs,
+    telemetry: { sampleIntervalSeconds },
   };
 }

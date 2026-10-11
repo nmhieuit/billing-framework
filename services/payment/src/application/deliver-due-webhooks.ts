@@ -1,4 +1,10 @@
-import type { Clock, UnitOfWork, WebhookSender } from './ports.js';
+import {
+  noopMetrics,
+  type Clock,
+  type Metrics,
+  type UnitOfWork,
+  type WebhookSender,
+} from './ports.js';
 
 const DEFAULT_BATCH = 50;
 const DEFAULT_LEASE_SECONDS = 60;
@@ -11,6 +17,7 @@ export interface DeliveryReport {
 
 export class DeliverDueWebhooks {
   private readonly leaseSeconds: number;
+  private readonly metrics: Metrics;
 
   constructor(
     private readonly deps: {
@@ -19,9 +26,11 @@ export class DeliverDueWebhooks {
       clock: Clock;
       backoffSeconds: readonly number[];
       leaseSeconds?: number;
+      metrics?: Metrics;
     },
   ) {
     this.leaseSeconds = deps.leaseSeconds ?? DEFAULT_LEASE_SECONDS;
+    this.metrics = deps.metrics ?? noopMetrics;
   }
 
   /**
@@ -68,9 +77,16 @@ export class DeliverDueWebhooks {
         return props.status;
       });
 
-      if (status === 'DELIVERED') report.delivered += 1;
-      else if (status === 'PENDING') report.retrying += 1;
-      else report.failed += 1;
+      if (status === 'DELIVERED') {
+        report.delivered += 1;
+        this.metrics.webhookDelivery('delivered');
+      } else if (status === 'PENDING') {
+        report.retrying += 1;
+        this.metrics.webhookDelivery('retrying');
+      } else {
+        report.failed += 1;
+        this.metrics.webhookDelivery('failed');
+      }
 
       // webhook=duplicate: gửi thêm một bản giống hệt, không tính vào lần thử và không ảnh hưởng trạng thái.
       if (result.ok && event.toProps().sendTwice) {
