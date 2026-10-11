@@ -10,6 +10,7 @@ import type {
 } from '../domain/reconciliation.js';
 import type { TenantId } from '../domain/tenant-id.js';
 import type { Topup } from '../domain/topup.js';
+import type { RetentionRepository } from './retention.js';
 import type { WalletState } from './state.js';
 
 export interface TenantRegistry {
@@ -122,6 +123,7 @@ export interface Repositories {
   orderPayments: OrderPaymentRepository;
   outbox: OutboxRepository;
   reconciliation: ReconciliationRepository;
+  retention: RetentionRepository;
   state: StateRepository;
 }
 

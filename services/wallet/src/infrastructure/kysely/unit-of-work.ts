@@ -8,6 +8,7 @@ import { KyselyLedgerRepository } from './ledger.repository.js';
 import { KyselyOrderPaymentRepository } from './order-payment.repository.js';
 import { KyselyOutboxRepository } from './outbox.repository.js';
 import { KyselyReconciliationRepository } from './reconciliation.repository.js';
+import { KyselyRetentionRepository } from './retention.repository.js';
 import { KyselyStateRepository } from './state.repository.js';
 import type { WalletDatabase } from './schema.js';
 import { assertSchemaName, schemaName } from './schema-name.js';
@@ -30,6 +31,7 @@ export class KyselyTenantUnitOfWork implements TenantUnitOfWork {
         orderPayments: new KyselyOrderPaymentRepository(scoped),
         outbox: new KyselyOutboxRepository(scoped, schema),
         reconciliation: new KyselyReconciliationRepository(scoped, schema),
+        retention: new KyselyRetentionRepository(scoped, schema),
         state: new KyselyStateRepository(scoped, schema),
       });
     });
