@@ -19,11 +19,42 @@ export interface KibanaRule {
   params: Record<string, unknown>;
   /** Trạng thái lần chạy gần nhất (có sau khi rule đã chạy ít nhất một lần). */
   execution_status?: { status: string; error?: { message?: string } };
+  /** Action (connector) đang gắn vào rule: người vận hành có thể gắn tay, `apply` phải giữ nguyên. */
+  actions?: ExistingRuleAction[];
   last_run?: { alerts_count?: { active?: number; new?: number; recovered?: number } };
 }
 
+/** Action như Kibana trả về khi đọc rule (có thêm `connector_type_id`). */
+export interface ExistingRuleAction extends UpdateRuleAction {
+  connector_type_id?: string;
+}
+
+/** Action ở dạng schema cập nhật chấp nhận (không có `connector_type_id`). */
+export interface UpdateRuleAction {
+  group: string;
+  id: string;
+  params: Record<string, unknown>;
+  frequency?: unknown;
+  uuid?: string;
+  alerts_filter?: unknown;
+}
+
+/** Đổi action đọc được sang dạng body PUT: bỏ `connector_type_id`, giữ phần còn lại. */
+export function toUpdateActions(actions: ExistingRuleAction[] | undefined): UpdateRuleAction[] {
+  return (actions ?? []).map((a) => ({
+    group: a.group,
+    id: a.id,
+    params: a.params,
+    ...(a.frequency === undefined ? {} : { frequency: a.frequency }),
+    ...(a.uuid === undefined ? {} : { uuid: a.uuid }),
+    ...(a.alerts_filter === undefined ? {} : { alerts_filter: a.alerts_filter }),
+  }));
+}
+
 /** Body của `PUT /api/alerting/rule/{id}`: Kibana không nhận rule_type_id, consumer, enabled. */
-export type UpdateBody = Pick<AlertingBody, 'name' | 'tags' | 'schedule' | 'params' | 'actions'>;
+export type UpdateBody = Pick<AlertingBody, 'name' | 'tags' | 'schedule' | 'params'> & {
+  actions: UpdateRuleAction[];
+};
 
 export type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
 

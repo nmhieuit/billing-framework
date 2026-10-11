@@ -25,6 +25,8 @@ const UPDATE_KEYS = ['name', 'tags', 'schedule', 'params', 'actions'];
 export class FakeKibana {
   readonly rules = new Map<string, KibanaRule>();
   readonly calls: FakeCall[] = [];
+  /** Body JSON của các lời gọi có body, theo thứ tự gửi. */
+  readonly bodies: Array<FakeCall & { body: Record<string, unknown> }> = [];
   /** Id các dashboard đã import. */
   readonly dashboards = new Set<string>();
   readonly imports: Array<{ ndjson: string; overwrite: boolean }> = [];
@@ -43,6 +45,9 @@ export class FakeKibana {
     const method = init?.method ?? 'GET';
     const path = url.pathname;
     this.calls.push({ method, path });
+    if (typeof init?.body === 'string') {
+      this.bodies.push({ method, path, body: JSON.parse(init.body) as Record<string, unknown> });
+    }
     this.headers.push((init?.headers ?? {}) as Record<string, string>);
 
     if (method === 'GET' && path === '/api/status') {
@@ -105,6 +110,7 @@ export class FakeKibana {
           enabled: body.enabled as boolean,
           schedule: body.schedule as { interval: string },
           params: body.params as Record<string, unknown>,
+          actions: (body.actions as KibanaRule['actions']) ?? [],
         });
         return json(200, this.rules.get(id));
       }
@@ -112,8 +118,14 @@ export class FakeKibana {
         if (!existing) return json(404, { message: `Saved object [alert/${id}] not found` });
         const extra = Object.keys(body).filter((k) => !UPDATE_KEYS.includes(k));
         if (extra.length > 0) return json(400, { message: `invalid keys: ${extra.join(', ')}` });
+        // Schema cập nhật của Kibana từ chối `connector_type_id` trong action.
+        const bad = ((body.actions as Array<Record<string, unknown>> | undefined) ?? []).find(
+          (a) => 'connector_type_id' in a,
+        );
+        if (bad) return json(400, { message: 'invalid action key: connector_type_id' });
         this.rules.set(id, {
           ...existing,
+          actions: (body.actions as KibanaRule['actions']) ?? [],
           name: body.name as string,
           tags: body.tags as string[],
           schedule: body.schedule as { interval: string },

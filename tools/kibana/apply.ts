@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import type { KibanaClient, KibanaRule } from './client.js';
+import { toUpdateActions, type KibanaClient, type KibanaRule, type UpdateBody } from './client.js';
 import { toAlertingBody, type AlertingBody, type RuleDefinition } from './rules.js';
 
 export type RuleAction = 'create' | 'update' | 'enable' | 'disable' | 'unchanged';
@@ -36,11 +36,15 @@ export function diffRule(existing: KibanaRule, desired: AlertingBody): string[] 
   return diffs;
 }
 
-async function plan(
-  client: KibanaClient,
-  rules: RuleDefinition[],
-): Promise<Array<RuleChange & { rule: RuleDefinition; body: AlertingBody }>> {
-  const out: Array<RuleChange & { rule: RuleDefinition; body: AlertingBody }> = [];
+interface PlannedRule extends RuleChange {
+  rule: RuleDefinition;
+  body: AlertingBody;
+  /** Body cho PUT: mang theo action đang có trên Kibana để `apply` không xoá connector gắn tay. */
+  update?: UpdateBody;
+}
+
+async function plan(client: KibanaClient, rules: RuleDefinition[]): Promise<Array<PlannedRule>> {
+  const out: PlannedRule[] = [];
   for (const rule of rules) {
     const body = toAlertingBody(rule);
     const existing = await client.getRule(rule.id);
@@ -53,7 +57,19 @@ async function plan(
     const actions: RuleAction[] = [];
     if (differences.some((d) => d !== 'enabled')) actions.push('update');
     if (differences.includes('enabled')) actions.push(body.enabled ? 'enable' : 'disable');
-    out.push({ ...base, actions: actions.length > 0 ? actions : ['unchanged'], differences });
+    const update: UpdateBody = {
+      name: body.name,
+      tags: body.tags,
+      schedule: body.schedule,
+      params: body.params,
+      actions: toUpdateActions(existing.actions),
+    };
+    out.push({
+      ...base,
+      update,
+      actions: actions.length > 0 ? actions : ['unchanged'],
+      differences,
+    });
   }
   return out;
 }
@@ -82,7 +98,7 @@ export async function applyRules(
     for (const p of planned) {
       for (const action of p.actions) {
         if (action === 'create') await client.createRule(p.id, p.body);
-        else if (action === 'update') await client.updateRule(p.id, p.body);
+        else if (action === 'update') await client.updateRule(p.id, p.update!);
         else if (action === 'enable') await client.setRuleEnabled(p.id, true);
         else if (action === 'disable') await client.setRuleEnabled(p.id, false);
       }

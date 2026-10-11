@@ -54,6 +54,53 @@ describe('applyRules', () => {
     expect(JSON.stringify(stored.params)).toContain('600');
   });
 
+  it('sends no actions when creating and keeps hand-attached connectors when updating', async () => {
+    const { fake, client } = setup();
+    await applyRules(client, rulesFor(), { dryRun: false });
+    const creates = fake.bodies.filter((c) => c.method === 'POST' && c.body.actions !== undefined);
+    expect(creates).toHaveLength(8);
+    expect(creates.every((c) => (c.body.actions as unknown[]).length === 0)).toBe(true);
+
+    const stored = [...fake.rules.values()].find((r) => r.name === OUTBOX)!;
+    stored.actions = [
+      {
+        group: 'query matched',
+        id: 'connector-1',
+        connector_type_id: '.index',
+        params: { documents: [{ a: 1 }] },
+        frequency: { summary: false, notify_when: 'onActionGroupChange', throttle: null },
+        uuid: 'uuid-1',
+      },
+    ];
+    const changed = rulesFor((p) => {
+      p.rules[OUTBOX].thresholdSeconds = 600;
+    });
+    fake.bodies.length = 0;
+    await applyRules(client, changed, { dryRun: false });
+    const put = fake.bodies.find((c) => c.method === 'PUT')!;
+    expect(put.body.actions).toEqual([
+      {
+        group: 'query matched',
+        id: 'connector-1',
+        params: { documents: [{ a: 1 }] },
+        frequency: { summary: false, notify_when: 'onActionGroupChange', throttle: null },
+        uuid: 'uuid-1',
+      },
+    ]);
+    expect(fake.rules.get(stored.id)!.actions).toHaveLength(1);
+    expect(JSON.stringify(fake.rules.get(stored.id)!.params)).toContain('600');
+  });
+
+  it('does not treat a difference in actions as drift', async () => {
+    const { fake, client } = setup();
+    await applyRules(client, rulesFor(), { dryRun: false });
+    [...fake.rules.values()][0]!.actions = [{ group: 'g', id: 'c', params: {} }];
+    fake.calls.length = 0;
+    const { changes } = await applyRules(client, rulesFor(), { dryRun: false });
+    expect(changes.every((c) => c.actions.join() === 'unchanged')).toBe(true);
+    expect(fake.writeCalls).toEqual([]);
+  });
+
   it('disables a currently enabled rule, then enables it again', async () => {
     const { fake, client } = setup();
     await applyRules(client, rulesFor(), { dryRun: false });
