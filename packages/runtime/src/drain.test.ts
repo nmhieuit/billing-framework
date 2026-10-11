@@ -2,6 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { drainBatches } from './drain.js';
 
 describe('drainBatches', () => {
+  it.each([0, -1, 1.5, Number.NaN])(
+    'rejects batchSize %s without calling step',
+    async (batchSize) => {
+      const step = vi.fn(async () => 0);
+      await expect(drainBatches(step, { batchSize })).rejects.toThrow(
+        /batchSize must be an integer/,
+      );
+      expect(step).not.toHaveBeenCalled();
+    },
+  );
+
   it('keeps going while batches are full and stops on the first short batch', async () => {
     const results = [1000, 1000, 400];
     const step = vi.fn(async () => results.shift() ?? 0);

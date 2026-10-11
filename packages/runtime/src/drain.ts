@@ -12,6 +12,9 @@ export async function drainBatches(
   step: (batchSize: number) => Promise<number>,
   options: DrainOptions,
 ): Promise<number> {
+  if (!Number.isInteger(options.batchSize) || options.batchSize < 1) {
+    throw new Error(`drainBatches: batchSize must be an integer >= 1, got ${options.batchSize}`);
+  }
   let total = 0;
   for (;;) {
     if (options.shouldContinue && !options.shouldContinue()) return total;
