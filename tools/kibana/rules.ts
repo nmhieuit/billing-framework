@@ -21,6 +21,12 @@ export interface RuleDefinition {
   severity: Severity;
   intervalMinutes: number;
   windowMinutes: number;
+  /**
+   * Cột định danh của alert: là các cột DUY NHẤT được phép có trong `KEEP` cuối của câu ES|QL.
+   * Kibana 9.4 dựng id instance của alert (groupBy `row`) từ MỌI cột đầu ra, nên nếu để cột giá trị
+   * (tuổi, độ sâu, ...) vào đó thì mỗi lần giá trị đổi lại sinh alert mới và alert cũ bị recovered.
+   */
+  identityColumns: string[];
   esql: string;
 }
 
@@ -61,7 +67,7 @@ function gaugeQuery(s: GaugeSpec): string {
     `| WHERE ${s.f.timestamp} > NOW() - ${s.window} minutes AND ${field} IS NOT NULL`,
     `| STATS ${s.alias} = ${s.agg(field)} BY ${s.label} = ${s.f.attribute(s.by)}`,
     `| WHERE ${s.alias} > ${s.threshold}`,
-    `| KEEP ${s.label}, ${s.alias}`,
+    `| KEEP ${s.label}`,
   );
 }
 
@@ -114,7 +120,7 @@ export function ledgerIntegrityEsql(f: Fields, window: number, minOpenItems: num
     `| WHERE ${f.timestamp} > NOW() - ${window} minutes AND ${open} IS NOT NULL AND ${f.attribute('kind')} IN ("LEDGER_UNBALANCED", "BALANCE_MISMATCH")`,
     `| STATS open = LAST(${open}, ${f.timestamp}) BY tenant = ${f.attribute('tenant')}, kind = ${f.attribute('kind')}`,
     `| WHERE open > ${minOpenItems}`,
-    `| KEEP tenant, kind, open`,
+    `| KEEP tenant, kind`,
   );
 }
 
@@ -153,17 +159,18 @@ export function failedRunEsql(f: Fields, window: number): string {
     `| EVAL delta = last_value - first_value`,
     `| STATS failed_runs = SUM(delta) BY tenant`,
     `| WHERE failed_runs > 0`,
-    `| KEEP tenant, failed_runs`,
+    `| KEEP tenant`,
   );
 }
 
 export function serviceSilentEsql(f: Fields, lookbackHours: number, silentMinutes: number): string {
   return lines(
     `FROM ${f.metricsIndex}`,
-    `| WHERE ${f.timestamp} > NOW() - ${lookbackHours} hours AND ${f.service} IN ("wallet", "payment")`,
+    // Chỉ tính tài liệu có gauge trạng thái: dịch vụ vẫn sống (counter/dlq.depth còn chảy) nhưng không lấy mẫu được thì vẫn bị coi là im lặng.
+    `| WHERE ${f.timestamp} > NOW() - ${lookbackHours} hours AND ${f.service} IN ("wallet", "payment") AND (${f.metric('billing.outbox.pending')} IS NOT NULL OR ${f.metric('billing.payment.webhook_backlog')} IS NOT NULL)`,
     `| STATS last_seen = MAX(${f.timestamp}) BY service = ${f.service}`,
     `| WHERE last_seen < NOW() - ${silentMinutes} minutes`,
-    `| KEEP service, last_seen`,
+    `| KEEP service`,
   );
 }
 
@@ -173,6 +180,7 @@ export function buildRules(params: Params, f: Fields = DEFAULT_FIELDS): RuleDefi
     name: RuleName,
     description: string,
     esql: string,
+    identityColumns: string[],
     windowMinutes?: number,
   ): RuleDefinition => {
     const p = r[name];
@@ -185,6 +193,7 @@ export function buildRules(params: Params, f: Fields = DEFAULT_FIELDS): RuleDefi
       severity: p.severity,
       intervalMinutes: p.intervalMinutes,
       windowMinutes: windowMinutes ?? p.windowMinutes,
+      identityColumns,
       esql,
     };
   };
@@ -202,41 +211,49 @@ export function buildRules(params: Params, f: Fields = DEFAULT_FIELDS): RuleDefi
       'billing-dlq-not-empty',
       `Hàng đợi DLQ luôn có thư (độ sâu > ${dlq.minDepth} liên tục trong ${dlq.windowMinutes} phút). Mở docs/integration/dlq-runbook.vi.md để xử lý.`,
       dlqNotEmptyEsql(f, w('billing-dlq-not-empty'), dlq.minDepth),
+      ['queue'],
     ),
     make(
       'billing-outbox-stuck',
       `Outbox có thư chờ quá ${outbox.thresholdSeconds} giây chưa gửi. Mở docs/integration/orders-handoff.vi.md để kiểm tra.`,
       outboxStuckEsql(f, w('billing-outbox-stuck'), outbox.thresholdSeconds),
+      ['tenant'],
     ),
     make(
       'billing-topups-stuck',
       `Yêu cầu nạp tiền chờ quá ${topups.thresholdSeconds} giây chưa hoàn tất. Xem README.md mục ví (wallet).`,
       topupsStuckEsql(f, w('billing-topups-stuck'), topups.thresholdSeconds),
+      ['tenant'],
     ),
     make(
       'billing-ledger-integrity',
       `Sổ cái không cân hoặc số dư lệch (số mục mở > ${ledger.minOpenItems}). Mở docs/integration/reconciliation-runbook.vi.md để xử lý.`,
       ledgerIntegrityEsql(f, w('billing-ledger-integrity'), ledger.minOpenItems),
+      ['tenant', 'kind'],
     ),
     make(
       'billing-reconciliation-stale-cases',
       `Có mục đối soát mở quá ${stale.maxAgeHours} giờ chưa xử lý. Mở docs/integration/reconciliation-runbook.vi.md.`,
       staleCasesEsql(f, w('billing-reconciliation-stale-cases'), stale.maxAgeHours),
+      ['tenant'],
     ),
     make(
       'billing-reconciliation-missed',
       `Đối soát hằng ngày chưa chạy thành công quá ${missed.maxAgeHours} giờ. Mở docs/integration/reconciliation-runbook.vi.md.`,
       reconciliationMissedEsql(f, w('billing-reconciliation-missed'), missed.maxAgeHours),
+      ['tenant'],
     ),
     make(
       'billing-reconciliation-failed-run',
       `Lượt đối soát bị FAILED trong ${r['billing-reconciliation-failed-run'].windowMinutes} phút gần đây. Mở docs/integration/reconciliation-runbook.vi.md.`,
       failedRunEsql(f, w('billing-reconciliation-failed-run')),
+      ['tenant'],
     ),
     make(
       'billing-service-silent',
       `Dịch vụ wallet hoặc payment không gửi metric quá ${silent.silentMinutes} phút (nhìn lại ${silent.lookbackHours} giờ). Xem README.md mục ví (wallet).`,
       serviceSilentEsql(f, silent.lookbackHours, silent.silentMinutes),
+      ['service'],
       silent.lookbackHours * 60,
     ),
   ];

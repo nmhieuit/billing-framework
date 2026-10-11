@@ -137,12 +137,83 @@ export async function waitForActiveAlert(
   }
 }
 
+/** Số alert đã recovered quá nhanh (trong cửa sổ kiểm tra) từ mức này trở lên được coi là "nhấp nháy". */
+const FLAP_MIN_SHORT_LIVED = 2;
+/** Cửa sổ nhìn lại, tính theo số lần chạy của rule. */
+const FLAP_LOOKBACK_RUNS = 10;
+const ALERTS_INDEX = '.alerts-stack.alerts-default';
+
+/**
+ * (e) Với mỗi rule đang có alert active: không được có >= 2 alert đã recovered mà sống ngắn hơn 2 lần chu kỳ chạy
+ * trong 10 lần chạy gần đây. Đó là dấu hiệu id instance không ổn định (cột giá trị lọt vào KEEP) khiến mỗi lần chạy
+ * lại sinh alert mới và đóng alert cũ. Alert chỉ nháy một lần (điều kiện thật sự dao động) không bị tính là lỗi.
+ */
+export async function checkFlapping(
+  options: Pick<VerifyOptions, 'client' | 'params' | 'esUrl' | 'esFetch'>,
+): Promise<CheckResult[]> {
+  const results: CheckResult[] = [];
+  for (const rule of buildRules(options.params)) {
+    const existing = await options.client.getRule(rule.id);
+    const active = existing?.last_run?.alerts_count?.active ?? 0;
+    if (active <= 0) continue;
+    const label = `rule ${rule.name} alert ids are stable`;
+    const body = {
+      size: 0,
+      track_total_hits: true,
+      query: {
+        bool: {
+          filter: [
+            { term: { 'kibana.alert.rule.uuid': rule.id } },
+            { term: { 'kibana.alert.status': 'recovered' } },
+            {
+              range: {
+                'kibana.alert.end': { gte: `now-${FLAP_LOOKBACK_RUNS * rule.intervalMinutes}m` },
+              },
+            },
+            {
+              range: { 'kibana.alert.duration.us': { lt: 2 * rule.intervalMinutes * 60_000_000 } },
+            },
+          ],
+        },
+      },
+    };
+    let res: Response;
+    try {
+      res = await options.esFetch(`${options.esUrl.replace(/\/+$/, '')}/${ALERTS_INDEX}/_search`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      results.push(fail(`${label}: Elasticsearch unreachable (${(e as Error).message})`));
+      continue;
+    }
+    if (!res.ok) {
+      results.push(fail(`${label}: cannot read ${ALERTS_INDEX} (HTTP ${res.status})`));
+      continue;
+    }
+    const json = (await res.json()) as { hits?: { total?: { value?: number } } };
+    const shortLived = json.hits?.total?.value ?? 0;
+    results.push(
+      shortLived >= FLAP_MIN_SHORT_LIVED
+        ? fail(
+            `rule ${rule.name} is flapping: ${shortLived} alerts recovered within ${2 * rule.intervalMinutes} min of starting in the last ${FLAP_LOOKBACK_RUNS * rule.intervalMinutes} min while ${active} alert(s) are active (alert instance id must contain only the identity columns ${rule.identityColumns.join(', ')})`,
+          )
+        : pass(
+            `${label} (${shortLived} short-lived recovered in the last ${FLAP_LOOKBACK_RUNS * rule.intervalMinutes} min)`,
+          ),
+    );
+  }
+  return results;
+}
+
 /** Chạy mọi kiểm tra, in mỗi kiểm tra một dòng PASS/FAIL; `true` chỉ khi tất cả đều đạt. */
 export async function runVerify(options: VerifyOptions): Promise<boolean> {
   const results: CheckResult[] = [];
   try {
     results.push(...(await checkRules(options.client, options.params)));
     results.push(await checkDashboard(options.client, options.params));
+    results.push(...(await checkFlapping(options)));
   } catch (e) {
     if (!(e instanceof KibanaError)) throw e;
     results.push(fail(`kibana: ${e.message}`));

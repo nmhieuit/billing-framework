@@ -123,6 +123,32 @@ describe('buildRules', () => {
     expect(esql).toContain('IN ("wallet", "payment")');
   });
 
+  it('pins the silent query to documents carrying a state gauge', () => {
+    expect(byName(rules, 'billing-service-silent').esql).toBe(
+      [
+        'SET unmapped_fields="nullify";',
+        'FROM metrics-generic.otel-default*',
+        '| WHERE @timestamp > NOW() - 6 hours AND resource.attributes.service.name IN ("wallet", "payment") AND (metrics.billing.outbox.pending IS NOT NULL OR metrics.billing.payment.webhook_backlog IS NOT NULL)',
+        '| STATS last_seen = MAX(@timestamp) BY service = resource.attributes.service.name',
+        '| WHERE last_seen < NOW() - 5 minutes',
+        '| KEEP service',
+      ].join('\n'),
+    );
+  });
+
+  it('keeps only identity columns in the final KEEP so the alert instance id is stable', () => {
+    for (const r of rules) {
+      expect(r.identityColumns.length).toBeGreaterThan(0);
+      const keep = r.esql.split('\n').filter((l) => l.startsWith('| KEEP '));
+      expect(keep).toHaveLength(1);
+      const cols = keep[0]!
+        .slice('| KEEP '.length)
+        .split(',')
+        .map((c) => c.trim());
+      expect(cols).toEqual(r.identityColumns);
+    }
+  });
+
   it('pins the two-stage failed-run query (delta per process, then sum per tenant)', () => {
     expect(byName(rules, 'billing-reconciliation-failed-run').esql).toBe(
       [
@@ -133,7 +159,7 @@ describe('buildRules', () => {
         '| EVAL delta = last_value - first_value',
         '| STATS failed_runs = SUM(delta) BY tenant',
         '| WHERE failed_runs > 0',
-        '| KEEP tenant, failed_runs',
+        '| KEEP tenant',
       ].join('\n'),
     );
   });

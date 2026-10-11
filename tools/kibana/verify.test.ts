@@ -17,10 +17,18 @@ interface EsCall {
 }
 
 /** Elasticsearch giả: ghi lại câu truy vấn, trả lỗi 400 cho câu chứa `failOn`. */
-const fakeEs = (failOn?: string) => {
+const fakeEs = (failOn?: string, alerts: { total: number } | { status: number } = { total: 0 }) => {
   const calls: EsCall[] = [];
+  const searches: Array<{ path: string; body: { query: { bool: { filter: unknown[] } } } }> = [];
   const fetchImpl: FetchImpl = async (input, init) => {
     const url = new URL(input);
+    if (init?.method === 'POST' && url.pathname === '/.alerts-stack.alerts-default/_search') {
+      searches.push({ path: url.pathname, body: JSON.parse(init.body as string) });
+      if ('status' in alerts) return new Response('{}', { status: alerts.status });
+      return new Response(JSON.stringify({ hits: { total: { value: alerts.total } } }), {
+        status: 200,
+      });
+    }
     if (init?.method !== 'POST' || url.pathname !== '/_query') {
       return new Response('{}', { status: 404 });
     }
@@ -34,7 +42,7 @@ const fakeEs = (failOn?: string) => {
     }
     return new Response(JSON.stringify({ columns: [], values: [] }), { status: 200 });
   };
-  return { calls, fetchImpl };
+  return { calls, searches, fetchImpl };
 };
 
 /** Kibana đã apply đủ 8 rule và dashboard. */
@@ -145,6 +153,51 @@ describe('runVerify', () => {
     expect(
       failed.some((l) => l.includes('billing-outbox-stuck') && l.includes('Unknown column')),
     ).toBe(true);
+  });
+
+  describe('flapping check', () => {
+    const withActive = async () => {
+      const { fake, client } = await appliedKibana();
+      const rule = [...fake.rules.values()].find((r) => r.name === 'billing-outbox-stuck')!;
+      fake.rules.set(rule.id, { ...rule, last_run: { alerts_count: { active: 2 } } });
+      return { fake, client, rule };
+    };
+
+    it('skips rules without active alerts (no query on the alerts index)', async () => {
+      const { fake, client } = await appliedKibana();
+      const { ok, es } = await run({ fake, client });
+      expect(ok).toBe(true);
+      expect(es.searches).toHaveLength(0);
+    });
+
+    it('queries recovered short-lived alerts of the active rule and passes when there is at most one', async () => {
+      const { fake, client, rule } = await withActive();
+      const { ok, lines, es } = await run({ fake, client }, fakeEs(undefined, { total: 1 }));
+      expect(ok).toBe(true);
+      expect(es.searches).toHaveLength(1);
+      const filter = JSON.stringify(es.searches[0]!.body.query.bool.filter);
+      expect(filter).toContain(rule.id);
+      expect(filter).toContain('"recovered"');
+      expect(filter).toContain('now-10m');
+      expect(filter).toContain(String(2 * 60_000_000));
+      expect(lines.some((l) => l.startsWith('PASS') && /alert ids are stable/.test(l))).toBe(true);
+    });
+
+    it('fails with a clear message when alerts recover as fast as they appear', async () => {
+      const { fake, client } = await withActive();
+      const { ok, lines } = await run({ fake, client }, fakeEs(undefined, { total: 2 }));
+      expect(ok).toBe(false);
+      expect(lines.find((l) => l.startsWith('FAIL'))).toMatch(
+        /billing-outbox-stuck is flapping.*identity columns tenant/,
+      );
+    });
+
+    it('fails when the alerts index cannot be read', async () => {
+      const { fake, client } = await withActive();
+      const { ok, lines } = await run({ fake, client }, fakeEs(undefined, { status: 404 }));
+      expect(ok).toBe(false);
+      expect(lines.find((l) => l.startsWith('FAIL'))).toMatch(/cannot read .*HTTP 404/);
+    });
   });
 
   describe('--expect-alert', () => {
