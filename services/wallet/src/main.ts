@@ -36,8 +36,20 @@ log.info(
 
 const shutdown = createShutdownHandler({
   stop: async () => {
-    await service.stop();
-    await telemetry.shutdown();
+    try {
+      await service.stop();
+    } finally {
+      // Luôn thử xả telemetry dù stop() lỗi, nhưng chặn trên 5 giây để không treo khi tắt dịch vụ.
+      let timer: NodeJS.Timeout | undefined;
+      const timeout = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, 5_000);
+      });
+      try {
+        await Promise.race([telemetry.shutdown(), timeout]);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
   },
   log,
   exit: (code) => process.exit(code),

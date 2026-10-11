@@ -18,7 +18,7 @@ services:
     environment:
       ACCEPT_EULA: 'Y'
       MSSQL_SA_PASSWORD: ${BILLING_SQLSERVER_SA_PASSWORD:?copy deploy/.env.example to deploy/.env}
-    ports: ['${LOCAL_SQL_PORT:-11433}:1433']
+    ports: ['127.0.0.1:${LOCAL_SQL_PORT:-11433}:1433']
     volumes: [sqlserver-data:/var/opt/mssql]
     networks: [backbone]
     healthcheck:
@@ -36,8 +36,8 @@ services:
       RABBITMQ_DEFAULT_USER: ${BILLING_RABBITMQ_ADMIN_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${BILLING_RABBITMQ_ADMIN_PASSWORD:?copy deploy/.env.example to deploy/.env}
     ports:
-      - '${LOCAL_AMQP_PORT:-15673}:5672'
-      - '${LOCAL_RABBITMQ_MGMT_PORT:-15674}:15672'
+      - '127.0.0.1:${LOCAL_AMQP_PORT:-15673}:5672'
+      - '127.0.0.1:${LOCAL_RABBITMQ_MGMT_PORT:-15674}:15672'
     volumes: [rabbitmq-data:/var/lib/rabbitmq]
     networks: [backbone]
     healthcheck:
@@ -94,7 +94,7 @@ services:
       discovery.type: single-node
       xpack.security.enabled: 'false'
       ES_JAVA_OPTS: ${ELASTICSEARCH_JAVA_OPTS:--Xms512m -Xmx512m}
-    ports: ['${LOCAL_ELASTICSEARCH_PORT:-19200}:9200']
+    ports: ['127.0.0.1:${LOCAL_ELASTICSEARCH_PORT:-19200}:9200']
     volumes: [elasticsearch-data:/usr/share/elasticsearch/data]
     networks: [backbone]
     healthcheck:
@@ -112,7 +112,7 @@ services:
       ELASTICSEARCH_HOSTS: http://elasticsearch:9200
       # Alerting cần khóa mã hóa saved objects (>= 32 ký tự).
       XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY: ${KIBANA_ENCRYPTION_KEY:?set in deploy/.env (>= 32 characters)}
-    ports: ['${LOCAL_KIBANA_PORT:-15601}:5601']
+    ports: ['127.0.0.1:${LOCAL_KIBANA_PORT:-15601}:5601']
     depends_on:
       elasticsearch: { condition: service_healthy }
     networks: [backbone]
@@ -128,7 +128,7 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.160.0
     command: ['--config=/etc/otel/config.yaml']
-    ports: ['${LOCAL_OTLP_GRPC_PORT:-14317}:4317']
+    ports: ['127.0.0.1:${LOCAL_OTLP_GRPC_PORT:-14317}:4317']
     volumes: ['./otel/collector-config.yaml:/etc/otel/config.yaml:ro']
     depends_on:
       elasticsearch: { condition: service_healthy }

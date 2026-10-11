@@ -21,6 +21,17 @@ services:
   migrate:
     <<: *dev
     restart: 'no'
+    # Cùng mã nguồn bind-mount như wallet/payment (+ thư mục db) để chạy lại job luôn dùng migration mới nhất.
+    volumes:
+      - ../services/wallet/src:/app/services/wallet/src:ro
+      - ../services/payment/src:/app/services/payment/src:ro
+      - ../packages/contracts/src:/app/packages/contracts/src:ro
+      - ../packages/database/src:/app/packages/database/src:ro
+      - ../packages/messaging/src:/app/packages/messaging/src:ro
+      - ../packages/money/src:/app/packages/money/src:ro
+      - ../packages/observability/src:/app/packages/observability/src:ro
+      - ../packages/runtime/src:/app/packages/runtime/src:ro
+      - ../db:/app/db:ro
     depends_on:
       billing-sql-init: { condition: service_completed_successfully }
     environment:
@@ -44,7 +55,7 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       otel-collector: { condition: service_started }
-    ports: ['${LOCAL_PAYMENT_PORT:-3002}:3002']
+    ports: ['127.0.0.1:${LOCAL_PAYMENT_PORT:-3002}:3002']
     volumes: *sources
     environment:
       PAYMENT_DB_HOST: sqlserver
@@ -64,7 +75,7 @@ services:
       migrate: { condition: service_completed_successfully }
       billing-rabbitmq-init: { condition: service_completed_successfully }
       otel-collector: { condition: service_started }
-    ports: ['${LOCAL_WALLET_PORT:-3001}:3001']
+    ports: ['127.0.0.1:${LOCAL_WALLET_PORT:-3001}:3001']
     volumes: *sources
     environment:
       WALLET_DB_HOST: sqlserver
@@ -89,7 +100,7 @@ services:
     depends_on:
       kibana: { condition: service_healthy }
     volumes:
-      - ../deploy/kibana:/app/deploy/kibana
+      - ../deploy/kibana:/app/deploy/kibana:ro
     environment:
       KIBANA_URL: http://kibana:5601
     command: ['corepack', 'pnpm', 'kibana:apply']

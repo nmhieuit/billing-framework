@@ -7,6 +7,9 @@ import { connect } from 'amqplib';
 const ENV_FILE = resolve(import.meta.dirname, '../../deploy/.env');
 const EXCHANGE = 'orders.events';
 const ROUTING_KEY = 'order-ready-for-payment.v1';
+/** Exchange wallet phát sự kiện ra (outbox) và hàng đợi "đóng vai" consumer của ecommerce trong demo local. */
+const BILLING_EXCHANGE = 'billing.events';
+export const SINK_QUEUE = 'ecommerce.billing-events';
 const TOPUP_AMOUNT = 500_000;
 const CUSTOMERS = ['seed-1', 'seed-2', 'seed-3'];
 /** Hai đơn trong số dư và một đơn vượt số dư (bị từ chối INSUFFICIENT_FUNDS). */
@@ -30,6 +33,8 @@ export interface PublishedMessage {
 
 export interface SeedDeps {
   fetchImpl: FetchImpl;
+  /** Khai báo hàng đợi nhận sự kiện của billing (idempotent) để outbox của seed được giao đi. */
+  declareSink: () => Promise<void>;
   /** Publish một message lên exchange `orders.events`. */
   publish: (message: PublishedMessage) => Promise<void>;
   sleep: (ms: number) => Promise<void>;
@@ -107,6 +112,10 @@ export async function seed(options: SeedOptions, deps: SeedDeps): Promise<void> 
   const api = new WalletApi(options.walletUrl, deps.fetchImpl);
   const seconds = Math.round(options.timeoutMs / 1000);
   const total = options.withDlq ? 5 : 4;
+
+  // Trước mọi thứ khác: có hàng đợi bind vào billing.events thì outbox mới có nơi giao, rule outbox-stuck không kêu oan.
+  deps.log(`declaring sink queue ${SINK_QUEUE} (bound to ${BILLING_EXCHANGE}, routing key #)`);
+  await deps.declareSink();
 
   // Bước 1: tạo ví (201 hoặc 200 đều được, chạy lại an toàn).
   deps.log(
@@ -216,6 +225,18 @@ export async function seed(options: SeedOptions, deps: SeedDeps): Promise<void> 
   deps.log('seed finished');
 }
 
+/** Phần của AMQP channel mà seed cần để khai báo hàng đợi (tách ra để test bằng stub). */
+export interface SinkChannel {
+  assertQueue(queue: string, options: { durable: boolean }): Promise<unknown>;
+  bindQueue(queue: string, exchange: string, pattern: string): Promise<unknown>;
+}
+
+/** Khai báo (idempotent) hàng đợi bền `ecommerce.billing-events` và bind vào `billing.events` với routing key `#`. */
+export async function declareSinkQueue(channel: SinkChannel): Promise<void> {
+  await channel.assertQueue(SINK_QUEUE, { durable: true });
+  await channel.bindQueue(SINK_QUEUE, BILLING_EXCHANGE, '#');
+}
+
 /** Đọc file dạng KEY=VALUE (bỏ dòng trống và chú thích, bỏ nháy bao quanh giá trị). */
 export function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -290,6 +311,7 @@ export async function main(argv: string[]): Promise<number> {
         },
         {
           fetchImpl: (input, init) => fetch(input, init),
+          declareSink: () => declareSinkQueue(channel),
           publish: (m) =>
             new Promise<void>((resolveP, rejectP) => {
               channel.publish(

@@ -2,6 +2,8 @@ import { validateEvent } from '@billing/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   buildAmqpUrl,
+  declareSinkQueue,
+  SINK_QUEUE,
   parseEnvFile,
   resolveMqPassword,
   seed,
@@ -67,6 +69,9 @@ const setup = (wallet = fakeWallet(), over: Partial<SeedOptions> = {}) => {
       order.push(`${init?.method ?? 'GET'} ${url.pathname.split('/').slice(0, 2).join('/')}`);
       return wallet.fetchImpl(input, init);
     },
+    declareSink: async () => {
+      order.push('declareSink');
+    },
     publish: async (m) => {
       order.push('publish');
       published.push(m);
@@ -93,6 +98,32 @@ const topupKeys = (calls: Call[]) =>
   calls
     .filter((c) => c.path === '/topups' && c.method === 'POST')
     .map((c) => c.headers['Idempotency-Key']);
+
+describe('sink queue', () => {
+  it('declares a durable queue and binds it to billing.events with # (idempotent)', async () => {
+    const calls: unknown[][] = [];
+    const channel = {
+      assertQueue: async (...a: unknown[]) => void calls.push(['assertQueue', ...a]),
+      bindQueue: async (...a: unknown[]) => void calls.push(['bindQueue', ...a]),
+    };
+    await declareSinkQueue(channel);
+    expect(calls).toEqual([
+      ['assertQueue', 'ecommerce.billing-events', { durable: true }],
+      ['bindQueue', 'ecommerce.billing-events', 'billing.events', '#'],
+    ]);
+    // Chạy lại cho đúng cùng khai báo (AMQP assert/bind là idempotent).
+    await declareSinkQueue(channel);
+    expect(calls.slice(2)).toEqual(calls.slice(0, 2));
+    expect(SINK_QUEUE).toBe('ecommerce.billing-events');
+  });
+
+  it('seed declares the sink exactly once, before any wallet call or publish', async () => {
+    const s = setup();
+    await seed(s.options, s.deps);
+    expect(s.order.filter((o) => o === 'declareSink')).toHaveLength(1);
+    expect(s.order[0]).toBe('declareSink');
+  });
+});
 
 describe('seed', () => {
   it('runs wallets, top-ups, orders, reconciliation in that order', async () => {
