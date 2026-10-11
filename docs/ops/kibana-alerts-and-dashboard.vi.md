@@ -1,6 +1,6 @@
 # Cảnh báo và dashboard Kibana của billing
 
-Tài liệu cho người vận hành: billing có 8 rule cảnh báo và một dashboard "Billing: vận hành" trên Kibana, tất cả **sinh từ code**
+Tài liệu cho người vận hành: billing có 9 rule cảnh báo và một dashboard "Billing: vận hành" trên Kibana, tất cả **sinh từ code**
 và chỉnh được bằng tham số. Thiết kế: [spec 6a](../superpowers/specs/2026-10-11-ops-metrics-alerts-design.md); quyết định:
 [ADR-0011](../adr/0011-otel-metrics-and-generated-kibana-rules.vi.md); tên trường metric trong Elasticsearch:
 [metric-fields](metric-fields.md); chạy thử trên máy: [local-stack](local-stack.vi.md).
@@ -14,7 +14,7 @@ params.defaults.json (+ params.local.json)  ->  bộ sinh (tools/kibana)  ->  ki
 1. `deploy/kibana/params.defaults.json` (đã commit) chứa mọi giá trị mặc định; `deploy/kibana/params.local.json` (git-ignored,
    tùy chọn) chỉ ghi các khóa muốn đổi và được trộn sâu lên mặc định.
 2. Tham số được kiểm tra trước khi gọi Kibana: sai kiểu, ngoài khoảng, khóa lạ hay thiếu đều bị từ chối kèm đường dẫn khóa.
-3. Bộ sinh (`tools/kibana/rules.ts`, `dashboard.ts`) dựng 8 rule và dashboard với **ID cố định** theo tên, nên cập nhật tại chỗ
+3. Bộ sinh (`tools/kibana/rules.ts`, `dashboard.ts`) dựng 9 rule và dashboard với **ID cố định** theo tên, nên cập nhật tại chỗ
    thay vì tạo bản trùng.
 4. `corepack pnpm kibana:apply` tạo hoặc cập nhật rule qua Alerting API và import dashboard qua Saved Objects API.
 5. Điều kiện của rule và đường ngưỡng của dashboard dùng **cùng** tham số, nên đổi một ngưỡng là đổi cả hai.
@@ -41,7 +41,7 @@ connector thông báo** (email, Slack) nào được gắn, việc đó là hạ
 | `billing-reconciliation-missed`      | Lượt đối soát `COMPLETED` gần nhất của một tenant cách đây quá `maxAgeHours` giờ                    | [reconciliation-runbook](../integration/reconciliation-runbook.vi.md)           |
 | `billing-reconciliation-failed-run`  | Có lượt đối soát `FAILED` mới trong cửa sổ (tổng số lượt `FAILED` tăng thêm ở mọi tiến trình > 0)   | [reconciliation-runbook](../integration/reconciliation-runbook.vi.md)           |
 | `billing-service-silent`             | `wallet` hoặc `payment` đã từng gửi gauge trạng thái trong `lookbackHours` giờ qua nhưng im quá `silentMinutes` (gồm cả khi service sống nhưng không lấy mẫu được) | README mục Wallet; kiểm tra collector và `OTEL_EXPORTER_OTLP_ENDPOINT` của service |
-| `billing-retention-stalled`          | `wallet` hoặc `payment` đã từng báo lần retention thành công trong `lookbackHours` giờ qua nhưng lần thành công gần nhất cách đây quá `maxAgeHours` giờ | `docs/ops/retention.vi.md`                                                      |
+| `billing-retention-stalled`          | `wallet` hoặc `payment` đã từng báo lần retention thành công trong `lookbackHours` giờ qua nhưng lần thành công gần nhất cách đây quá `maxAgeHours` giờ | [retention](retention.vi.md): mục "Đọc metric, dashboard và cảnh báo"          |
 
 ## Bảng tham số
 
@@ -189,12 +189,13 @@ chạy lệnh không với tới được.
   chuỗi của tenant lỗi chỉ biến mất. Rule tự hết báo sau `lookbackHours` giờ im lặng, và **không bao giờ báo** cho service chưa từng
   gửi gauge (danh sách `wallet`, `payment` nằm cứng trong câu ES|QL).
 - Biểu đồ "Active billing alerts" đọc chỉ mục alert của Kibana, không phụ thuộc thanh thời gian.
-- Các bảng (3 panel dạng bảng) là saved search ES|QL tham chiếu từ dashboard, được import cùng dashboard.
-- **Tiêu đề panel hiện bằng tiếng Anh** (ví dụ "DLQ depth", "Active billing alerts"); Việt hóa là việc tiếp theo, không ảnh hưởng
-  dữ liệu hay tham số.
+- Các bảng (3 panel dạng bảng) là saved search ES|QL tham chiếu từ dashboard, được import cùng dashboard. Dashboard có 12 panel dữ liệu.
+- **Retention (rule thứ 9 và hai panel).** `billing-retention-stalled` đọc gauge `billing.retention.last_success_timestamp_seconds` (epoch giây của lượt dọn dữ liệu gần nhất kết thúc không lỗi; xem [retention](retention.vi.md)) và báo khi giá trị mới nhất của một service cũ hơn `maxAgeHours` giờ. Chỉ xét service đã từng báo trong `lookbackHours` giờ qua, nên **job retention tắt (`RETENTION_ENABLED=false`) thì không có gauge và rule không nổ**, và rule **tự hết báo** sau `lookbackHours` giờ im lặng. Một lượt có lỗi không làm mới gauge nên lỗi kéo dài vẫn nổ. Hai panel: "Retention: số dòng đã xoá / sẽ xoá (tích luỹ)" (counter `billing.retention.rows` theo bảng và chế độ `deleted`/`would_delete`) và "Retention: số giây từ lần chạy thành công gần nhất" (kèm đường ngưỡng của rule).
+- **Tiêu đề panel phần lớn bằng tiếng Anh** (ví dụ "DLQ depth", "Active billing alerts"; hai panel retention đã bằng tiếng Việt); Việt hóa
+  phần còn lại là việc tiếp theo, không ảnh hưởng dữ liệu hay tham số.
 
 ## Liên quan
 
 [ADR-0011](../adr/0011-otel-metrics-and-generated-kibana-rules.vi.md), [local-stack](local-stack.vi.md),
-[metric-fields](metric-fields.md), [dlq-runbook](../integration/dlq-runbook.vi.md),
+[metric-fields](metric-fields.md), [retention](retention.vi.md), [dlq-runbook](../integration/dlq-runbook.vi.md),
 [reconciliation-runbook](../integration/reconciliation-runbook.vi.md).

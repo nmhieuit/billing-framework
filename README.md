@@ -25,7 +25,7 @@ corepack pnpm --filter @billing/payment-service dev   # :3002/health
 ## Chạy local một lệnh và quan sát
 
 Dựng cả SQL Server, RabbitMQ, Elasticsearch, Kibana, OTel Collector, wallet và payment trên máy (độc lập với stack ecommerce),
-kèm 8 rule cảnh báo và dashboard "Billing: vận hành" trên Kibana (cần Docker; Kibana/Elasticsearch 9.4).
+kèm 9 rule cảnh báo và dashboard "Billing: vận hành" trên Kibana (cần Docker; Kibana/Elasticsearch 9.4).
 
 ```bash
 cp deploy/.env.example deploy/.env      # điền các mật khẩu mẫu local
@@ -39,6 +39,17 @@ Kibana: <http://localhost:15601> (Rules, tag `billing`; Dashboards, "Billing: v�
 [`docs/ops/local-stack.vi.md`](docs/ops/local-stack.vi.md) (cổng, sự cố thường gặp),
 [`docs/ops/kibana-alerts-and-dashboard.vi.md`](docs/ops/kibana-alerts-and-dashboard.vi.md) (bảng tham số, quy trình đổi),
 [ADR-0011](docs/adr/0011-otel-metrics-and-generated-kibana-rules.vi.md).
+
+## Dọn dữ liệu (retention)
+
+Wallet và payment mỗi service có một job nền xóa định kỳ dữ liệu đã hết giá trị: outbox `SENT` (14 ngày), `processed_messages`
+(30 ngày), `idempotency_keys` (90 ngày), mục/lượt đối soát đã đóng (365 ngày) ở wallet; webhook đã giao (30 ngày) và
+`idempotency_keys` (90 ngày) ở payment. Xóa theo lô nhỏ, **không bao giờ chạm vào sổ cái, `accounts`, `topups`, `order_payments`
+hay `charges`**. Job bật sẵn nhưng **chạy thử** (`RETENTION_DRY_RUN=true`: chỉ đếm và log): xem số `would_delete` trên dashboard,
+rồi mới đặt `RETENTION_DRY_RUN=false` để xóa thật (không hoàn tác; production sao lưu DB trước). Số ngày chỉnh bằng `RETENTION_*`
+(có mức tối thiểu; xem `services/wallet/.env.example`, `services/payment/.env.example`). Chi tiết:
+[`docs/ops/retention.vi.md`](docs/ops/retention.vi.md) (chính sách, quy trình chạy thử sang xóa thật, đọc metric và rule
+`billing-retention-stalled`), [ADR-0012](docs/adr/0012-batched-dry-run-first-retention.vi.md).
 
 ## Hạ tầng dùng chung với ecommerce
 

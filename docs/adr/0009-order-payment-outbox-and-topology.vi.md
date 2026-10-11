@@ -44,6 +44,6 @@ thể làm các tenant khác chậm hơn khi broker lỗi.
 - **Quan sát:** độ sâu outbox/tuổi dòng cũ nhất và độ sâu DLQ được xuất thành metric và cảnh báo (`billing-outbox-stuck`,
   `billing-dlq-not-empty`): xem [ADR-0011](0011-otel-metrics-and-generated-kibana-rules.vi.md) và
   [kibana-alerts-and-dashboard](../ops/kibana-alerts-and-dashboard.vi.md).
-- **Dòng outbox `SENT` chưa bị dọn:** job lưu giữ/xóa là việc tương lai (Bước 6); bảng sẽ lớn dần.
+- **Dòng outbox `SENT` được dọn định kỳ:** dòng outbox `SENT` được job retention dọn sau `RETENTION_OUTBOX_SENT_DAYS` ngày (xem [ADR-0012](0012-batched-dry-run-first-retention.vi.md) và [retention](../ops/retention.vi.md)); job chạy thử theo mặc định nên cho tới khi người vận hành đặt `RETENTION_DRY_RUN=false` bảng vẫn lớn dần. Dòng `PENDING` không bao giờ bị xóa.
 - **Tắt êm:** `stopConsuming` mặc định chờ tối đa 30 s, bằng `terminationGracePeriodSeconds` mặc định của Kubernetes; hãy đặt
   grace period của pod cao hơn giá trị này.

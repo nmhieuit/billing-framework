@@ -72,7 +72,7 @@ curl -s http://localhost:19200/_cluster/health   # "yellow" là bình thường 
 ```
 
 Đạt khi: `elasticsearch`, `kibana`, `rabbitmq`, `sqlserver` ở trạng thái healthy; `wallet`, `payment`, `otel-collector` Up;
-bốn job trên `Exited (0)`. Rồi mở Kibana tại `http://localhost:15601`: Rules (tag `billing`, 8 rule) và dashboard
+bốn job trên `Exited (0)`. Rồi mở Kibana tại `http://localhost:15601`: Rules (tag `billing`, 9 rule) và dashboard
 "Billing: vận hành". Xem log job: `docker compose ... logs kibana-import`. Kiểm tra tự động toàn bộ:
 
 ```bash
@@ -100,6 +100,29 @@ Hai điều cần biết khi chạy seed trên stack này:
 - **Nạp tiền chỉ một lần cho mỗi ví** (khóa idempotency cố định `seed-topup-<tenant>-<khách>`), còn mỗi lần chạy lại trừ thêm tiền
   bằng đơn mới. Chạy lại nhiều lần thì các đơn sau dần bị từ chối `INSUFFICIENT_FUNDS`. Muốn số dư mới: `down -v` (xem dưới).
 - Seed tạo queue hứng `ecommerce.billing-events` (bền, gắn vào `billing.events` với routing key `#`) để đóng vai consumer của ecommerce, nên outbox của seed được giao đi và `billing-outbox-stuck` không báo. Muốn demo cảnh báo này: xóa queue đó (xem "Tạo queue hứng" dưới) trước khi seed, hoặc xóa rồi seed lại; queue sẽ được tạo lại ở lần seed sau.
+
+## Dọn dữ liệu (retention)
+
+Wallet và payment trong stack này chạy job retention ở **chế độ chạy thử**: `deploy/compose.services.yml` đặt
+`RETENTION_DRY_RUN: 'true'` rõ ràng cho cả hai service (các biến `RETENTION_*` khác lấy mặc định: bật, 60 phút một lượt). Lượt đầu
+chạy ngay khi service khởi động; chạy thử chỉ đếm và log, **không xóa gì**. Chi tiết chính sách, số ngày và quy trình:
+[retention](retention.vi.md).
+
+Cách đọc kết quả:
+
+- **Gauge**: sau lượt đầu, `billing.retention.last_success_timestamp_seconds` xuất hiện (panel "Retention: số giây từ lần chạy thành
+  công gần nhất" trên dashboard), kể cả khi chưa có dòng nào đủ điều kiện.
+- **Counter**: `billing.retention.rows` với `mode = would_delete` chỉ tăng khi có dòng cũ hơn ngưỡng; dữ liệu mới dựng/seed trên stack
+  này trẻ hơn mọi ngưỡng (nhỏ nhất 1 ngày) nên thường **không có dòng nào** và panel "Retention: số dòng đã xoá / sẽ xoá" để trống.
+- **Log**: `docker compose -f deploy/compose.local.yml --env-file deploy/.env logs wallet payment` tìm `retention run finished` (chỉ
+  được log khi có dòng hoặc có lỗi) và `retention policy failed`.
+
+Để chuyển sang xóa thật trên máy local (chỉ dữ liệu thử, vẫn **không hoàn tác**), đổi `RETENTION_DRY_RUN: 'true'` thành `'false'`
+trong mục `environment` của `wallet` và/hoặc `payment` ở `deploy/compose.services.yml` rồi
+`docker compose -f deploy/compose.local.yml --env-file deploy/.env up -d wallet payment`; nhớ trả lại `'true'` trước khi commit.
+Muốn thấy dòng bị dọn, hạ số ngày (ví dụ `RETENTION_OUTBOX_SENT_DAYS: '1'`) trên dữ liệu đủ cũ, hoặc dùng môi trường thử có dữ liệu
+lâu năm. Rule `billing-retention-stalled` chạy mỗi 15 phút và chỉ nổ khi lượt thành công gần nhất cũ hơn 3 giờ (mặc định), nên
+trên stack khỏe nó không báo.
 
 ## Hot reload: đổi code có cần `--build` không
 

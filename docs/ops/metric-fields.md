@@ -15,9 +15,9 @@ collector ghi vào data stream `metrics-generic.otel-default`.
 Gauge (`time_series_metric: gauge`): `billing.outbox.pending`, `billing.outbox.oldest_age_seconds`,
 `billing.topups.requested_backlog`, `billing.topups.oldest_requested_age_seconds`, `billing.dlq.depth`,
 `billing.payment.webhook_backlog`, `billing.payment.webhook_oldest_age_seconds`,
-`billing.reconciliation.oldest_open_item_age_seconds`, `billing.reconciliation.last_success_age_seconds`.
+`billing.reconciliation.oldest_open_item_age_seconds`, `billing.reconciliation.last_success_age_seconds`, `billing.retention.last_success_timestamp_seconds` (epoch giây của lượt retention thành công gần nhất, không phải tuổi).
 Counter (`time_series_metric: counter`): `billing.order_payments`, `billing.consumer.messages`,
-`billing.reconciliation.runs` (đã thấy); `billing.topups`, `billing.payment.charges`,
+`billing.reconciliation.runs` (đã thấy); `billing.retention.rows` (nhãn `attributes.table`, `attributes.mode`, và `attributes.tenant` của wallet; chỉ xuất hiện khi có dòng được xóa/đếm); `billing.topups`, `billing.payment.charges`,
 `billing.payment.webhook_deliveries` chỉ xuất hiện khi có sự kiện, và `billing.reconciliation.open_items`
 (nhãn `attributes.kind`) chỉ xuất hiện khi có ca mở: kiểm chứng ở Task 11 sau khi seed.
 
