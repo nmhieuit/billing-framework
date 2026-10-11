@@ -228,13 +228,41 @@ describe('retention worker in the running service', () => {
     expect(await outboxIds()).toEqual(['ob_aged', 'ob_young']);
   });
 
-  it('stops running after the service stops', async () => {
+  it('stop() waits for a retention run that is in flight', async () => {
     await seed();
-    const service = await start({ dryRun: true });
-    await waitFor(() => retentionReports().length > 0, { timeoutMs: 15_000 });
-    await service.stop();
-    const callsAfterStop = retentionReports().length;
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(retentionReports()).toHaveLength(callsAfterStop);
+    // Giữ khóa độc quyền trên bảng outbox của acme để lượt dọn bị kẹt giữa chừng (đếm outbox_sent phải chờ khóa).
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let locked!: () => void;
+    const lockTaken = new Promise<void>((resolve) => (locked = resolve));
+    const holder = db.transaction().execute(async (trx) => {
+      await sql`select top (1) id from ${sql.id('t_acme', 'outbox')} with (tablockx, holdlock)`.execute(
+        trx,
+      );
+      locked();
+      await gate;
+    });
+    await lockTaken;
+    try {
+      const service = await start({ dryRun: true });
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      expect(retentionReports()).toHaveLength(0); // lượt đang kẹt
+
+      let stopped = false;
+      const stopping = service.stop().then(() => (stopped = true));
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(stopped).toBe(false); // stop() phải chờ lượt đang chạy
+
+      release();
+      await stopping;
+      // Lượt đang chạy được chạy nốt (và báo cáo) trước khi stop() trả về.
+      expect(retentionReports()).toHaveLength(1);
+      const afterStop = metrics.calls.length;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(metrics.calls).toHaveLength(afterStop);
+    } finally {
+      release();
+      await holder;
+    }
   });
 });
