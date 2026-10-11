@@ -1,5 +1,6 @@
 import type { Charge } from '../domain/charge.js';
 import type { WebhookEvent } from '../domain/webhook-event.js';
+import type { RetentionRepository } from './retention.js';
 import type { PaymentState } from './state.js';
 
 export interface Clock {
@@ -113,6 +114,7 @@ export interface Repositories {
   idempotency: IdempotencyStore;
   webhooks: WebhookOutbox;
   state: StateRepository;
+  retention: RetentionRepository;
 }
 
 export interface UnitOfWork {

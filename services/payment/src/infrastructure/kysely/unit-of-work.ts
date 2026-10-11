@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely';
 import type { Repositories, UnitOfWork } from '../../application/ports.js';
 import { KyselyChargeRepository } from './charge.repository.js';
 import { KyselyIdempotencyStore } from './idempotency.repository.js';
+import { KyselyRetentionRepository } from './retention.repository.js';
 import type { PaymentDatabase } from './schema.js';
 import { KyselyStateRepository } from './state.repository.js';
 import { KyselyWebhookOutbox } from './webhook.repository.js';
@@ -17,6 +18,7 @@ export class KyselyUnitOfWork implements UnitOfWork {
         idempotency: new KyselyIdempotencyStore(trx),
         webhooks: new KyselyWebhookOutbox(trx),
         state: new KyselyStateRepository(trx),
+        retention: new KyselyRetentionRepository(trx),
       }),
     );
   }

@@ -1,11 +1,21 @@
 import { ConfigError, databaseConfigFromEnv, type DatabaseConfig } from '@billing/database';
 
+export interface PaymentRetentionConfig {
+  enabled: boolean;
+  dryRun: boolean;
+  intervalMinutes: number;
+  maxSecondsPerRun: number;
+  batchSize: number;
+  days: { webhook: number; idempotencyKeys: number };
+}
+
 export interface PaymentConfig {
   port: number;
   database: DatabaseConfig;
   webhook: { url: string; secret: string; backoffSeconds: number[] };
   workerIntervalMs: number;
   responseTimeoutMs: number;
+  retention: PaymentRetentionConfig;
   telemetry: { sampleIntervalSeconds: number };
 }
 
@@ -32,6 +42,16 @@ export function loadConfig(env: NodeJS.ProcessEnv): PaymentConfig {
       return fallback;
     }
     return value;
+  };
+
+  // Cờ boolean "true"/"false"; giá trị lạ bị ghi vào danh sách lỗi cấu hình.
+  const flag = (name: string, fallback: boolean): boolean => {
+    const raw = env[name]?.trim();
+    if (raw === undefined || raw === '') return fallback;
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    problems.push(`${name} must be "true" or "false"`);
+    return fallback;
   };
 
   const required = (name: string): string => {
@@ -72,6 +92,19 @@ export function loadConfig(env: NodeJS.ProcessEnv): PaymentConfig {
   const responseTimeoutMs = integer('RESPONSE_TIMEOUT_MS', 30_000, 0, 3_600_000);
   const sampleIntervalSeconds = integer('METRICS_SAMPLE_INTERVAL_SECONDS', 15, 1, 3600);
 
+  // Dọn dữ liệu cũ (retention): mặc định bật nhưng chạy thử.
+  const retention: PaymentRetentionConfig = {
+    enabled: flag('RETENTION_ENABLED', true),
+    dryRun: flag('RETENTION_DRY_RUN', true),
+    intervalMinutes: integer('RETENTION_INTERVAL_MINUTES', 60, 1, 1440),
+    maxSecondsPerRun: integer('RETENTION_MAX_SECONDS_PER_RUN', 60, 1, 3600),
+    batchSize: integer('RETENTION_BATCH_SIZE', 1000, 1, 4000),
+    days: {
+      webhook: integer('RETENTION_WEBHOOK_DAYS', 30, 1, 3650),
+      idempotencyKeys: integer('RETENTION_IDEMPOTENCY_KEYS_DAYS', 90, 7, 3650),
+    },
+  };
+
   if (problems.length > 0 || database === undefined || backoffSeconds === undefined) {
     throw new ConfigError(problems);
   }
@@ -81,6 +114,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): PaymentConfig {
     webhook: { url, secret, backoffSeconds },
     workerIntervalMs,
     responseTimeoutMs,
+    retention,
     telemetry: { sampleIntervalSeconds },
   };
 }

@@ -39,6 +39,14 @@ function configFor(overrides: Partial<PaymentConfig> = {}): PaymentConfig {
     webhook: { url: receiver.url, secret, backoffSeconds: [1] },
     workerIntervalMs: 20,
     responseTimeoutMs: 150,
+    retention: {
+      enabled: false,
+      dryRun: true,
+      intervalMinutes: 60,
+      maxSecondsPerRun: 60,
+      batchSize: 1000,
+      days: { webhook: 30, idempotencyKeys: 90 },
+    },
     telemetry: { sampleIntervalSeconds: 15 },
     ...overrides,
   };

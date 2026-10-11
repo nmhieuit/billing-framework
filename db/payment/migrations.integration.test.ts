@@ -19,7 +19,11 @@ afterAll(async () => {
 
 describe('payment migrations', () => {
   it('apply once and are a no-op the second time', async () => {
-    expect(await migrate(db, paymentMigrations)).toEqual(['001-init', '002-metadata']);
+    expect(await migrate(db, paymentMigrations)).toEqual([
+      '001-init',
+      '002-metadata',
+      '003-retention-indexes',
+    ]);
     expect(await migrate(db, paymentMigrations)).toEqual([]);
   });
 
@@ -39,6 +43,26 @@ describe('payment migrations', () => {
       'ix_charges_due',
       'ix_webhook_due',
     ]);
+  });
+
+  it('003-retention-indexes adds a filtered index on delivered webhooks and a plain one on idempotency keys', async () => {
+    const result = await sql<{
+      name: string;
+      is_unique: boolean;
+      has_filter: boolean;
+      filter_definition: string | null;
+    }>`
+      select name, is_unique, has_filter, filter_definition from sys.indexes
+      where name in ('ix_webhook_delivered', 'ix_payment_idempotency_created')`.execute(db);
+    const byName = Object.fromEntries(result.rows.map((r) => [r.name, r]));
+    expect(Object.keys(byName).sort()).toEqual([
+      'ix_payment_idempotency_created',
+      'ix_webhook_delivered',
+    ]);
+    expect(byName.ix_webhook_delivered?.has_filter).toBeTruthy();
+    expect(byName.ix_webhook_delivered?.filter_definition).toContain('DELIVERED');
+    expect(byName.ix_payment_idempotency_created?.has_filter).toBeFalsy();
+    expect(byName.ix_payment_idempotency_created?.is_unique).toBeFalsy();
   });
 
   it('treat idempotency keys differing only in case as distinct (binary collation)', async () => {
