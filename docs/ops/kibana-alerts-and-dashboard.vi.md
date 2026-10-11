@@ -29,6 +29,8 @@ này cần 9.4. `kibana:apply` và `kibana:verify` từ chối chạy trên stac
 Mỗi rule gắn tag `billing` và tag mức độ; mô tả của rule nêu runbook cần mở. Rule chỉ tạo alert trong Kibana: **chưa có
 connector thông báo** (email, Slack) nào được gắn, việc đó là hạ tầng của người vận hành.
 
+**Danh tính alert = các cột định danh của rule.** Với Kibana 9.4 (`groupBy: row`), id instance của alert được dựng từ **mọi cột đầu ra** của câu ES|QL. Vì vậy câu `KEEP` cuối của mỗi rule chỉ giữ cột định danh (`queue`, `tenant`, `tenant, kind` hoặc `service`; khai báo trong `RuleDefinition.identityColumns`); giá trị đo (tuổi, độ sâu, số mục mở) **không** được là cột đầu ra, nếu không mỗi lần giá trị đổi lại sinh alert mới và đóng alert cũ (thông báo mới/hồi phục mỗi phút, mute/snooze vô dụng). Khi điều kiện còn đúng, id ổn định (ví dụ `acme`) và `last_run.alerts_count` về `{new:0, recovered:0, active:N}`. Giá trị cụ thể xem ở dashboard hoặc chạy lại câu ES|QL của rule. `kibana:verify` kiểm tra điều này: với rule đang có alert active, nếu có từ 2 alert đã `recovered` mà sống ngắn hơn 2 lần chu kỳ trong 10 lần chạy gần nhất thì báo `flapping` (sau khi nâng cấp từ bản cũ, kiểm tra này có thể báo lỗi tới 10 chu kỳ đầu vì còn alert cũ).
+
 | Rule                                 | Báo khi                                                                                             | Việc cần làm                                                                    |
 | ------------------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | `billing-dlq-not-empty`              | `wallet.order-payments.dlq` luôn có thư (độ sâu nhỏ nhất trong cửa sổ > `minDepth`)                 | [dlq-runbook](../integration/dlq-runbook.vi.md)                                 |
@@ -38,7 +40,7 @@ connector thông báo** (email, Slack) nào được gắn, việc đó là hạ
 | `billing-reconciliation-stale-cases` | Mục đối soát mở cũ nhất của một tenant quá `maxAgeHours` giờ                                        | [reconciliation-runbook](../integration/reconciliation-runbook.vi.md)           |
 | `billing-reconciliation-missed`      | Lượt đối soát `COMPLETED` gần nhất của một tenant cách đây quá `maxAgeHours` giờ                    | [reconciliation-runbook](../integration/reconciliation-runbook.vi.md)           |
 | `billing-reconciliation-failed-run`  | Có lượt đối soát `FAILED` mới trong cửa sổ (tổng số lượt `FAILED` tăng thêm ở mọi tiến trình > 0)   | [reconciliation-runbook](../integration/reconciliation-runbook.vi.md)           |
-| `billing-service-silent`             | `wallet` hoặc `payment` đã từng gửi metric trong `lookbackHours` giờ qua nhưng im quá `silentMinutes` | README mục Wallet; kiểm tra collector và `OTEL_EXPORTER_OTLP_ENDPOINT` của service |
+| `billing-service-silent`             | `wallet` hoặc `payment` đã từng gửi gauge trạng thái trong `lookbackHours` giờ qua nhưng im quá `silentMinutes` (gồm cả khi service sống nhưng không lấy mẫu được) | README mục Wallet; kiểm tra collector và `OTEL_EXPORTER_OTLP_ENDPOINT` của service |
 
 ## Bảng tham số
 
@@ -52,7 +54,7 @@ Mọi khóa nằm trong `params.defaults.json`; thiếu hay thừa khóa so vớ
 | `enabled`         | Rule bật hay tắt. Đây là **thứ duy nhất** `apply` dùng để bật/tắt rule                                    | `true` / `false`             |
 | `severity`        | Mức độ; thành tag của rule                                                                                | `critical`, `high`, `warning` |
 | `intervalMinutes` | Chu kỳ chạy rule                                                                                          | số nguyên 1 đến 60           |
-| `windowMinutes`   | Cửa sổ nhìn lại của câu ES\|QL và của rule (riêng `billing-service-silent` dùng `lookbackHours`, xem dưới) | số nguyên 1 đến 1440         |
+| `windowMinutes`   | Cửa sổ nhìn lại của câu ES\|QL và của rule (riêng `billing-service-silent` dùng `lookbackHours`, xem dưới). Phải **>= `intervalMinutes`** của chính rule đó, nếu không các lần chạy có thể bỏ sót dữ liệu | số nguyên 1 đến 1440         |
 
 Giá trị mặc định của các khóa dùng chung:
 
@@ -68,7 +70,7 @@ Giá trị mặc định của các khóa dùng chung:
 | `billing-service-silent`             | `true`    | `high`     | 1                 | 5 (không dùng)  |
 
 `billing-service-silent` luôn dùng cửa sổ `lookbackHours * 60` phút; khóa `windowMinutes` của nó vẫn bắt buộc có và được kiểm
-tra, nhưng không ảnh hưởng gì.
+tra (kể cả ràng buộc `>= intervalMinutes`), nhưng không ảnh hưởng gì. Ràng buộc chéo khác: `silentMinutes` phải **nhỏ hơn** `lookbackHours * 60`, nếu không rule không bao giờ báo được.
 
 ### Khóa riêng của từng rule
 
@@ -147,9 +149,9 @@ Xóa khóa đó khỏi `params.local.json` (hoặc xóa cả file) rồi `corepa
 - **Sửa tay trên giao diện Kibana bị ghi đè** (tên, tag, lịch, điều kiện ES|QL) ở lần `apply` sau; `--dry-run` cho thấy các khác
   biệt đó là `[params]`, `[schedule]`... Mọi thay đổi bền vững phải đi qua tham số hoặc code. Dashboard luôn được import ghi đè,
   nên sửa tay dashboard cũng mất; muốn giữ bản sửa, lưu thành dashboard khác.
-- **`actions` (connector thông báo) không được quản lý**: rule sinh ra không có action, và `apply` không so sánh action. Lần cập
-  nhật một rule gửi `actions` rỗng, nên connector gắn tay vào rule đó có thể bị gỡ khi rule được cập nhật (rule `unchanged` thì
-  không bị chạm). Chưa kiểm chứng trên Kibana thật; cần thông báo ổn định thì đợi bước cấu hình connector chính thức.
+- **`actions` (connector thông báo) được giữ nguyên**: rule tạo mới không có action; khi cập nhật, `apply` đọc action đang gắn trên Kibana và gửi lại đúng các action đó (bỏ `connector_type_id` vì schema cập nhật không nhận), và không coi khác biệt action là drift. Nghĩa là connector (Slack, email...) bạn gắn tay vào rule được giữ qua các lần `apply` (đã kiểm chứng trên Kibana 9.4.4 với connector Index). Nhưng `apply` cũng không bao giờ thêm hay gỡ action.
+- **`kibana:apply` không hỗ trợ xác thực**: chỉ chạy với Kibana không bật bảo mật (như stack local); chưa có tham số cho API key hay tài khoản.
+- **Job `kibana-import` (khi `compose up`) bật lại rule bạn tắt tay**: lý do như trên; muốn tắt bền vững, đặt `"enabled": false` trong `params.local.json`.
 - `apply` chờ Kibana sẵn sàng tối đa 120 giây, kiểm tra phiên bản stack (xem trên) rồi mới ghi.
 
 ## Import tay (không có API)
@@ -176,9 +178,12 @@ chạy lệnh không với tới được.
 - **Gauge lấy giá trị mới nhất (`LAST`) trong cửa sổ.** Khi một chuỗi ngừng được báo (ví dụ số mục mở của một loại lệch từ 1 về 0
   thì metric đó không còn được phát), rule dùng `LAST` có thể vẫn **active tối đa một cửa sổ** (`windowMinutes`) sau khi sự việc đã
   hết, rồi tự hết. Bảng "Open reconciliation cases by kind" có thể hiển thị số cũ vì lý do tương tự.
-- `billing-service-silent` tự hết báo sau `lookbackHours` giờ im lặng, và **không bao giờ báo** cho service chưa từng gửi metric
-  (danh sách `wallet`, `payment` nằm cứng trong câu ES|QL). Khi DB sập, các gauge lấy từ DB biến mất; rule này chỉ bắt được
-  trường hợp service ngừng gửi hẳn.
+- `billing-service-silent` chỉ xét tài liệu có **gauge trạng thái** (`billing.outbox.pending` của wallet, `billing.payment.webhook_backlog`
+  của payment), nên counter hay `dlq.depth` vẫn chảy không che được việc service không lấy mẫu được. Khi DB sập, wallet bỏ chuỗi
+  của tenant lỗi và payment ngừng xuất gauge; nếu gauge của service vắng quá `silentMinutes` thì rule báo (chỉ khi service đã gửi gauge
+  trong `lookbackHours` giờ qua). Lưu ý: khi **một tenant** của wallet lỗi mà tenant khác vẫn lấy mẫu được thì service vẫn "sống", rule này không báo;
+  chuỗi của tenant lỗi chỉ biến mất. Rule tự hết báo sau `lookbackHours` giờ im lặng, và **không bao giờ báo** cho service chưa từng
+  gửi gauge (danh sách `wallet`, `payment` nằm cứng trong câu ES|QL).
 - Biểu đồ "Active billing alerts" đọc chỉ mục alert của Kibana, không phụ thuộc thanh thời gian.
 - Các bảng (3 panel dạng bảng) là saved search ES|QL tham chiếu từ dashboard, được import cùng dashboard.
 - **Tiêu đề panel hiện bằng tiếng Anh** (ví dụ "DLQ depth", "Active billing alerts"); Việt hóa là việc tiếp theo, không ảnh hưởng

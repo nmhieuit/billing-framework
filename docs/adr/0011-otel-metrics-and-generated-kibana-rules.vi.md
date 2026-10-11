@@ -14,7 +14,7 @@ Nền tảng đã có đường OpenTelemetry → collector → Elasticsearch �
   `OTEL_EXPORTER_OTLP_ENDPOINT`; không đặt thì no-op, nên test và chạy trần không đổi. Mỗi tiến trình có `service.instance.id`
   riêng (mỗi lần khởi động một chuỗi mới).
 - **Counter ghi tại chỗ sự kiện xảy ra; gauge trạng thái do một worker riêng của từng service lấy mẫu định kỳ** (mặc định 15 giây,
-  `METRICS_SAMPLE_INTERVAL_SECONDS`) bằng truy vấn nhẹ vào DB và broker. Lỗi khi lấy mẫu chỉ log và bỏ qua chu kỳ đó.
+  `METRICS_SAMPLE_INTERVAL_SECONDS`) bằng truy vấn nhẹ vào DB và broker. Lỗi khi lấy mẫu chỉ log; gauge ngừng báo cáo thay vì giữ số cũ (wallet bỏ chuỗi của tenant lỗi, payment gọi `publishState(null)`).
 - **Mỗi service một cổng `Metrics` ở tầng `application`**; adapter OTel nằm ở `infrastructure`. `application` và `domain` không
   nhập OpenTelemetry (ESLint chặn). `Metrics.prime` khởi tạo các chuỗi counter ở 0 (ví dụ lượt đối soát `FAILED`) để lần tăng đầu tiên nhìn thấy được như một mức tăng.
 - **Rule cảnh báo và dashboard sinh từ code** (`tools/kibana`) với **ID cố định** theo tên, mọi điều kiện là tham số
@@ -43,10 +43,13 @@ Nền tảng đã có đường OpenTelemetry → collector → Elasticsearch �
   bằng `kibana:verify`. Ghi nhận ở [metric-fields](../ops/metric-fields.md).
 - **Cấu trúc saved object gắn với Kibana 9.4.x** (đã kiểm chứng trên 9.4.4); `kibana:apply` từ chối stack cũ hơn
   `MIN_STACK_VERSION`. Stack mới hơn có thể đổi định dạng.
-- **Gauge biến mất khi DB sập** (không có truy vấn thì không có mẫu); `billing-service-silent` bắt trường hợp service ngừng gửi
-  hẳn, nhưng không bắt được "DB sập mà service vẫn sống" từ gauge riêng lẻ.
+- **Gauge biến mất khi DB sập** (không có truy vấn thì không có mẫu): đó là chủ ý để số cũ không trông như số mới. Vì
+  `billing-service-silent` chỉ xét tài liệu có gauge trạng thái, "DB sập mà service vẫn sống" báo trong `silentMinutes`. Khi chỉ
+  một tenant của wallet lỗi, service vẫn có gauge của tenant khác nên rule không báo; chuỗi của tenant lỗi chỉ biến mất (và các
+  rule gauge của tenant đó tự hết báo).
 - **Giá trị `LAST` có thể giữ rule active tối đa một cửa sổ** sau khi một chuỗi ngừng được báo (ví dụ số mục mở của một loại lệch
   từ 1 về 0).
 - **Chưa có connector thông báo:** rule chỉ tạo alert trong Kibana; email/Slack là hạ tầng của người vận hành. Sửa tay trên giao
-  diện bị `apply` lần sau ghi đè, và `apply` không quản lý `actions`.
+  diện bị `apply` lần sau ghi đè; `actions` gắn tay được giữ nguyên (`apply` không thêm hay gỡ). Danh tính alert chỉ gồm cột định danh
+  của rule (xem tài liệu vận hành); cột giá trị trong `KEEP` làm alert chớp tắt mỗi lần chạy.
 - Mỗi pod lấy mẫu lặp truy vấn DB theo số pod; chấp nhận được vì truy vấn nhẹ, có index (migration `005-reconciliation-open-index`).

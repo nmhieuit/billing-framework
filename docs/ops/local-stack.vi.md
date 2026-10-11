@@ -39,6 +39,12 @@ báo `set in deploy/.env`.
 
 Cổng ở cột "Mặc định" là cổng trên máy chủ; đổi bằng biến trong `deploy/.env`.
 
+**Stack chỉ lắng nghe trên loopback (`127.0.0.1`).** Elasticsearch, Kibana, RabbitMQ (kể cả management), SQL Server, collector, wallet và
+payment đều không có xác thực (hoặc dùng tài khoản mặc định của môi trường dev), nên mọi cổng được publish dưới dạng
+`127.0.0.1:<cổng>:<cổng container>`: máy khác trong cùng LAN/Wi-Fi không truy cập được. Muốn mở có chủ đích, sửa tiền tố
+`127.0.0.1:` của cổng tương ứng trong `deploy/compose.infra.yml` / `compose.services.yml` (ví dụ bỏ hẳn tiền tố để lắng nghe
+trên mọi giao diện) và chỉ làm vậy trên mạng tin cậy. Các service giao tiếp với nhau qua mạng compose nên không bị ảnh hưởng.
+
 | Dịch vụ                              | Mặc định | Biến đổi cổng                | Ghi chú                                                         |
 | ------------------------------------ | -------- | ---------------------------- | --------------------------------------------------------------- |
 | wallet                               | 3001     | `LOCAL_WALLET_PORT`          | `http://localhost:3001/health`                                  |
@@ -93,7 +99,7 @@ Hai điều cần biết khi chạy seed trên stack này:
 
 - **Nạp tiền chỉ một lần cho mỗi ví** (khóa idempotency cố định `seed-topup-<tenant>-<khách>`), còn mỗi lần chạy lại trừ thêm tiền
   bằng đơn mới. Chạy lại nhiều lần thì các đơn sau dần bị từ chối `INSUFFICIENT_FUNDS`. Muốn số dư mới: `down -v` (xem dưới).
-- Vài phút sau seed, **`billing-outbox-stuck` sẽ báo** (xem phần sự cố): đây là cảnh báo đúng, không phải lỗi công cụ.
+- Seed tạo queue hứng `ecommerce.billing-events` (bền, gắn vào `billing.events` với routing key `#`) để đóng vai consumer của ecommerce, nên outbox của seed được giao đi và `billing-outbox-stuck` không báo. Muốn demo cảnh báo này: xóa queue đó (xem "Tạo queue hứng" dưới) trước khi seed, hoặc xóa rồi seed lại; queue sẽ được tạo lại ở lần seed sau.
 
 ## Hot reload: đổi code có cần `--build` không
 
@@ -102,13 +108,14 @@ Hai điều cần biết khi chạy seed trên stack này:
   mục này trên máy chủ thì service tự nạp lại, không cần build.
 - Cần `up -d --build` khi đổi `package.json`, `pnpm-lock.yaml`, cấu hình `tsconfig` hoặc thêm package mới (image
   `billing-dev:local` cài dependency Linux lúc build; quên `--build` thì container chạy dependency cũ).
-- Migration nằm trong `src` nhưng chỉ chạy bởi job `migrate` lúc khởi động: thêm migration thì chạy lại job
-  (`docker compose -f deploy/compose.local.yml --env-file deploy/.env up -d migrate` hoặc `run --rm migrate`) rồi khởi động lại
-  wallet/payment.
+- Migration nằm trong `src` nhưng chỉ chạy bởi job `migrate` lúc khởi động: thêm migration thì chạy lại job bằng
+  `docker compose -f deploy/compose.local.yml --env-file deploy/.env run --rm migrate` (job bind-mount cùng các thư mục `src` và
+  thư mục `db` chỉ đọc nên luôn chạy mã hiện tại) rồi khởi động lại wallet/payment.
 - Thư mục `deploy/kibana` được mount vào `kibana-import`, nên đổi `params.local.json` rồi chạy lại job
-  (`... run --rm kibana-import`) hoặc, đơn giản hơn, chạy trên máy chủ `corepack pnpm kibana:apply`. Mã trong `tools/kibana` thì
-  nằm trong image: đổi code công cụ cần `--build` nếu muốn job dùng bản mới (chạy `corepack pnpm kibana:apply` trên máy chủ luôn dùng
-  code hiện tại).
+  (`... run --rm kibana-import`) hoặc, đơn giản hơn, chạy trên máy chủ `corepack pnpm kibana:apply`. Thư mục `tools` cũng được mount
+  chỉ đọc, nên job luôn chạy generator ở bản hiện tại (không cần `--build`). Lưu ý: `kibana-import` **bật lại** rule bạn tắt tay;
+  muốn tắt bền vững hãy đặt `"enabled": false` trong `params.local.json`. `kibana:apply` chưa hỗ trợ xác thực (chỉ dùng được với Kibana không bật
+  bảo mật như stack local).
 
 ## Chạy cạnh stack ecommerce
 
@@ -143,15 +150,16 @@ khi đổi mật khẩu `sa` hoặc bất kỳ mật khẩu nào đã được �
 | `local:seed` báo `BILLING_ECOMMERCE_MQ_PASSWORD is not set`      | Không có biến này trong môi trường lẫn `deploy/.env`                                                                              | Đặt trong `deploy/.env` (mật khẩu của user RabbitMQ `ecommerce_orders`) rồi chạy lại                                                        |
 | `local:seed` báo top-up không `SUCCEEDED` kịp                    | payment không chạy, hoặc `LOCAL_WEBHOOK_SECRET` của hai service không khớp                                                         | Kiểm tra `http://localhost:3002/health` và log payment/wallet; hai service dùng chung `LOCAL_WEBHOOK_SECRET` trong compose                  |
 | Đơn seed bị `INSUFFICIENT_FUNDS` dù không phải đơn lớn           | Seed chỉ nạp tiền một lần mỗi ví; các lần chạy trước đã tiêu hết                                                                  | `down -v` để về số dư ban đầu                                                                                                               |
-| `billing-outbox-stuck` báo sau khi seed                         | `billing.events` không có queue nào gắn vào (consumer của ecommerce không nằm trong stack local), nên dòng outbox ở lại `pending` | Tạo queue hứng, xem dưới                                                                                                                    |
+| `billing-outbox-stuck` báo                                      | `billing.events` không có queue nào gắn vào (ví dụ bạn đã xóa `ecommerce.billing-events`), nên dòng outbox ở lại `pending`        | Chạy lại `local:seed` hoặc tạo queue hứng, xem dưới                                                                                         |
 | `billing-dlq-not-empty` báo sau `--with-dlq`                    | Message hỏng nằm trong `wallet.order-payments.dlq`                                                                                | Purge DLQ, xem dưới                                                                                                                         |
 | Elasticsearch bị dừng (mã thoát 137) hoặc build image rất chậm / hết bộ nhớ (Windows Docker Desktop) | WSL2 không đủ RAM cho SQL Server (cần tối thiểu 2 GB), Elasticsearch và Kibana chạy cùng nhau; lần `--build` đầu cài toàn bộ dependency và kéo năm image lớn | Tăng bộ nhớ WSL2 (file `%UserProfile%\.wslconfig`, mục `[wsl2] memory=8GB`, rồi `wsl --shutdown` và mở lại Docker Desktop); hạ `ELASTICSEARCH_JAVA_OPTS` nếu cần; lần `--build` đầu mất vài phút đến vài chục phút tùy mạng, các lần sau dùng cache |
 
 ### Tạo queue hứng cho `billing.events`
 
-Trên môi trường thật, ecommerce khai báo queue của nó và gắn vào `billing.events`. Local thì chưa có, nên `Paid`/`PaymentFailed`
+Trên môi trường thật, ecommerce khai báo queue của nó và gắn vào `billing.events`. Local thì `local:seed` tự tạo queue
+`ecommerce.billing-events` để đóng vai đó. Nếu queue không tồn tại (bạn xóa nó, hoặc chưa seed), `Paid`/`PaymentFailed`
 không có nơi đến: relay publish có `mandatory`, `NO_ROUTE` bị coi là thất bại và dòng outbox được thử lại mãi. Để rule ngừng báo,
-tạo một queue hứng, cách nào cũng được:
+chạy lại `corepack pnpm local:seed` hoặc tạo queue hứng bằng tay, cách nào cũng được:
 
 - Giao diện management (`http://localhost:15674`, đăng nhập tài khoản quản trị): Queues, mục Add a new queue, Virtual host
   `billing`, Name `ecommerce.billing-events`, Durable, Add queue; mở queue đó, Bindings, From exchange `billing.events`, Routing
@@ -177,5 +185,5 @@ DLQ giữ một message cho tới khi có người xử lý, nên `billing-dlq-n
 - Hoặc API: `curl -u "$USER:$PASS" -X DELETE http://localhost:15674/api/queues/billing/wallet.order-payments.dlq/contents`
   (trả `204`).
 
-Rule hết báo sau khi độ sâu về 0 trong một cửa sổ (`windowMinutes`, mặc định 5 phút). Trên môi trường thật **không purge**: xử lý
+Rule dùng `MIN` độ sâu trong cửa sổ (`windowMinutes`, mặc định 5 phút) nên hết báo ở lần chạy kế tiếp sau **bất kỳ mẫu nào bằng 0** (không cần đủ một cửa sổ rỗng); và có thể báo sớm hơn một cửa sổ đầy sau khi wallet khởi động lại hoặc metric bị đứt quãng. Trên môi trường thật **không purge**: xử lý
 theo [dlq-runbook](../integration/dlq-runbook.vi.md).

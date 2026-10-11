@@ -101,6 +101,8 @@ services:
       kibana: { condition: service_healthy }
     volumes:
       - ../deploy/kibana:/app/deploy/kibana:ro
+      # Mã generator lấy từ working tree (không phải bản đã đóng vào image) để apply luôn khớp mã hiện tại.
+      - ../tools:/app/tools:ro
     environment:
       KIBANA_URL: http://kibana:5601
     command: ['corepack', 'pnpm', 'kibana:apply']
