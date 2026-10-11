@@ -5,6 +5,7 @@ import { stableId } from './ids.js';
 import type { Params, RuleName } from './params.js';
 import {
   buildRules,
+  MIN_STACK_VERSION,
   type Fields,
   renderAlertsNdjson,
   toAlertingBody,
@@ -90,6 +91,7 @@ describe('buildRules', () => {
     const fake: Fields = {
       timestamp: 'TS_X',
       service: 'SVC_X',
+      serviceInstance: 'INST_X',
       metric: (n: string) => `M_X<${n}>`,
       attribute: (n: string) => `A_X<${n}>`,
       metricsIndex: 'idx-x*',
@@ -103,6 +105,51 @@ describe('buildRules', () => {
 
   it('includes the real index in every query', () => {
     for (const r of rules) expect(r.esql).toContain('FROM metrics-generic.otel-default*');
+  });
+
+  it('has unique ids and a stack version floor; every query starts with the SET line', () => {
+    expect(new Set(rules.map((r) => r.id)).size).toBe(8);
+    expect(MIN_STACK_VERSION).toBe('9.4.0');
+    for (const r of rules) expect(r.esql.startsWith('SET unmapped_fields="nullify";\n')).toBe(true);
+  });
+
+  it('builds the silent rule from lookbackHours, silentMinutes and the service list', () => {
+    const p = clone();
+    p.rules['billing-service-silent'].lookbackHours = 7;
+    p.rules['billing-service-silent'].silentMinutes = 11;
+    const esql = byName(buildRules(p), 'billing-service-silent').esql;
+    expect(esql).toContain('NOW() - 7 hours');
+    expect(esql).toContain('NOW() - 11 minutes');
+    expect(esql).toContain('IN ("wallet", "payment")');
+  });
+
+  it('pins the two-stage failed-run query (delta per process, then sum per tenant)', () => {
+    expect(byName(rules, 'billing-reconciliation-failed-run').esql).toBe(
+      [
+        'SET unmapped_fields="nullify";',
+        'FROM metrics-generic.otel-default*',
+        '| WHERE @timestamp > NOW() - 30 minutes AND metrics.billing.reconciliation.runs IS NOT NULL AND attributes.status == "FAILED"',
+        '| STATS first_value = MIN(TO_DOUBLE(metrics.billing.reconciliation.runs)), last_value = MAX(TO_DOUBLE(metrics.billing.reconciliation.runs)) BY tenant = attributes.tenant, instance = resource.attributes.service.instance.id',
+        '| EVAL delta = last_value - first_value',
+        '| STATS failed_runs = SUM(delta) BY tenant',
+        '| WHERE failed_runs > 0',
+        '| KEEP tenant, failed_runs',
+      ].join('\n'),
+    );
+  });
+
+  it('takes the instance field from FIELDS', () => {
+    const fake: Fields = {
+      timestamp: 'TS_X',
+      service: 'SVC_X',
+      serviceInstance: 'INST_X',
+      metric: (n) => `M_X<${n}>`,
+      attribute: (n) => `A_X<${n}>`,
+      metricsIndex: 'idx-x*',
+    };
+    const esql = byName(buildRules(defaults, fake), 'billing-reconciliation-failed-run').esql;
+    expect(esql).toContain('instance = INST_X');
+    expect(esql).not.toContain('service.instance.id');
   });
 });
 

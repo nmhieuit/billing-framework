@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Attributes } from '@opentelemetry/api';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-grpc';
 import { resourceFromAttributes } from '@opentelemetry/resources';
@@ -87,6 +88,8 @@ export function initTelemetry(options: TelemetryOptions): Telemetry {
   const provider = new MeterProvider({
     resource: resourceFromAttributes({
       'service.name': env.OTEL_SERVICE_NAME?.trim() || options.serviceName,
+      // Mỗi tiến trình một series riêng: counter reset sau restart không bị trộn với bản trước.
+      'service.instance.id': env.OTEL_SERVICE_INSTANCE_ID?.trim() || randomUUID(),
     }),
     readers: [reader],
   });

@@ -6,6 +6,7 @@ import type { Params, RuleName, Severity } from './params.js';
 export interface Fields {
   timestamp: string;
   service: string;
+  serviceInstance: string;
   metric: (name: string) => string;
   attribute: (name: string) => string;
   metricsIndex: string;
@@ -26,9 +27,17 @@ export interface RuleDefinition {
 /** Mốc thời gian cố định để file xuất ra luôn tái tạo được. */
 const FIXED_TIME = '2026-10-11T00:00:00.000Z';
 
+/**
+ * Phiên bản Elasticsearch/Kibana tối thiểu mà các câu ES|QL do generator sinh ra chạy được.
+ * Lý do: mọi câu bắt đầu bằng `SET unmapped_fields="nullify";` (xem `lines`), cú pháp này cần >= 9.4.
+ * `kibana:apply` (Task 10) dùng hằng này để báo lỗi rõ ràng trên stack cũ hơn.
+ */
+export const MIN_STACK_VERSION = '9.4.0';
+
 // Gom các dòng ES|QL: mỗi pipe một dòng cho dễ đọc khi review.
 // Dòng SET đầu tiên khiến trường/metric chưa tồn tại (chưa có dữ liệu) thành null thay vì lỗi
-// "Unknown column", nên rule chỉ trả 0 dòng.
+// "Unknown column", nên rule chỉ trả 0 dòng thay vì báo lỗi ở lần chạy đầu. Cần Elasticsearch/Kibana >= 9.4
+// (xem MIN_STACK_VERSION); trên bản cũ hơn câu truy vấn sẽ bị từ chối.
 const lines = (...parts: string[]): string =>
   ['SET unmapped_fields="nullify";', ...parts].join('\n');
 
@@ -140,8 +149,9 @@ export function failedRunEsql(f: Fields, window: number): string {
   return lines(
     `FROM ${f.metricsIndex}`,
     `| WHERE ${f.timestamp} > NOW() - ${window} minutes AND ${runs} IS NOT NULL AND ${f.attribute('status')} == "FAILED"`,
-    `| STATS first_value = MIN(TO_DOUBLE(${runs})), last_value = MAX(TO_DOUBLE(${runs})) BY tenant = ${f.attribute('tenant')}`,
-    `| EVAL failed_runs = last_value - first_value`,
+    `| STATS first_value = MIN(TO_DOUBLE(${runs})), last_value = MAX(TO_DOUBLE(${runs})) BY tenant = ${f.attribute('tenant')}, instance = ${f.serviceInstance}`,
+    `| EVAL delta = last_value - first_value`,
+    `| STATS failed_runs = SUM(delta) BY tenant`,
     `| WHERE failed_runs > 0`,
     `| KEEP tenant, failed_runs`,
   );

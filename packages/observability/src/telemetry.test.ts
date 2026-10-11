@@ -93,4 +93,28 @@ describe('initTelemetry', () => {
     expect(resource?.attributes['service.name']).toBe('wallet-x');
     await telemetry.shutdown();
   });
+
+  it('puts a per-process service.instance.id on the resource', async () => {
+    const idOf = async (env: NodeJS.ProcessEnv): Promise<unknown> => {
+      const exporter = withDeltaGauges(
+        new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE),
+      );
+      const reader = new PeriodicExportingMetricReader({
+        exporter,
+        exportIntervalMillis: 3_600_000,
+      });
+      const telemetry = initTelemetry({ serviceName: 'wallet', env, reader });
+      telemetry.counter('billing.c', 'c').add(1);
+      await reader.forceFlush();
+      const id = exporter.getMetrics()[0]?.resource.attributes['service.instance.id'];
+      await telemetry.shutdown();
+      return id;
+    };
+    const a = await idOf({});
+    const b = await idOf({});
+    expect(typeof a).toBe('string');
+    expect(a).not.toBe('');
+    expect(a).not.toBe(b);
+    expect(await idOf({ OTEL_SERVICE_INSTANCE_ID: ' replica-1 ' })).toBe('replica-1');
+  });
 });
