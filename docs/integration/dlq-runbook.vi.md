@@ -64,6 +64,11 @@ Giữ nguyên `messageId`, `type` và header `x-correlation-id` (script trên gi
 
 ## Giám sát
 
+- **Cảnh báo liên quan: `billing-dlq-not-empty`** (Kibana, critical). Báo khi độ sâu `wallet.order-payments.dlq` luôn lớn hơn
+  `minDepth` (mặc định 0) suốt cửa sổ 5 phút, dựa trên metric `billing.dlq.depth` do wallet đo bằng passive declare. Xem trên
+  dashboard "Billing: vận hành" (panel "DLQ depth" và bảng "Active billing alerts"). Chỉnh ngưỡng:
+  [kibana-alerts-and-dashboard](../ops/kibana-alerts-and-dashboard.vi.md). Rule hết báo sau khi DLQ rỗng trong một cửa sổ.
+- Ngoài rule trên, các gợi ý sau vẫn dùng được nếu có Prometheus hoặc management API:
 - Cảnh báo khi **độ sâu `wallet.order-payments.dlq` > 0** (metric `rabbitmq_queue_messages_ready{queue="wallet.order-payments.dlq"}`
   nếu dùng plugin Prometheus, hoặc management API `GET /api/queues/billing/wallet.order-payments.dlq`).
 - Cảnh báo thêm khi `wallet.order-payments` không có consumer, và khi tuổi message cũ nhất ở các queue `...retry.<giây>` lớn

@@ -41,6 +41,9 @@ thể làm các tenant khác chậm hơn khi broker lỗi.
   một tenant + tiền tệ tuần tự hóa trên dòng này. Chấp nhận ở quy mô hiện tại; muốn tăng thông lượng phải tách dòng merchant.
 - **Mô hình tin cậy:** bất kỳ ai nắm credential `ecommerce_orders` đều có thể yêu cầu trừ ví của bất kỳ khách nào ở mọi tenant
   wallet phục vụ (chủ ý thiết kế); hãy bảo vệ credential này.
+- **Quan sát:** độ sâu outbox/tuổi dòng cũ nhất và độ sâu DLQ được xuất thành metric và cảnh báo (`billing-outbox-stuck`,
+  `billing-dlq-not-empty`): xem [ADR-0011](0011-otel-metrics-and-generated-kibana-rules.vi.md) và
+  [kibana-alerts-and-dashboard](../ops/kibana-alerts-and-dashboard.vi.md).
 - **Dòng outbox `SENT` chưa bị dọn:** job lưu giữ/xóa là việc tương lai (Bước 6); bảng sẽ lớn dần.
 - **Tắt êm:** `stopConsuming` mặc định chờ tối đa 30 s, bằng `terminationGracePeriodSeconds` mặc định của Kubernetes; hãy đặt
   grace period của pod cao hơn giá trị này.
