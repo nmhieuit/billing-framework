@@ -38,7 +38,7 @@ export const MIN_STACK_VERSION = '9.4.0';
 // Dòng SET đầu tiên khiến trường/metric chưa tồn tại (chưa có dữ liệu) thành null thay vì lỗi
 // "Unknown column", nên rule chỉ trả 0 dòng thay vì báo lỗi ở lần chạy đầu. Cần Elasticsearch/Kibana >= 9.4
 // (xem MIN_STACK_VERSION); trên bản cũ hơn câu truy vấn sẽ bị từ chối.
-const lines = (...parts: string[]): string =>
+export const lines = (...parts: string[]): string =>
   ['SET unmapped_fields="nullify";', ...parts].join('\n');
 
 // Mẫu chung cho nhóm rule "tuổi/độ sâu hiện tại" theo tenant (hoặc nhãn khác).
