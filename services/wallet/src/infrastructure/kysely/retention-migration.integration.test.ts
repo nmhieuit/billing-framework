@@ -7,11 +7,12 @@ import { provisionTenants } from './provisioning.js';
 
 let testDb: TestDatabase;
 let db: Kysely<unknown>;
+let firstRun: Record<string, string[]>;
 
 beforeAll(async () => {
   testDb = await createTestDatabase('retmig');
   db = createDatabase<unknown>(testDb.config);
-  await provisionTenants(db, [TenantId.parse('acme')]);
+  firstRun = await provisionTenants(db, [TenantId.parse('acme')]);
 });
 afterAll(async () => {
   await db.destroy();
@@ -19,8 +20,12 @@ afterAll(async () => {
 });
 
 const indexOf = async (table: string, name: string) => {
-  const rows = await sql<{ is_unique: boolean; has_filter: boolean }>`
-    select i.is_unique, i.has_filter from sys.indexes i
+  const rows = await sql<{
+    is_unique: boolean;
+    has_filter: boolean;
+    filter_definition: string | null;
+  }>`
+    select i.is_unique, i.has_filter, i.filter_definition from sys.indexes i
     join sys.tables tb on tb.object_id = i.object_id
     join sys.schemas s on s.schema_id = tb.schema_id
     where s.name = 't_acme' and tb.name = ${table} and i.name = ${name}`.execute(db);
@@ -32,6 +37,7 @@ describe('006-retention-indexes', () => {
     const ix = await indexOf('outbox', 'ix_outbox_sent');
     expect(ix).toBeDefined();
     expect(ix?.has_filter).toBeTruthy();
+    expect(ix?.filter_definition).toContain('SENT');
   });
 
   it('adds plain non-unique indexes for processed messages and idempotency keys', async () => {
@@ -44,6 +50,8 @@ describe('006-retention-indexes', () => {
   });
 
   it('is idempotent when provisioning again', async () => {
+    // Lần provision đầu (beforeAll) phải đã áp dụng migration 006; lần hai không áp dụng gì thêm.
+    expect(firstRun.acme).toContain('006-retention-indexes');
     expect(await provisionTenants(db, [TenantId.parse('acme')])).toEqual({ acme: [] });
   });
 });
