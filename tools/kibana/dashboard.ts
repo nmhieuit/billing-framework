@@ -294,7 +294,7 @@ function panelSpecs(params: Params, f: Fields): PanelSpec[] {
         'Cảnh báo billing đang active (trạng thái hiện tại, không phụ thuộc thanh thời gian).',
       esql: lines(
         'FROM .alerts-stack.alerts-default',
-        '| WHERE kibana.alert.rule.tags == "billing" AND kibana.alert.status == "active"',
+        '| WHERE MV_CONTAINS(kibana.alert.rule.tags, "billing") AND kibana.alert.status == "active"',
         '| KEEP kibana.alert.rule.name, kibana.alert.start, kibana.alert.reason',
         '| SORT kibana.alert.start DESC',
       ),

@@ -83,6 +83,12 @@ describe('panels', () => {
     }
   });
 
+  it('matches the multi-valued rule tags with MV_CONTAINS (== on a multi-value field yields no rows)', () => {
+    const alerts = dashboardQueries(objects).find((q) => q.esql.includes('.alerts-stack'))!;
+    expect(alerts.esql).toContain('MV_CONTAINS(kibana.alert.rule.tags, "billing")');
+    expect(alerts.esql).not.toMatch(/kibana\.alert\.rule\.tags\s*==/);
+  });
+
   it('filters metric queries by the dashboard time range and nullifies unmapped fields', () => {
     const queries = dashboardQueries(objects);
     expect(queries).toHaveLength(10);

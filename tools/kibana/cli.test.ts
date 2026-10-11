@@ -138,3 +138,57 @@ describe('cli usage', () => {
     expect(await main([], capture())).toBe(2);
   });
 });
+
+describe('cli verify', () => {
+  const esOk = async () => new Response(JSON.stringify({ columns: [], values: [] }));
+
+  it('returns 0 after apply, 1 when the dashboard is missing, and rejects a bad timeout', async () => {
+    const fake = new FakeKibana();
+    const base = { client: clientFor(fake), esFetch: esOk };
+    expect(
+      await main(['apply', '--defaults-only'], { ...capture(), client: clientFor(fake) }),
+    ).toBe(0);
+
+    const ok = capture();
+    expect(await main(['verify', '--defaults-only'], { ...ok, ...base })).toBe(0);
+    expect(ok.out.every((l) => l.startsWith('PASS'))).toBe(true);
+
+    fake.dashboards.clear();
+    const bad = capture();
+    expect(await main(['verify', '--defaults-only'], { ...bad, ...base })).toBe(1);
+    expect(bad.out.some((l) => l.startsWith('FAIL'))).toBe(true);
+
+    const usage = capture();
+    expect(await main(['verify', '--timeout-seconds', '0'], { ...usage, ...base })).toBe(2);
+  });
+
+  it('times out with exit 1 when the expected alert never fires', async () => {
+    const fake = new FakeKibana();
+    await main(['apply', '--defaults-only'], { ...capture(), client: clientFor(fake) });
+    let clock = 0;
+    const c = capture();
+    const code = await main(
+      [
+        'verify',
+        '--defaults-only',
+        '--expect-alert',
+        'billing-dlq-not-empty',
+        '--timeout-seconds',
+        '2',
+      ],
+      {
+        ...c,
+        client: clientFor(fake),
+        esFetch: esOk,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+        now: () => clock,
+      },
+    );
+    expect(code).toBe(1);
+    expect(c.out.join('\n')).toMatch(
+      /FAIL rule billing-dlq-not-empty has no active alert within 2 s/,
+    );
+  });
+});

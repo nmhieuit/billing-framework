@@ -25,6 +25,8 @@ const UPDATE_KEYS = ['name', 'tags', 'schedule', 'params', 'actions'];
 export class FakeKibana {
   readonly rules = new Map<string, KibanaRule>();
   readonly calls: FakeCall[] = [];
+  /** Id các dashboard đã import. */
+  readonly dashboards = new Set<string>();
   readonly imports: Array<{ ndjson: string; overwrite: boolean }> = [];
   readonly headers: Array<Record<string, string>> = [];
   private statusIndex = 0;
@@ -66,11 +68,21 @@ export class FakeKibana {
       if (this.options.importErrors) {
         return json(200, { success: false, successCount: 0, errors: this.options.importErrors });
       }
-      const count = ndjson
+      const objects = ndjson
         .split('\n')
         .filter((l) => l.trim() !== '')
-        .filter((l) => 'id' in (JSON.parse(l) as object)).length;
-      return json(200, { success: true, successCount: count });
+        .map((l) => JSON.parse(l) as { id?: string; type?: string })
+        .filter((o) => 'id' in o);
+      for (const o of objects) if (o.type === 'dashboard') this.dashboards.add(o.id!);
+      return json(200, { success: true, successCount: objects.length });
+    }
+
+    const d = /^\/api\/saved_objects\/dashboard\/([^/]+)$/.exec(path);
+    if (method === 'GET' && d) {
+      const id = decodeURIComponent(d[1]!);
+      return this.dashboards.has(id)
+        ? json(200, { id, type: 'dashboard' })
+        : json(404, { message: `Saved object [dashboard/${id}] not found` });
     }
 
     const m = /^\/api\/alerting\/rule\/([^/]+)(?:\/(_enable|_disable))?$/.exec(path);

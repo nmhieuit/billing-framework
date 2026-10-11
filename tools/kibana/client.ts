@@ -17,6 +17,9 @@ export interface KibanaRule {
   enabled: boolean;
   schedule: { interval: string };
   params: Record<string, unknown>;
+  /** Trạng thái lần chạy gần nhất (có sau khi rule đã chạy ít nhất một lần). */
+  execution_status?: { status: string; error?: { message?: string } };
+  last_run?: { alerts_count?: { active?: number; new?: number; recovered?: number } };
 }
 
 /** Body của `PUT /api/alerting/rule/{id}`: Kibana không nhận rule_type_id, consumer, enabled. */
@@ -113,6 +116,15 @@ export class KibanaClient {
     if (res.status === 404) return null;
     if (!res.ok) throw await toError('GET', path, res);
     return (await res.json()) as KibanaRule;
+  }
+
+  /** `true` nếu saved object dashboard tồn tại. */
+  async dashboardExists(id: string): Promise<boolean> {
+    const path = `/api/saved_objects/dashboard/${encodeURIComponent(id)}`;
+    const res = await this.request('GET', path);
+    if (res.status === 404) return false;
+    if (!res.ok) throw await toError('GET', path, res);
+    return true;
   }
 
   async createRule(id: string, body: AlertingBody): Promise<void> {

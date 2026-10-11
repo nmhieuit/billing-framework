@@ -83,7 +83,6 @@ services:
     command: ['corepack', 'pnpm', '--filter', '@billing/wallet-service', 'dev']
 
   # Áp tham số rule/dashboard vào Kibana (lần dựng đầu và mỗi khi chạy lại job này).
-  # `kibana:apply` được thêm ở Task 10: trước đó hãy chạy với --scale kibana-import=0.
   kibana-import:
     <<: *dev
     restart: 'no'
