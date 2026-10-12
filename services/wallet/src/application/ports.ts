@@ -10,6 +10,7 @@ import type {
 } from '../domain/reconciliation.js';
 import type { TenantId } from '../domain/tenant-id.js';
 import type { Topup } from '../domain/topup.js';
+import type { RetentionReport, RetentionRepository } from './retention.js';
 import type { WalletState } from './state.js';
 
 export interface TenantRegistry {
@@ -122,6 +123,7 @@ export interface Repositories {
   orderPayments: OrderPaymentRepository;
   outbox: OutboxRepository;
   reconciliation: ReconciliationRepository;
+  retention: RetentionRepository;
   state: StateRepository;
 }
 
@@ -310,6 +312,8 @@ export interface Metrics {
   topup(tenant: string, stage: 'submit' | 'webhook' | 'reconciliation', outcome: string): void;
   reconciliationRun(tenant: string, status: 'COMPLETED' | 'FAILED'): void;
   publishState(state: WalletState): void;
+  /** Kết quả một lượt dọn dữ liệu cũ (số dòng đã xóa hoặc sẽ xóa, số lỗi). */
+  retentionRun(report: RetentionReport): void;
 }
 
 export const noopMetrics: Metrics = {
@@ -319,4 +323,5 @@ export const noopMetrics: Metrics = {
   topup: () => undefined,
   reconciliationRun: () => undefined,
   publishState: () => undefined,
+  retentionRun: () => undefined,
 };

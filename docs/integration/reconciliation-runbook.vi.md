@@ -76,6 +76,7 @@ Giá trị của rule là mẫu mới nhất nên một rule có thể còn báo
 
 ## Lưu ý vận hành
 
+- **Dữ liệu đối soát cũ bị dọn.** Job retention của wallet xóa mục đã đóng (`RESOLVED`/`IGNORED`) cũ hơn `RETENTION_RECONCILIATION_DAYS` ngày (mặc định 365, tối thiểu 30) và các lượt đối soát đã xong không còn item nào cũ hơn mức đó. Mục `OPEN` và lượt `RUNNING` không bao giờ bị xóa. Job chạy thử theo mặc định (`RETENTION_DRY_RUN=true`) nên chưa xóa gì cho tới khi người vận hành bật: xem [retention](../ops/retention.vi.md). Cần lưu bằng chứng lâu hơn thì tăng `RETENTION_RECONCILIATION_DAYS` hoặc xuất dữ liệu trước; không có archive.
 - Không có chạy bù: nếu mọi worker ngừng cả một ngày UTC thì ngày đó không được đối soát tự động; hãy chạy tay bằng `POST /reconciliations`.
 - Mỗi lượt của mỗi tenant tải sao kê toàn nền tảng của ngày D và D-1; `RECONCILE_MAX_ITEMS` giới hạn số charge của cả nền tảng trong một ngày, không phải của riêng một tenant.
 - Bật `RECONCILE_AUTOFIX` rồi chạy lại một ngày là an toàn: việc ghi bù đi qua đường nạp bình thường và business key `topup:<id>` của sổ cái chặn ghi trùng.
@@ -88,6 +89,7 @@ Giá trị của rule là mẫu mới nhất nên một rule có thể còn báo
 | `RECONCILE_AT_UTC_HOUR` | `2` | Giờ UTC sớm nhất chạy lượt định kỳ cho ngày hôm qua |
 | `RECONCILE_MAX_ATTEMPTS` | `3` | Số lượt định kỳ tối đa mỗi (tenant, ngày) trước khi bỏ cuộc |
 | `RECONCILE_MAX_ITEMS` | `50000` | Giới hạn số charge/lệch; vượt thì lượt `FAILED` |
+| `RETENTION_RECONCILIATION_DAYS` | `365` | Số ngày giữ mục/lượt đối soát đã đóng trước khi retention xóa (tối thiểu 30; xem [retention](../ops/retention.vi.md)) |
 
 Cần thêm `PAYMENT_BASE_URL` và credential payment hiện có để đọc sao kê.
 

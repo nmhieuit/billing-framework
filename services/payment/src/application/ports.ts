@@ -1,5 +1,6 @@
 import type { Charge } from '../domain/charge.js';
 import type { WebhookEvent } from '../domain/webhook-event.js';
+import type { RetentionReport, RetentionRepository } from './retention.js';
 import type { PaymentState } from './state.js';
 
 export interface Clock {
@@ -90,6 +91,7 @@ export interface StateRepository {
 }
 
 export interface Logger {
+  info(details: object, message?: string): void;
   warn(details: object, message?: string): void;
 }
 
@@ -100,12 +102,15 @@ export interface Metrics {
   webhookDelivery(result: 'delivered' | 'retrying' | 'failed'): void;
   /** `null` = không lấy mẫu được: các gauge trạng thái ngừng báo cáo (không giữ số cũ) để rule im lặng phát hiện được. */
   publishState(state: PaymentState | null): void;
+  /** Kết quả một lượt dọn dữ liệu cũ (số dòng đã xóa, hoặc sẽ xóa khi chạy thử). */
+  retentionRun(report: RetentionReport): void;
 }
 
 export const noopMetrics: Metrics = {
   charge: () => {},
   webhookDelivery: () => {},
   publishState: () => {},
+  retentionRun: () => {},
 };
 
 export interface Repositories {
@@ -113,6 +118,7 @@ export interface Repositories {
   idempotency: IdempotencyStore;
   webhooks: WebhookOutbox;
   state: StateRepository;
+  retention: RetentionRepository;
 }
 
 export interface UnitOfWork {

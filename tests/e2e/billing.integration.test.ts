@@ -55,6 +55,14 @@ beforeAll(async () => {
     reconciliation: { autofix: true, atUtcHour: 23, maxAttempts: 3, maxItems: 1000 },
     topupBackoffSeconds: [1, 2, 3],
     workerIntervalMs: 50,
+    retention: {
+      enabled: false,
+      dryRun: true,
+      intervalMinutes: 60,
+      maxSecondsPerRun: 60,
+      batchSize: 1000,
+      days: { outboxSent: 14, processedMessages: 30, idempotencyKeys: 90, reconciliation: 365 },
+    },
     telemetry: { sampleIntervalSeconds: 15 },
   });
   await wallet.app.listen(0, '127.0.0.1');
@@ -66,6 +74,14 @@ beforeAll(async () => {
     webhook: { url: `${walletUrl}/webhooks/payment`, secret: SECRET, backoffSeconds: [1, 2, 3] },
     workerIntervalMs: 50,
     responseTimeoutMs: 1000,
+    retention: {
+      enabled: false,
+      dryRun: true,
+      intervalMinutes: 60,
+      maxSecondsPerRun: 60,
+      batchSize: 1000,
+      days: { webhook: 30, idempotencyKeys: 90 },
+    },
     telemetry: { sampleIntervalSeconds: 15 },
   });
   await payment.app.listen({ port: paymentPort, host: '127.0.0.1' });

@@ -107,6 +107,69 @@ describe('loadConfig', () => {
     ).toEqual({ autofix: false, atUtcHour: 23, maxAttempts: 5, maxItems: 100 });
   });
 
+  it('applies the retention defaults and reads overrides', () => {
+    expect(loadConfig(minimal).retention).toEqual({
+      enabled: true,
+      dryRun: true,
+      intervalMinutes: 60,
+      maxSecondsPerRun: 60,
+      batchSize: 1000,
+      days: { outboxSent: 14, processedMessages: 30, idempotencyKeys: 90, reconciliation: 365 },
+    });
+    expect(
+      loadConfig({
+        ...minimal,
+        RETENTION_ENABLED: 'false',
+        RETENTION_DRY_RUN: 'false',
+        RETENTION_INTERVAL_MINUTES: '5',
+        RETENTION_MAX_SECONDS_PER_RUN: '10',
+        RETENTION_BATCH_SIZE: '4000',
+        RETENTION_OUTBOX_SENT_DAYS: '1',
+        RETENTION_PROCESSED_MESSAGES_DAYS: '7',
+        RETENTION_IDEMPOTENCY_KEYS_DAYS: '7',
+        RETENTION_RECONCILIATION_DAYS: '30',
+      }).retention,
+    ).toEqual({
+      enabled: false,
+      dryRun: false,
+      intervalMinutes: 5,
+      maxSecondsPerRun: 10,
+      batchSize: 4000,
+      days: { outboxSent: 1, processedMessages: 7, idempotencyKeys: 7, reconciliation: 30 },
+    });
+  });
+
+  it.each([
+    ['RETENTION_ENABLED', 'yes', 'RETENTION_ENABLED must be "true" or "false"'],
+    ['RETENTION_DRY_RUN', '1', 'RETENTION_DRY_RUN must be "true" or "false"'],
+    ['RETENTION_INTERVAL_MINUTES', '0', 'RETENTION_INTERVAL_MINUTES must be an integer in 1..1440'],
+    [
+      'RETENTION_MAX_SECONDS_PER_RUN',
+      '3601',
+      'RETENTION_MAX_SECONDS_PER_RUN must be an integer in 1..3600',
+    ],
+    ['RETENTION_BATCH_SIZE', '4001', 'RETENTION_BATCH_SIZE must be an integer in 1..4000'],
+    ['RETENTION_OUTBOX_SENT_DAYS', '0', 'RETENTION_OUTBOX_SENT_DAYS must be an integer in 1..3650'],
+    [
+      'RETENTION_PROCESSED_MESSAGES_DAYS',
+      '6',
+      'RETENTION_PROCESSED_MESSAGES_DAYS must be an integer in 7..3650',
+    ],
+    [
+      'RETENTION_IDEMPOTENCY_KEYS_DAYS',
+      '6',
+      'RETENTION_IDEMPOTENCY_KEYS_DAYS must be an integer in 7..3650',
+    ],
+    [
+      'RETENTION_RECONCILIATION_DAYS',
+      '29',
+      'RETENTION_RECONCILIATION_DAYS must be an integer in 30..3650',
+    ],
+    ['RETENTION_BATCH_SIZE', '1.5', 'RETENTION_BATCH_SIZE must be an integer in 1..4000'],
+  ])('rejects %s=%s', (name, value, message) => {
+    expect(problemsOf({ ...minimal, [name]: value })).toEqual([message]);
+  });
+
   it('rejects invalid reconciliation settings together', () => {
     expect(
       problemsOf({

@@ -7,6 +7,7 @@ import { CreateCharge } from './application/create-charge.js';
 import { DeliverDueWebhooks } from './application/deliver-due-webhooks.js';
 import { GetCharge } from './application/get-charge.js';
 import { GetSettlement } from './application/get-settlement.js';
+import { RunRetention } from './application/retention.js';
 import { SampleState } from './application/sample-state.js';
 import { noopMetrics, type Clock, type IdGenerator, type Metrics } from './application/ports.js';
 import type { PaymentConfig } from './config.js';
@@ -77,12 +78,37 @@ export async function startService(
   });
   sampleStateWorker.start();
 
+  // Dọn dữ liệu cũ định kỳ (mặc định chạy thử); Worker riêng để một lượt dọn dài không chặn các việc khác.
+  const runRetention = new RunRetention({
+    uow,
+    clock,
+    metrics,
+    log,
+    settings: {
+      dryRun: config.retention.dryRun,
+      batchSize: config.retention.batchSize,
+      maxSecondsPerRun: config.retention.maxSecondsPerRun,
+      days: config.retention.days,
+    },
+  });
+  const retentionWorker = config.retention.enabled
+    ? new Worker({
+        intervalMs: config.retention.intervalMinutes * 60_000,
+        tasks: [async (signal) => void (await runRetention.execute(signal))],
+        onError: (error) => log.error({ err: error }, 'retention run failed'),
+      })
+    : undefined;
+  retentionWorker?.start();
+
   return {
     app,
     stop: once(() =>
       runAll([
         () => worker.stop(),
         () => sampleStateWorker.stop(),
+        async () => {
+          await retentionWorker?.stop();
+        },
         () => app.close(),
         () => db.destroy(),
       ]),

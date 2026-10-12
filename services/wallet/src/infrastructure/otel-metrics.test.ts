@@ -140,3 +140,47 @@ describe('OtelWalletMetrics — gauges', () => {
     await telemetry.shutdown();
   });
 });
+
+describe('OtelWalletMetrics — retention', () => {
+  const NOW = new Date('2026-10-12T01:00:00Z');
+  const setupRetention = () => {
+    const { telemetry, collect } = recordingTelemetry();
+    return { metrics: new OtelWalletMetrics(telemetry, () => NOW), collect, telemetry };
+  };
+
+  it('counts rows per tenant, table and mode and skips zero counts', async () => {
+    const { metrics, collect, telemetry } = setupRetention();
+    metrics.retentionRun({
+      dryRun: false,
+      errors: 0,
+      rows: [
+        { tenant: 'acme', table: 'outbox_sent', count: 5 },
+        { tenant: 'acme', table: 'idempotency_keys', count: 0 },
+      ],
+    });
+    metrics.retentionRun({
+      dryRun: true,
+      errors: 0,
+      rows: [{ tenant: 'acme', table: 'outbox_sent', count: 9 }],
+    });
+    const points = (await collect()).get('billing.retention.rows');
+    expect(points?.get(key({ tenant: 'acme', table: 'outbox_sent', mode: 'deleted' }))).toBe(5);
+    expect(points?.get(key({ tenant: 'acme', table: 'outbox_sent', mode: 'would_delete' }))).toBe(
+      9,
+    );
+    expect(points?.size).toBe(2);
+    await telemetry.shutdown();
+  });
+
+  it('sets the success timestamp only for an error-free run', async () => {
+    const { metrics, collect, telemetry } = setupRetention();
+    const gauge = 'billing.retention.last_success_timestamp_seconds';
+    metrics.retentionRun({ dryRun: false, errors: 1, rows: [] });
+    expect((await collect()).get(gauge)?.size ?? 0).toBe(0);
+    metrics.retentionRun({ dryRun: false, errors: 0, rows: [] });
+    expect((await collect()).get(gauge)?.get(key({}))).toBe(Math.floor(NOW.getTime() / 1000));
+    metrics.retentionRun({ dryRun: false, errors: 2, rows: [] });
+    expect((await collect()).get(gauge)?.get(key({}))).toBe(Math.floor(NOW.getTime() / 1000));
+    await telemetry.shutdown();
+  });
+});

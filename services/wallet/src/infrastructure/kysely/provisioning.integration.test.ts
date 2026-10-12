@@ -37,6 +37,7 @@ describe('provisionTenants', () => {
         '003-orders',
         '004-reconciliation',
         '005-reconciliation-open-index',
+        '006-retention-indexes',
       ],
       beta: [
         '001-ledger',
@@ -44,6 +45,7 @@ describe('provisionTenants', () => {
         '003-orders',
         '004-reconciliation',
         '005-reconciliation-open-index',
+        '006-retention-indexes',
       ],
     });
     expect(await provisionTenants(db, [acme, beta])).toEqual({ acme: [], beta: [] });

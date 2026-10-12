@@ -65,11 +65,11 @@ describe('buildDashboard envelope', () => {
 describe('panels', () => {
   const objects = buildDashboard(defaults);
 
-  it('has 10 data panels plus 1 markdown header, parsed from panelsJSON', () => {
+  it('has 12 data panels plus 1 markdown header, parsed from panelsJSON', () => {
     const panels = panelsOf(objects);
-    expect(panels).toHaveLength(11);
+    expect(panels).toHaveLength(13);
     expect(panels.filter((p) => p.type === 'markdown')).toHaveLength(1);
-    expect(dataPanels(objects)).toHaveLength(10);
+    expect(dataPanels(objects)).toHaveLength(12);
     expect(panels[0]!.type).toBe('markdown');
     const md = panels[0]!.embeddableConfig.content as string;
     expect(md).toContain('docs/ops/kibana-alerts-and-dashboard.vi.md');
@@ -91,7 +91,7 @@ describe('panels', () => {
 
   it('filters metric queries by the dashboard time range and nullifies unmapped fields', () => {
     const queries = dashboardQueries(objects);
-    expect(queries).toHaveLength(10);
+    expect(queries).toHaveLength(12);
     for (const q of queries) {
       expect(q.esql.startsWith('SET unmapped_fields="nullify";\n')).toBe(true);
       if (!q.esql.includes('.alerts-stack')) {
@@ -142,6 +142,53 @@ describe('panels', () => {
         .replaceAll('threshold = 300', 'T')
         .replace(/-[0-9a-f]{64}/g, '');
     expect(strip(changed)).toBe(strip(objects));
+  });
+
+  it('pins the two retention panels (cumulative rows, seconds since last success) before the tables', () => {
+    const queries = dashboardQueries(objects);
+    const titles = queries.map((q) => q.title);
+    const rows = queries.find((q) => q.title.startsWith('Retention: số dòng'))!;
+    const age = queries.find((q) => q.title.startsWith('Retention: số giây'))!;
+    expect(titles.indexOf(rows.title)).toBeLessThan(
+      titles.indexOf('Open reconciliation cases by kind'),
+    );
+    expect(titles.indexOf(age.title)).toBeLessThan(
+      titles.indexOf('Open reconciliation cases by kind'),
+    );
+    expect(rows.esql).toBe(
+      [
+        'SET unmapped_fields="nullify";',
+        'FROM metrics-generic.otel-default*',
+        '| WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND metrics.billing.retention.rows IS NOT NULL',
+        '| STATS m = MAX(metrics.billing.retention.rows) BY t = BUCKET(@timestamp, 1 minute), tenant = attributes.tenant, table = attributes.table, mode = attributes.mode',
+        '| STATS rows = SUM(m) BY t, series = CONCAT(table, " / ", mode)',
+        '| KEEP t, series, rows',
+        '| SORT t',
+      ].join('\n'),
+    );
+    expect(age.esql).toBe(
+      [
+        'SET unmapped_fields="nullify";',
+        'FROM metrics-generic.otel-default*',
+        '| WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND metrics.billing.retention.last_success_timestamp_seconds IS NOT NULL',
+        '| STATS ts_ok = LAST(metrics.billing.retention.last_success_timestamp_seconds, @timestamp) BY t = BUCKET(@timestamp, 1 minute), service = resource.attributes.service.name',
+        '| EVAL age_seconds = TO_LONG(t) / 1000 - ts_ok, threshold = 10800',
+        '| KEEP t, service, age_seconds, threshold',
+        '| SORT t',
+      ].join('\n'),
+    );
+  });
+
+  it('binds the retention age threshold to billing-retention-stalled.maxAgeHours', () => {
+    const p = clone();
+    p.rules['billing-retention-stalled'].maxAgeHours = 5;
+    const find = (o: SavedObject[]) =>
+      dashboardQueries(o).find((q) => q.title.startsWith('Retention: số giây'))!.esql;
+    expect(find(buildDashboard(p))).toContain('threshold = 18000');
+    expect(find(objects)).toContain('threshold = 10800');
+    const before = dashboardQueries(objects);
+    const diff = dashboardQueries(buildDashboard(p)).filter((q, i) => q.esql !== before[i]!.esql);
+    expect(diff).toHaveLength(1);
   });
 
   it('shows reconciliation thresholds from params as table columns', () => {

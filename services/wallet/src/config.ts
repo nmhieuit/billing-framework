@@ -10,6 +10,20 @@ export interface ReconciliationConfig {
   maxItems: number;
 }
 
+export interface WalletRetentionConfig {
+  enabled: boolean;
+  dryRun: boolean;
+  intervalMinutes: number;
+  maxSecondsPerRun: number;
+  batchSize: number;
+  days: {
+    outboxSent: number;
+    processedMessages: number;
+    idempotencyKeys: number;
+    reconciliation: number;
+  };
+}
+
 export interface WalletConfig {
   port: number;
   database: DatabaseConfig;
@@ -18,6 +32,7 @@ export interface WalletConfig {
   broker: BrokerConfig;
   orders: { prefetch: number; retryDelaysSeconds: number[]; outboxBatch: number };
   reconciliation: ReconciliationConfig;
+  retention: WalletRetentionConfig;
   topupBackoffSeconds: number[];
   workerIntervalMs: number;
   telemetry: { sampleIntervalSeconds: number };
@@ -56,6 +71,16 @@ export function loadConfig(env: NodeJS.ProcessEnv): WalletConfig {
       return fallback;
     }
     return value;
+  };
+
+  // Cờ boolean "true"/"false"; giá trị lạ bị ghi vào danh sách lỗi cấu hình.
+  const flag = (name: string, fallback: boolean): boolean => {
+    const raw = env[name]?.trim();
+    if (raw === undefined || raw === '') return fallback;
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    problems.push(`${name} must be "true" or "false"`);
+    return fallback;
   };
 
   // WALLET_TENANTS
@@ -146,16 +171,25 @@ export function loadConfig(env: NodeJS.ProcessEnv): WalletConfig {
   const workerIntervalMs = integer('WORKER_INTERVAL_MS', 500, 1, 3_600_000);
   const sampleIntervalSeconds = integer('METRICS_SAMPLE_INTERVAL_SECONDS', 15, 1, 3600);
 
-  const rawAutofix = env.RECONCILE_AUTOFIX?.trim();
-  let reconcileAutofix = true;
-  if (rawAutofix !== undefined && rawAutofix !== '') {
-    if (rawAutofix === 'true') reconcileAutofix = true;
-    else if (rawAutofix === 'false') reconcileAutofix = false;
-    else problems.push('RECONCILE_AUTOFIX must be "true" or "false"');
-  }
+  const reconcileAutofix = flag('RECONCILE_AUTOFIX', true);
   const reconcileAtUtcHour = integer('RECONCILE_AT_UTC_HOUR', 2, 0, 23);
   const reconcileMaxAttempts = integer('RECONCILE_MAX_ATTEMPTS', 3, 1, 20);
   const reconcileMaxItems = integer('RECONCILE_MAX_ITEMS', 50_000, 1, 1_000_000);
+
+  // Dọn dữ liệu cũ (retention): mặc định bật nhưng chạy thử.
+  const retention: WalletRetentionConfig = {
+    enabled: flag('RETENTION_ENABLED', true),
+    dryRun: flag('RETENTION_DRY_RUN', true),
+    intervalMinutes: integer('RETENTION_INTERVAL_MINUTES', 60, 1, 1440),
+    maxSecondsPerRun: integer('RETENTION_MAX_SECONDS_PER_RUN', 60, 1, 3600),
+    batchSize: integer('RETENTION_BATCH_SIZE', 1000, 1, 4000),
+    days: {
+      outboxSent: integer('RETENTION_OUTBOX_SENT_DAYS', 14, 1, 3650),
+      processedMessages: integer('RETENTION_PROCESSED_MESSAGES_DAYS', 30, 7, 3650),
+      idempotencyKeys: integer('RETENTION_IDEMPOTENCY_KEYS_DAYS', 90, 7, 3650),
+      reconciliation: integer('RETENTION_RECONCILIATION_DAYS', 365, 30, 3650),
+    },
+  };
 
   if (
     problems.length > 0 ||
@@ -184,6 +218,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): WalletConfig {
       maxAttempts: reconcileMaxAttempts,
       maxItems: reconcileMaxItems,
     },
+    retention,
     topupBackoffSeconds,
     workerIntervalMs,
     telemetry: { sampleIntervalSeconds },

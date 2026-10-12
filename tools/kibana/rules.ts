@@ -174,6 +174,22 @@ export function serviceSilentEsql(f: Fields, lookbackHours: number, silentMinute
   );
 }
 
+export function retentionStalledEsql(
+  f: Fields,
+  lookbackHours: number,
+  maxAgeHours: number,
+): string {
+  const ok = f.metric('billing.retention.last_success_timestamp_seconds');
+  return lines(
+    `FROM ${f.metricsIndex}`,
+    // Gauge là epoch giây của lần retention thành công gần nhất; so với NOW() (mili giây) đổi sang giây.
+    `| WHERE ${f.timestamp} > NOW() - ${lookbackHours} hours AND ${ok} IS NOT NULL`,
+    `| STATS last_ok = LAST(${ok}, ${f.timestamp}) BY service = ${f.service}`,
+    `| WHERE last_ok < TO_LONG(NOW()) / 1000 - ${maxAgeHours * 3600}`,
+    `| KEEP service`,
+  );
+}
+
 export function buildRules(params: Params, f: Fields = DEFAULT_FIELDS): RuleDefinition[] {
   const r = params.rules;
   const make = (
@@ -205,6 +221,7 @@ export function buildRules(params: Params, f: Fields = DEFAULT_FIELDS): RuleDefi
   const stale = r['billing-reconciliation-stale-cases'];
   const missed = r['billing-reconciliation-missed'];
   const silent = r['billing-service-silent'];
+  const retention = r['billing-retention-stalled'];
 
   return [
     make(
@@ -255,6 +272,13 @@ export function buildRules(params: Params, f: Fields = DEFAULT_FIELDS): RuleDefi
       serviceSilentEsql(f, silent.lookbackHours, silent.silentMinutes),
       ['service'],
       silent.lookbackHours * 60,
+    ),
+    make(
+      'billing-retention-stalled',
+      `Retention của wallet hoặc payment chưa chạy thành công quá ${retention.maxAgeHours} giờ (nhìn lại ${retention.lookbackHours} giờ). Mở docs/ops/retention.vi.md.`,
+      retentionStalledEsql(f, retention.lookbackHours, retention.maxAgeHours),
+      ['service'],
+      retention.lookbackHours * 60,
     ),
   ];
 }

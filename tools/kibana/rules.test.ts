@@ -26,6 +26,7 @@ const NAMES: RuleName[] = [
   'billing-reconciliation-missed',
   'billing-reconciliation-failed-run',
   'billing-service-silent',
+  'billing-retention-stalled',
 ];
 
 const clone = (): Params => structuredClone(defaults);
@@ -48,7 +49,7 @@ describe('stableId', () => {
 describe('buildRules', () => {
   const rules = buildRules(defaults);
 
-  it('returns the 8 rules in order with ids, tags and common params', () => {
+  it('returns the 9 rules in order with ids, tags and common params', () => {
     expect(rules.map((r) => r.name)).toEqual(NAMES);
     for (const r of rules) {
       const p = defaults.rules[r.name];
@@ -57,9 +58,10 @@ describe('buildRules', () => {
       expect(r.enabled).toBe(p.enabled);
       expect(r.severity).toBe(p.severity);
       expect(r.intervalMinutes).toBe(p.intervalMinutes);
-      // Rule silent dùng cửa sổ nhìn lại (lookbackHours * 60) thay cho windowMinutes.
-      if (r.name !== 'billing-service-silent') expect(r.windowMinutes).toBe(p.windowMinutes);
-      expect(r.description).toMatch(/docs\/integration|README\.md/);
+      // Rule silent và retention-stalled dùng cửa sổ nhìn lại (lookbackHours * 60) thay cho windowMinutes.
+      if (r.name !== 'billing-service-silent' && r.name !== 'billing-retention-stalled')
+        expect(r.windowMinutes).toBe(p.windowMinutes);
+      expect(r.description).toMatch(/docs\/(integration|ops)|README\.md/);
     }
   });
 
@@ -108,7 +110,7 @@ describe('buildRules', () => {
   });
 
   it('has unique ids and a stack version floor; every query starts with the SET line', () => {
-    expect(new Set(rules.map((r) => r.id)).size).toBe(8);
+    expect(new Set(rules.map((r) => r.id)).size).toBe(9);
     expect(MIN_STACK_VERSION).toBe('9.4.0');
     for (const r of rules) expect(r.esql.startsWith('SET unmapped_fields="nullify";\n')).toBe(true);
   });
@@ -134,6 +136,34 @@ describe('buildRules', () => {
         '| KEEP service',
       ].join('\n'),
     );
+  });
+
+  it('pins the retention-stalled query (last success timestamp per service vs maxAgeHours)', () => {
+    const rule = byName(rules, 'billing-retention-stalled');
+    expect(rule.esql).toBe(
+      [
+        'SET unmapped_fields="nullify";',
+        'FROM metrics-generic.otel-default*',
+        '| WHERE @timestamp > NOW() - 24 hours AND metrics.billing.retention.last_success_timestamp_seconds IS NOT NULL',
+        '| STATS last_ok = LAST(metrics.billing.retention.last_success_timestamp_seconds, @timestamp) BY service = resource.attributes.service.name',
+        '| WHERE last_ok < TO_LONG(NOW()) / 1000 - 10800',
+        '| KEEP service',
+      ].join('\n'),
+    );
+    expect(rule.identityColumns).toEqual(['service']);
+    expect(rule.windowMinutes).toBe(24 * 60);
+    expect(rule.description).toContain('3 giờ');
+    expect(rule.description).toContain('docs/ops/retention.vi.md');
+  });
+
+  it('builds the retention-stalled threshold and lookback from params', () => {
+    const p = clone();
+    p.rules['billing-retention-stalled'].maxAgeHours = 2;
+    p.rules['billing-retention-stalled'].lookbackHours = 12;
+    const rule = byName(buildRules(p), 'billing-retention-stalled');
+    expect(rule.esql).toContain('NOW() - 12 hours');
+    expect(rule.esql).toContain('/ 1000 - 7200');
+    expect(rule.windowMinutes).toBe(720);
   });
 
   it('keeps only identity columns in the final KEEP so the alert instance id is stable', () => {
@@ -240,17 +270,17 @@ describe('saved objects and ndjson', () => {
     expect(JSON.stringify(toSavedObject(rules[0]!))).toBe(JSON.stringify(toSavedObject(rules[0]!)));
   });
 
-  it('renders 8 objects plus the summary, newline terminated', () => {
+  it('renders 9 objects plus the summary, newline terminated', () => {
     const text = renderAlertsNdjson(rules);
     expect(text.endsWith('\n')).toBe(true);
     const lines = text.trimEnd().split('\n');
-    expect(lines).toHaveLength(9);
+    expect(lines).toHaveLength(10);
     const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
-    expect(parsed.slice(0, 8).every((o) => o.type === 'alert')).toBe(true);
-    expect(parsed[8]).toEqual({
+    expect(parsed.slice(0, 9).every((o) => o.type === 'alert')).toBe(true);
+    expect(parsed[9]).toEqual({
       excludedObjects: [],
       excludedObjectsCount: 0,
-      exportedCount: 8,
+      exportedCount: 9,
       missingRefCount: 0,
       missingReferences: [],
     });
