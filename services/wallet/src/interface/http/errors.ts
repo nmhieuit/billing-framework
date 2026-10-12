@@ -34,7 +34,6 @@ import type { Clock, Logger } from '../../application/ports.js';
 import {
   InsufficientFundsError,
   InvalidCustomerError,
-  InvalidLedgerTransactionError,
   InvalidReconciliationError,
   InvalidTopupError,
 } from '../../domain/errors.js';
@@ -58,104 +57,110 @@ export interface MappedError {
   message: string;
 }
 
-const RULES: ReadonlyArray<{ matches: (error: unknown) => boolean; status: number; code: string }> =
-  [
-    { matches: (e) => e instanceof MissingTenantError, status: 400, code: 'MISSING_TENANT' },
-    { matches: (e) => e instanceof UnknownTenantError, status: 403, code: 'UNKNOWN_TENANT' },
-    { matches: (e) => e instanceof MissingCustomerError, status: 400, code: 'MISSING_CUSTOMER' },
-    {
-      matches: (e) =>
-        e instanceof InvalidCustomerError ||
-        e instanceof InvalidMoneyError ||
-        e instanceof InvalidTopupError,
-      status: 400,
-      code: 'INVALID_REQUEST',
-    },
-    { matches: (e) => e instanceof InvalidQueryError, status: 400, code: 'INVALID_QUERY' },
-    { matches: (e) => e instanceof WalletNotFoundError, status: 404, code: 'WALLET_NOT_FOUND' },
-    { matches: (e) => e instanceof TopupNotFoundError, status: 404, code: 'TOPUP_NOT_FOUND' },
-    {
-      matches: (e) => e instanceof WalletCurrencyConflictError,
-      status: 409,
-      code: 'WALLET_CURRENCY_CONFLICT',
-    },
-    {
-      matches: (e) => e instanceof IdempotencyConflictError,
-      status: 422,
-      code: 'IDEMPOTENCY_KEY_REUSED',
-    },
-    {
-      matches: (e) => e instanceof InvalidReconciliationError,
-      status: 422,
-      code: 'INVALID_RECONCILIATION',
-    },
-    {
-      matches: (e) => e instanceof ReconciliationNotFoundError,
-      status: 404,
-      code: 'RECONCILIATION_NOT_FOUND',
-    },
-    {
-      matches: (e) => e instanceof ReconciliationItemNotFoundError,
-      status: 404,
-      code: 'RECONCILIATION_ITEM_NOT_FOUND',
-    },
-    {
-      matches: (e) => e instanceof ReconciliationConflictError,
-      status: 409,
-      code: 'RECONCILIATION_CONFLICT',
-    },
-    {
-      matches: (e) =>
-        e instanceof InvalidOpsRequestError || e instanceof InvalidLedgerTransactionError,
-      status: 422,
-      code: 'INVALID_OPS_REQUEST',
-    },
-    {
-      matches: (e) => e instanceof OpsIdempotencyConflictError,
-      status: 409,
-      code: 'IDEMPOTENCY_CONFLICT',
-    },
-    {
-      matches: (e) => e instanceof TransactionNotFoundError,
-      status: 404,
-      code: 'TRANSACTION_NOT_FOUND',
-    },
-    {
-      matches: (e) => e instanceof OrderNotFoundError,
-      status: 404,
-      code: 'ORDER_NOT_FOUND',
-    },
-    {
-      matches: (e) => e instanceof AlreadyReversedError,
-      status: 409,
-      code: 'ALREADY_REVERSED',
-    },
-    {
-      matches: (e) => e instanceof ReversalNotSupportedError,
-      status: 409,
-      code: 'REVERSAL_NOT_SUPPORTED',
-    },
-    {
-      matches: (e) => e instanceof ReversalNotPossibleError,
-      status: 409,
-      code: 'REVERSAL_NOT_POSSIBLE',
-    },
-    {
-      matches: (e) => e instanceof OrderReversedError,
-      status: 409,
-      code: 'ORDER_REVERSED',
-    },
-    {
-      matches: (e) => e instanceof EventIdUnknownError,
-      status: 409,
-      code: 'EVENT_ID_UNKNOWN',
-    },
-    {
-      matches: (e) => e instanceof InsufficientFundsError,
-      status: 409,
-      code: 'INSUFFICIENT_FUNDS',
-    },
-  ];
+const RULES: ReadonlyArray<{
+  matches: (error: unknown) => boolean;
+  status: number;
+  code: string;
+  /** Thông điệp cố định trả cho client (không lộ id tài khoản nội bộ); thiếu thì dùng `error.message`. */
+  message?: string;
+}> = [
+  { matches: (e) => e instanceof MissingTenantError, status: 400, code: 'MISSING_TENANT' },
+  { matches: (e) => e instanceof UnknownTenantError, status: 403, code: 'UNKNOWN_TENANT' },
+  { matches: (e) => e instanceof MissingCustomerError, status: 400, code: 'MISSING_CUSTOMER' },
+  {
+    matches: (e) =>
+      e instanceof InvalidCustomerError ||
+      e instanceof InvalidMoneyError ||
+      e instanceof InvalidTopupError,
+    status: 400,
+    code: 'INVALID_REQUEST',
+  },
+  { matches: (e) => e instanceof InvalidQueryError, status: 400, code: 'INVALID_QUERY' },
+  { matches: (e) => e instanceof WalletNotFoundError, status: 404, code: 'WALLET_NOT_FOUND' },
+  { matches: (e) => e instanceof TopupNotFoundError, status: 404, code: 'TOPUP_NOT_FOUND' },
+  {
+    matches: (e) => e instanceof WalletCurrencyConflictError,
+    status: 409,
+    code: 'WALLET_CURRENCY_CONFLICT',
+  },
+  {
+    matches: (e) => e instanceof IdempotencyConflictError,
+    status: 422,
+    code: 'IDEMPOTENCY_KEY_REUSED',
+  },
+  {
+    matches: (e) => e instanceof InvalidReconciliationError,
+    status: 422,
+    code: 'INVALID_RECONCILIATION',
+  },
+  {
+    matches: (e) => e instanceof ReconciliationNotFoundError,
+    status: 404,
+    code: 'RECONCILIATION_NOT_FOUND',
+  },
+  {
+    matches: (e) => e instanceof ReconciliationItemNotFoundError,
+    status: 404,
+    code: 'RECONCILIATION_ITEM_NOT_FOUND',
+  },
+  {
+    matches: (e) => e instanceof ReconciliationConflictError,
+    status: 409,
+    code: 'RECONCILIATION_CONFLICT',
+  },
+  {
+    matches: (e) => e instanceof InvalidOpsRequestError,
+    status: 422,
+    code: 'INVALID_OPS_REQUEST',
+  },
+  {
+    matches: (e) => e instanceof OpsIdempotencyConflictError,
+    status: 409,
+    code: 'IDEMPOTENCY_CONFLICT',
+  },
+  {
+    matches: (e) => e instanceof TransactionNotFoundError,
+    status: 404,
+    code: 'TRANSACTION_NOT_FOUND',
+  },
+  {
+    matches: (e) => e instanceof OrderNotFoundError,
+    status: 404,
+    code: 'ORDER_NOT_FOUND',
+  },
+  {
+    matches: (e) => e instanceof AlreadyReversedError,
+    status: 409,
+    code: 'ALREADY_REVERSED',
+  },
+  {
+    matches: (e) => e instanceof ReversalNotSupportedError,
+    status: 409,
+    code: 'REVERSAL_NOT_SUPPORTED',
+  },
+  {
+    matches: (e) => e instanceof ReversalNotPossibleError,
+    status: 409,
+    code: 'REVERSAL_NOT_POSSIBLE',
+    message: 'reversal would break a system account balance',
+  },
+  {
+    matches: (e) => e instanceof OrderReversedError,
+    status: 409,
+    code: 'ORDER_REVERSED',
+  },
+  {
+    matches: (e) => e instanceof EventIdUnknownError,
+    status: 409,
+    code: 'EVENT_ID_UNKNOWN',
+  },
+  {
+    matches: (e) => e instanceof InsufficientFundsError,
+    status: 409,
+    code: 'INSUFFICIENT_FUNDS',
+    message: 'wallet balance is insufficient',
+  },
+];
 
 const STATUS_CODES: Record<number, string> = {
   400: 'INVALID_REQUEST',
@@ -178,7 +183,11 @@ export function mapError(error: unknown): MappedError {
   }
   for (const rule of RULES) {
     if (rule.matches(error)) {
-      return { status: rule.status, code: rule.code, message: (error as Error).message };
+      return {
+        status: rule.status,
+        code: rule.code,
+        message: rule.message ?? (error as Error).message,
+      };
     }
   }
   const status = clientStatus(error);

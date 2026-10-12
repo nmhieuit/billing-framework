@@ -16,7 +16,6 @@ import { mapError } from './errors.js';
 describe('mapError (ops)', () => {
   it.each([
     [new InvalidOpsRequestError('x'), 422, 'INVALID_OPS_REQUEST'],
-    [new InvalidLedgerTransactionError('x'), 422, 'INVALID_OPS_REQUEST'],
     [new OpsIdempotencyConflictError('x'), 409, 'IDEMPOTENCY_CONFLICT'],
     [new TransactionNotFoundError('x'), 404, 'TRANSACTION_NOT_FOUND'],
     [new OrderNotFoundError('x'), 404, 'ORDER_NOT_FOUND'],
@@ -28,5 +27,32 @@ describe('mapError (ops)', () => {
     [new InsufficientFundsError('x'), 409, 'INSUFFICIENT_FUNDS'],
   ])('maps %o to %i %s', (error, status, code) => {
     expect(mapError(error)).toMatchObject({ status, code });
+  });
+
+  it('lets a ledger construction error fall through to 500 INTERNAL (ops inputs are validated before the ledger is built)', () => {
+    expect(mapError(new InvalidLedgerTransactionError('entries must sum to zero'))).toEqual({
+      status: 500,
+      code: 'INTERNAL',
+      message: 'internal error',
+    });
+  });
+
+  it('answers fixed messages that do not echo internal account ids', () => {
+    expect(
+      mapError(new InsufficientFundsError('insufficient funds in wallet:c1 (balance 5)')),
+    ).toEqual({
+      status: 409,
+      code: 'INSUFFICIENT_FUNDS',
+      message: 'wallet balance is insufficient',
+    });
+    expect(
+      mapError(
+        new ReversalNotPossibleError('reversal would break the balance of system:MERCHANT:VND'),
+      ),
+    ).toEqual({
+      status: 409,
+      code: 'REVERSAL_NOT_POSSIBLE',
+      message: 'reversal would break a system account balance',
+    });
   });
 });

@@ -152,6 +152,18 @@ describe('ops authentication', () => {
     expect(errorOf(res.body).code).toBe('MISSING_ACTOR');
   });
 
+  it.each([
+    '/ops/wallets/c1/freeze',
+    '/ops/wallets/c1/unfreeze',
+    '/ops/wallets/c1/adjustments',
+    '/ops/transactions/tx_1/reversals',
+    '/ops/orders/o1/replay-paid',
+  ])('answers 401 MISSING_ACTOR for POST %s without actor headers', async (url) => {
+    const res = await call('POST', url, body(), { 'x-tenant-id': 'acme' });
+    expect(res.statusCode).toBe(401);
+    expect(errorOf(res.body).code).toBe('MISSING_ACTOR');
+  });
+
   it('answers 403 FORBIDDEN_ROLE for a missing or non-OPS role', async () => {
     for (const role of [undefined, 'ADMIN']) {
       const headers: Record<string, string> = { 'x-tenant-id': 'acme', 'x-actor-id': 'op@x' };
@@ -263,6 +275,13 @@ describe('adjustments', () => {
     );
     expect(res.statusCode).toBe(409);
     expect(errorOf(res.body).code).toBe('INSUFFICIENT_FUNDS');
+    expect(res.body).not.toMatch(/wallet:|system:/);
+  });
+
+  it('answers 400 INVALID_REQUEST for a malformed customerId', async () => {
+    const res = await call('POST', '/ops/wallets/bad%20id!/adjustments', adjustBody());
+    expect(res.statusCode).toBe(400);
+    expect(errorOf(res.body).code).toBe('INVALID_REQUEST');
   });
 
   it('answers 422 for a non-numeric amount, a bad direction or a currency mismatch', async () => {
@@ -333,6 +352,7 @@ describe('reversals', () => {
     const res = await call('POST', `/ops/transactions/${transactionId}/reversals`, body());
     expect(res.statusCode).toBe(409);
     expect(errorOf(res.body).code).toBe('INSUFFICIENT_FUNDS');
+    expect(res.body).not.toMatch(/wallet:|system:/);
   });
 
   it('answers 409 REVERSAL_NOT_POSSIBLE when the merchant balance cannot absorb the reversal', async () => {
@@ -351,6 +371,7 @@ describe('reversals', () => {
       const res = await call('POST', `/ops/transactions/${transactionId}/reversals`, body());
       expect(res.statusCode).toBe(409);
       expect(errorOf(res.body).code).toBe('REVERSAL_NOT_POSSIBLE');
+      expect(res.body).not.toMatch(/wallet:|system:/);
     } finally {
       await setMerchant(merchant);
     }
@@ -429,6 +450,7 @@ describe('GET /ops/actions', () => {
       '/ops/actions?limit=1&limit=2',
       '/ops/actions?cursor=a&cursor=b',
       '/ops/actions?limit=0',
+      '/ops/actions?limit=abc',
     ];
     for (const url of urls) {
       const res = await call('GET', url);
