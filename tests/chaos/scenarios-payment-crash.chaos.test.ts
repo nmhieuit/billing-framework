@@ -130,6 +130,19 @@ const setDecision =
     info.decision = decision;
   };
 
+/**
+ * Đếm CHỈ các yêu cầu tạo charge wallet→payment (không đếm plan.hits thô: lượt đối soát tự động của wallet lúc 23h UTC
+ * cũng đi qua proxy này và làm lệch số đếm nếu test chạy đúng giờ đó). Phải gọi sau plan.clear().
+ */
+function countChargeRequests(system: System | undefined): void {
+  system?.plan.add({
+    point: 'wallet-to-payment.request',
+    when: isChargeCreation,
+    label: 'charge-requests',
+    action: () => undefined,
+  });
+}
+
 /** Mỗi kịch bản chỉ đếm log proxy của chính nó (hệ dùng chung cả nhóm). */
 function resetProxyLogs(system: System | undefined): void {
   if (system === undefined) return;
@@ -163,6 +176,7 @@ describe('S6-S8: payment and webhook faults (in-process)', () => {
   beforeEach(() => {
     system?.plan.clear();
     system?.plan.enable();
+    countChargeRequests(system);
     resetProxyLogs(system);
   });
   dumpOnFailure(() => system);
@@ -223,7 +237,7 @@ describe('S6-S8: payment and webhook faults (in-process)', () => {
     expect(chargeLog.map((e) => e.decision)).toEqual(['status', 'delay']);
     expect(chargeLog[0]?.status).toBe(503);
     expect(chargeLog[1]?.status).toBe(202);
-    expect(s.plan.hits('wallet-to-payment.request')).toBe(2);
+    expect(s.plan.fired('charge-requests')).toBe(2);
     await assertSystemInvariants(s);
   });
 
@@ -294,8 +308,7 @@ describe('S6-S8: payment and webhook faults (in-process)', () => {
     // Lần gửi thứ hai (replay) tới payment, wallet ghi nhận charge_id (PENDING) trong khi webhook vẫn bị giữ.
     await waitFor(
       async () =>
-        s.plan.hits('wallet-to-payment.request') >= 2 &&
-        (await topupOf(s, 's6c')).status === 'PENDING',
+        s.plan.fired('charge-requests') >= 2 && (await topupOf(s, 's6c')).status === 'PENDING',
       { timeoutMs: 30_000, intervalMs: 50 },
     );
     expect(s.plan.fired('s6c-response-lost')).toBe(1);
@@ -484,6 +497,7 @@ describe('S9-S10: real SIGKILL of wallet and payment (child processes)', () => {
   beforeEach(() => {
     system?.plan.clear();
     system?.plan.enable();
+    countChargeRequests(system);
     resetProxyLogs(system);
   });
   dumpOnFailure(() => system);
@@ -538,7 +552,7 @@ describe('S9-S10: real SIGKILL of wallet and payment (child processes)', () => {
     expect(charges).toHaveLength(1);
     expect(await idempotencyKeyRows(s, stuck.id)).toBe(1);
     expect(s.pids().wallet).toBeUndefined();
-    expect(s.plan.hits('wallet-to-payment.request')).toBe(1); // mới có đúng yêu cầu tạo charge đầu tiên
+    expect(s.plan.fired('charge-requests')).toBe(1); // mới có đúng yêu cầu tạo charge đầu tiên
 
     await s.restartWallet();
     // Wallet chỉ thử lại sau khi lease 60s của lần chiếm trước hết hạn (thiết kế). Trước khi tua nhanh phải chứng minh lease
@@ -554,13 +568,13 @@ describe('S9-S10: real SIGKILL of wallet and payment (child processes)', () => {
     expect(lease[0]?.secs).not.toBeNull();
     expect(Number(lease[0]?.secs)).toBeGreaterThan(0);
     expect(Number(lease[0]?.secs)).toBeLessThanOrEqual(65);
-    expect(s.plan.hits('wallet-to-payment.request')).toBe(1); // chưa có lần gửi lại nào trước khi tua nhanh
+    expect(s.plan.fired('charge-requests')).toBe(1); // chưa có lần gửi lại nào trước khi tua nhanh
     // Mô phỏng thời gian trôi qua bằng cách đưa lịch về hiện tại thay vì chờ cả phút.
     await rowsOf(
       s.walletAdmin,
       sql`update t_acme.topups set next_attempt_at = sysutcdatetime() where status = 'REQUESTED'`,
     );
-    await waitFor(() => s.plan.hits('wallet-to-payment.request') >= 2, {
+    await waitFor(() => s.plan.fired('charge-requests') >= 2, {
       timeoutMs: 60_000,
       intervalMs: 100,
     });
