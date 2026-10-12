@@ -1,6 +1,7 @@
 import { createDatabase, type DatabaseConfig } from '@billing/database';
 import {
   sql,
+  type Kysely,
   type CompiledQuery,
   type DatabaseConnection,
   type Dialect,
@@ -26,21 +27,41 @@ export async function killSessions(config: DatabaseConfig): Promise<number> {
       where database_id = DB_ID(${name}) and session_id <> @@SPID and is_user_process = 1`.execute(
       admin,
     );
-    let killed = 0;
-    for (const { session_id: id } of sessions.rows) {
-      // id là số nguyên lấy từ DMV nên ghép vào KILL là an toàn.
-      if (!Number.isInteger(id)) continue;
-      try {
-        await sql.raw(`kill ${id}`).execute(admin);
-        killed += 1;
-      } catch {
-        // Session có thể đã tự biến mất giữa lúc liệt kê và KILL.
-      }
-    }
-    return killed;
+    return await killSessionIds(
+      admin,
+      sessions.rows.map((r) => r.session_id),
+    );
   } finally {
     await admin.destroy();
   }
+}
+
+// 6106: không phải process đang hoạt động (session đã tự biến mất); 6104: không thể KILL chính mình.
+const BENIGN_KILL_ERRORS = new Set([6106, 6104]);
+
+function sqlErrorNumber(error: unknown): number | undefined {
+  for (let e = error as { number?: unknown; cause?: unknown } | undefined, i = 0; e && i < 4; i++) {
+    if (typeof e.number === 'number') return e.number;
+    e = e.cause as typeof e;
+  }
+  return undefined;
+}
+
+// KILL từng session id (số nguyên); chỉ bỏ qua lỗi 6106/6104, mọi lỗi khác được ném lại.
+export async function killSessionIds(admin: Kysely<unknown>, ids: number[]): Promise<number> {
+  let killed = 0;
+  for (const id of ids) {
+    if (!Number.isInteger(id)) throw new Error(`session id không hợp lệ: ${String(id)}`);
+    try {
+      // id là số nguyên đã kiểm tra nên ghép vào KILL là an toàn.
+      await sql.raw(`kill ${id}`).execute(admin);
+      killed += 1;
+    } catch (error) {
+      const n = sqlErrorNumber(error);
+      if (n === undefined || !BENIGN_KILL_ERRORS.has(n)) throw error;
+    }
+  }
+  return killed;
 }
 
 class FaultyConnection implements DatabaseConnection {
@@ -72,6 +93,7 @@ class FaultyConnection implements DatabaseConnection {
     chunkSize: number,
     options?: Parameters<DatabaseConnection['streamQuery']>[2],
   ): AsyncIterableIterator<QueryResult<R>> {
+    // Có chủ đích: streamQuery chỉ phát 'sql.query.before', không có 'sql.query.after'.
     await this.hit('sql.query.before', compiledQuery.sql.toLowerCase());
     yield* this.inner.streamQuery<R>(compiledQuery, chunkSize, options);
   }

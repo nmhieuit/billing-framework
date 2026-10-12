@@ -4,7 +4,7 @@ import { sql, type Kysely } from 'kysely';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FaultPlan } from './fault-plan.js';
 import { OpLog } from './op-log.js';
-import { faultyDialect, killSessions } from './sql-faults.js';
+import { faultyDialect, killSessionIds, killSessions } from './sql-faults.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -41,11 +41,31 @@ const isInsert = (info: Record<string, unknown>): boolean =>
   typeof info.sql === 'string' && info.sql.includes('insert into');
 
 describe('killSessions', () => {
-  it('pool hồi phục sau khi session nhàn rỗi bị giết (bằng chứng INV-8)', async () => {
+  it('giết đúng session của pool và pool hồi phục (bằng chứng INV-8)', async () => {
     const { testDb, db } = await newDb();
-    await Promise.all([1, 2, 3].map(() => sql`select 1 as one`.execute(db)));
+    const admin = createDatabase<unknown>({ ...testDb.config, database: 'master', poolMax: 1 });
+    cleanups.push(() => admin.destroy());
+    const spids = new Set<number>();
+    // Giữ đồng thời nhiều kết nối để pool mở nhiều session riêng biệt.
+    await Promise.all(
+      [1, 2, 3].map(() =>
+        db.connection().execute(async (c) => {
+          const r = await sql<{ spid: number }>`select @@SPID as spid`.execute(c);
+          spids.add(r.rows[0]?.spid ?? -1);
+          await sql`waitfor delay '00:00:00.300'`.execute(c);
+        }),
+      ),
+    );
+    expect(spids.size).toBeGreaterThanOrEqual(2);
+
     const killed = await killSessions(testDb.config);
-    expect(killed).toBeGreaterThanOrEqual(1);
+    expect(killed).toBeGreaterThanOrEqual(spids.size);
+
+    const alive = await sql<{ session_id: number }>`
+      select session_id from sys.dm_exec_sessions where database_id = DB_ID(${testDb.config.database})`.execute(
+      admin,
+    );
+    for (const row of alive.rows) expect(spids.has(row.session_id)).toBe(false);
 
     let failures = 0;
     let ok = false;
@@ -57,14 +77,12 @@ describe('killSessions', () => {
         failures += 1;
       }
     }
-    // Ghi lại hành vi quan sát được: số lệnh lỗi trước khi pool tự hồi phục.
-    console.info(`[INV-8] lệnh lỗi trước khi pool hồi phục: ${failures}`);
+    // tarn validate-on-acquire (select 1) thay kết nối chết nên quan sát được là 0 lệnh lỗi.
     expect(ok).toBe(true);
-    const r = await sql<{ n: number }>`select count(*) as n from t`.execute(db);
-    expect(r.rows[0]?.n).toBe(1);
+    expect(failures).toBe(0);
   });
 
-  it('không ảnh hưởng database khác', async () => {
+  it('không giết session của database khác nhưng giết session của database đích (kết nối ghim)', async () => {
     const first = await createTestDatabase('chaos_sql');
     cleanups.push(() => first.drop());
     const second = await createTestDatabase('chaos_sql');
@@ -73,19 +91,39 @@ describe('killSessions', () => {
     cleanups.push(() => dbA.destroy());
     const dbB = createDatabase<unknown>(second.config);
     cleanups.push(() => dbB.destroy());
-    await sql`select 1 as one`.execute(dbA);
-    await sql`select 1 as one`.execute(dbB);
 
-    await killSessions(first.config);
+    // Kết nối ghim không được pool kiểm tra lại, nên bị giết nhầm sẽ làm test hỏng.
+    await dbA.connection().execute(async (cA) => {
+      await dbB.connection().execute(async (cB) => {
+        const before = await sql<{ spid: number }>`select @@SPID as spid`.execute(cB);
+        await sql`select @@SPID as spid`.execute(cA);
 
-    const r = await sql<{ one: number }>`select 1 as one`.execute(dbB);
-    expect(r.rows[0]?.one).toBe(1);
+        const killed = await killSessions(first.config);
+        expect(killed).toBeGreaterThanOrEqual(1);
+
+        const after = await sql<{ spid: number }>`select @@SPID as spid`.execute(cB);
+        expect(after.rows[0]?.spid).toBe(before.rows[0]?.spid);
+        await expect(sql`select 1 as one`.execute(cA)).rejects.toThrow();
+      });
+    });
   });
 
   it.each(['master', 'tempdb', 'model', 'msdb', ''])('từ chối database "%s"', async (database) => {
+    const config = { host: 'localhost', port: 1, user: 'x', password: 'x', database };
+    await expect(killSessions(config)).rejects.toThrow(/từ chối/);
+  });
+
+  it('killSessionIds: bỏ qua 6106/6104, ném lại lỗi khác', async () => {
     const testDb = await createTestDatabase('chaos_sql');
     cleanups.push(() => testDb.drop());
-    await expect(killSessions({ ...testDb.config, database })).rejects.toThrow();
+    const admin = createDatabase<unknown>({ ...testDb.config, database: 'master', poolMax: 1 });
+    cleanups.push(() => admin.destroy());
+    const self = await sql<{ spid: number }>`select @@SPID as spid`.execute(admin);
+
+    expect(await killSessionIds(admin, [32000])).toBe(0); // 6106: không tồn tại
+    expect(await killSessionIds(admin, [self.rows[0]?.spid ?? -1])).toBe(0); // 6104: chính mình
+    await expect(killSessionIds(admin, [1])).rejects.toThrow(); // session hệ thống: lỗi khác, phải ném
+    await expect(killSessionIds(admin, [1.5])).rejects.toThrow();
   });
 });
 
@@ -93,13 +131,14 @@ describe('faultyDialect', () => {
   it('kill ở sql.query.before (insert thứ 2) làm transaction rollback toàn bộ', async () => {
     const plan = new FaultPlan({ log: new OpLog() });
     const { testDb, db } = await newDb(faultyDialect(plan, { name: 'wallet' }));
+    let killed = 0;
     plan.add({
       point: 'sql.query.before',
       when: isInsert,
       nth: 2,
       label: 'kill-mid-tx',
       action: async () => {
-        await killSessions(testDb.config);
+        killed = await killSessions(testDb.config);
       },
     });
 
@@ -111,17 +150,19 @@ describe('faultyDialect', () => {
     ).rejects.toThrow();
 
     expect(plan.fired('kill-mid-tx')).toBe(1);
+    expect(killed).toBeGreaterThan(0);
     expect(await countRows(testDb)).toEqual([]);
   });
 
   it('kill ở sql.commit.after: dữ liệu đã commit vẫn còn', async () => {
     const plan = new FaultPlan({ log: new OpLog() });
     const { testDb, db } = await newDb(faultyDialect(plan, { name: 'payment' }));
+    let killed = 0;
     plan.add({
       point: 'sql.commit.after',
       label: 'kill-after-commit',
       action: async () => {
-        await killSessions(testDb.config);
+        killed = await killSessions(testDb.config);
       },
     });
 
@@ -133,6 +174,7 @@ describe('faultyDialect', () => {
       .catch(() => undefined); // Phía gọi có thể nhận lỗi hoặc không; dữ liệu mới là thứ cần kiểm.
 
     expect(plan.fired('kill-after-commit')).toBe(1);
+    expect(killed).toBeGreaterThan(0);
     expect(await countRows(testDb)).toEqual([1]);
   });
 
@@ -171,7 +213,7 @@ describe('faultyDialect', () => {
       },
     });
 
-    await sql`select 42 as answer`.execute(db);
+    await sql`SELECT 42 AS Answer`.execute(db);
 
     const last = seen.at(-1);
     expect(last?.name).toBe('wallet');
