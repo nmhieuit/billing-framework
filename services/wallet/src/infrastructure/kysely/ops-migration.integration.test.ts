@@ -152,7 +152,7 @@ describe('007-ops-tools', () => {
       // Dữ liệu có sẵn trước 007: ví có số dư, giao dịch sổ cái (bị trigger bất biến bảo vệ), thanh toán order.
       await sql`insert into ${bt('accounts')} (id, kind, customer_id, currency, balance, created_at)
         values ('w:old', 'WALLET', 'cus_1', 'VND', 70, ${when()})`.execute(db);
-      for (const id of ['tx_pay_a', 'tx_pay_b', 'tx_pay_c']) {
+      for (const id of ['tx_pay_a', 'tx_pay_b', 'tx_pay_c', 'tx_pay_d']) {
         await sql`insert into ${bt('ledger_transactions')} (id, business_key, kind, created_at)
           values (${id}, ${`order:${id}`}, 'ORDER_PAYMENT', ${when()})`.execute(db);
       }
@@ -160,23 +160,38 @@ describe('007-ops-tools', () => {
         ['ord_a', 'tx_pay_a'],
         ['ord_b', 'tx_pay_b'],
         ['ord_gone', 'tx_pay_c'],
+        ['ord_tie', 'tx_pay_d'],
       ] as const) {
         await sql`insert into ${bt('order_payments')}
           (order_id, customer_id, wallet_transaction_id, amount, currency, paid_at)
           values (${order}, 'cus_1', ${tx}, 30, 'VND', ${when()})`.execute(db);
       }
-      // ord_a có hai dòng OrderPaidV1 (lần đầu và bản phát lại): phải lấy eventId của dòng cũ nhất.
+      // ord_a có hai dòng OrderPaidV1 (lần đầu và bản phát lại): phải lấy eventId của dòng cũ nhất, bất kể thứ tự chèn
+      // và id: dòng MUỘN hơn được chèn TRƯỚC và có id NHỎ hơn.
       await outbox(
         'ob_a1',
         'OrderPaidV1',
-        { orderId: 'ord_a', eventId: 'evt_a_first' },
-        '2026-10-01T00:00:00Z',
+        { orderId: 'ord_a', eventId: 'evt_a_replay' },
+        '2026-10-02T00:00:00Z',
       );
       await outbox(
         'ob_a2',
         'OrderPaidV1',
-        { orderId: 'ord_a', eventId: 'evt_a_replay' },
-        '2026-10-02T00:00:00Z',
+        { orderId: 'ord_a', eventId: 'evt_a_first' },
+        '2026-10-01T00:00:00Z',
+      );
+      // ord_tie có hai dòng cùng created_at: id nhỏ nhất thắng (dòng id lớn được chèn trước).
+      await outbox(
+        'ob_t2',
+        'OrderPaidV1',
+        { orderId: 'ord_tie', eventId: 'evt_tie_high' },
+        '2026-10-01T00:00:00Z',
+      );
+      await outbox(
+        'ob_t1',
+        'OrderPaidV1',
+        { orderId: 'ord_tie', eventId: 'evt_tie_low' },
+        '2026-10-01T00:00:00Z',
       );
       await outbox(
         'ob_b',
@@ -203,6 +218,7 @@ describe('007-ops-tools', () => {
         { order_id: 'ord_a', paid_event_id: 'evt_a_first' },
         { order_id: 'ord_b', paid_event_id: 'evt_b' },
         { order_id: 'ord_gone', paid_event_id: null },
+        { order_id: 'ord_tie', paid_event_id: 'evt_tie_low' },
       ]);
     });
 
@@ -212,7 +228,7 @@ describe('007-ops-tools', () => {
       expect(wallet.rows).toEqual([{ balance: '70', frozen_at: null }]);
       const txs = await sql<{ n: number }>`
         select count(*) as n from ${bt('ledger_transactions')}`.execute(db);
-      expect(txs.rows[0]?.n).toBe(3);
+      expect(txs.rows[0]?.n).toBe(4);
       const adj = await sql<{ n: number }>`
         select count(*) as n from ${bt('accounts')} where kind = 'ADJUSTMENT'`.execute(db);
       expect(adj.rows[0]?.n).toBe(2);

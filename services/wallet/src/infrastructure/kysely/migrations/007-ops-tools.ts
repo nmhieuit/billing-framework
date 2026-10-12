@@ -55,15 +55,21 @@ export const opsToolsMigration = (schemaArg: string): Migration => ({
 
     // eventId của OrderPaidV1 ban đầu (để phát lại giữ nguyên eventId); dòng outbox gốc có thể đã bị retention dọn.
     await sql`alter table ${t('order_payments')} add paid_event_id nvarchar(64) null`.execute(db);
+    // Backfill một lượt duy nhất qua outbox (không cross apply theo từng dòng): với mỗi orderId lấy dòng OrderPaidV1 cũ nhất,
+    // hòa created_at thì id nhỏ nhất, để kết quả xác định.
     await sql`
-      update op set paid_event_id = o.event_id
+      ;with f as (
+        select json_value(payload, '$.orderId') as order_id,
+               json_value(payload, '$.eventId') as event_id,
+               row_number() over (
+                 partition by json_value(payload, '$.orderId') order by created_at, id
+               ) as rn
+        from ${t('outbox')}
+        where event_type = 'OrderPaidV1'
+      )
+      update op set paid_event_id = f.event_id
       from ${t('order_payments')} op
-      cross apply (
-        select top (1) json_value(x.payload, '$.eventId') as event_id
-        from ${t('outbox')} x
-        where x.event_type = 'OrderPaidV1' and json_value(x.payload, '$.orderId') = op.order_id
-        order by x.created_at asc
-      ) o
+      join f on f.order_id = op.order_id and f.rn = 1
       where op.paid_event_id is null`.execute(db);
 
     // Nhật ký kiểm toán dùng chung; chỉ thêm.
