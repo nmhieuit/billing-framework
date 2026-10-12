@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { validateEvent } from '@billing/contracts';
-import { sql } from 'kysely';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { TenantId } from '../domain/tenant-id.js';
 import { RecordingMetrics } from '../test-support-metrics.js';
 import {
+  blockedRequestCount,
   createHarness,
   expectLedgerInvariants,
   fundWallet,
+  holdWalletLock,
   silentLogger,
   type Harness,
 } from '../test-support.js';
@@ -183,29 +184,11 @@ describe('ReplayOrderPaid', () => {
         .executeTakeFirstOrThrow()
     ).customer_id;
     const before = (await outboxFor(orderId)).length;
-    const accounts = `${schema(h.acme)}.accounts`;
-    let release!: () => void;
-    const released = new Promise<void>((resolve) => (release = resolve));
-    let held!: () => void;
-    const holding = new Promise<void>((resolve) => (held = resolve));
     // Giữ khóa hàng ví từ một transaction thô: giả lập ReverseTransaction đang giữ ví (ORDER_PAYMENT).
-    const hold = h.db.transaction().execute(async (trx) => {
-      await sql`select id from ${sql.raw(accounts)} with (updlock) where id = ${`wallet:${customer}`}`.execute(
-        trx,
-      );
-      held();
-      await released;
-    });
-    await holding;
+    const { release, done: hold } = await holdWalletLock(h, h.acme, customer);
 
-    // Số yêu cầu đang bị chặn trong DB của schema này (đọc từ DMV, không dùng sleep cố định để quyết định đậu/rớt).
-    const blockedCount = async (): Promise<number> => {
-      const rows = await sql<{ n: number }>`
-        select count(*) as n from sys.dm_exec_requests r
-        cross apply sys.dm_exec_sql_text(r.sql_handle) t
-        where r.blocking_session_id <> 0 and t.text like ${`%${schema(h.acme)}%`}`.execute(h.db);
-      return Number(rows.rows[0]?.n ?? 0);
-    };
+    // Số yêu cầu đang bị chặn trong DB (đọc từ DMV, không dùng sleep cố định để quyết định đậu/rớt).
+    const blockedCount = () => blockedRequestCount(h);
     const waitBlocked = async (atLeast: number, stop: () => boolean): Promise<void> => {
       const deadline = Date.now() + 15000;
       while (!stop() && Date.now() < deadline && (await blockedCount()) < atLeast) {
