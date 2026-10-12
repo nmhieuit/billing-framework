@@ -292,7 +292,13 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
       // Tiến trình con: giết cứng từng cái (idempotent) rồi xác nhận pid đã biến mất, để không bao giờ để mồ côi.
       for (const child of allChildren) {
         await step(() => child.kill());
-        if (isProcessAlive(child.pid)) {
+        // Đã xác nhận thoát (exited đã settle) thì pid có thể được hệ điều hành cấp lại cho tiến trình khác (Windows tái dùng
+        // pid rất nhanh khi soak crash/restart nhiều lần): khi đó không dò theo pid nữa.
+        const exitedSeen = await Promise.race([
+          child.exited.then(() => true),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
+        ]);
+        if (!exitedSeen && isProcessAlive(child.pid)) {
           errors.push(
             new Error(`tiến trình con ${child.name} (pid ${child.pid}) vẫn còn sau stop()`),
           );
