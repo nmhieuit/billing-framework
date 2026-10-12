@@ -98,6 +98,7 @@ describe('003-orders', () => {
         '004-reconciliation',
         '005-reconciliation-open-index',
         '006-retention-indexes',
+        '007-ops-tools',
       ],
     });
 

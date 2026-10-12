@@ -6,6 +6,7 @@ import { ordersMigration } from './003-orders.js';
 import { reconciliationMigration } from './004-reconciliation.js';
 import { reconciliationOpenIndexMigration } from './005-reconciliation-open-index.js';
 import { retentionIndexesMigration } from './006-retention-indexes.js';
+import { opsToolsMigration } from './007-ops-tools.js';
 
 /** Các migration của một schema tenant. Tên quyết định thứ tự; chỉ thêm mới, không sửa cái đã phát hành. */
 export function walletMigrations(schema: string): Record<string, Migration> {
@@ -17,5 +18,6 @@ export function walletMigrations(schema: string): Record<string, Migration> {
     '004-reconciliation': reconciliationMigration(schema),
     '005-reconciliation-open-index': reconciliationOpenIndexMigration(schema),
     '006-retention-indexes': retentionIndexesMigration(schema),
+    '007-ops-tools': opsToolsMigration(schema),
   };
 }

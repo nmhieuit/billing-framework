@@ -38,6 +38,7 @@ describe('provisionTenants', () => {
         '004-reconciliation',
         '005-reconciliation-open-index',
         '006-retention-indexes',
+        '007-ops-tools',
       ],
       beta: [
         '001-ledger',
@@ -46,6 +47,7 @@ describe('provisionTenants', () => {
         '004-reconciliation',
         '005-reconciliation-open-index',
         '006-retention-indexes',
+        '007-ops-tools',
       ],
     });
     expect(await provisionTenants(db, [acme, beta])).toEqual({ acme: [], beta: [] });
@@ -62,7 +64,7 @@ describe('provisionTenants', () => {
     );
   });
 
-  it('puts the same tables in each tenant schema, with the four system accounts', async () => {
+  it('puts the same tables in each tenant schema, with the six system accounts', async () => {
     for (const tenant of [acme, beta]) {
       const tables = await sql<{ name: string }>`
         select t.name from sys.tables t join sys.schemas s on s.schema_id = t.schema_id
@@ -74,6 +76,7 @@ describe('provisionTenants', () => {
         'kysely_migration_lock',
         'ledger_entries',
         'ledger_transactions',
+        'ops_actions',
         'order_payments',
         'outbox',
         'processed_messages',
@@ -84,6 +87,8 @@ describe('provisionTenants', () => {
       const accounts = await sql<{ id: string; kind: string; balance: string }>`
         select id, kind, balance from ${t(tenant, 'accounts')} order by id`.execute(db);
       expect(accounts.rows).toEqual([
+        { id: 'system:ADJUSTMENT:USD', kind: 'ADJUSTMENT', balance: '0' },
+        { id: 'system:ADJUSTMENT:VND', kind: 'ADJUSTMENT', balance: '0' },
         { id: 'system:GATEWAY:USD', kind: 'GATEWAY', balance: '0' },
         { id: 'system:GATEWAY:VND', kind: 'GATEWAY', balance: '0' },
         { id: 'system:MERCHANT:USD', kind: 'MERCHANT', balance: '0' },

@@ -8,12 +8,16 @@ export interface AccountsTable {
   /** bigint: đọc về là chuỗi, ghi bằng number. */
   balance: ColumnType<string, number, number>;
   created_at: Date;
+  frozen_at: Date | null;
+  frozen_by: string | null;
+  frozen_reason: string | null;
 }
 
 export interface LedgerTransactionsTable {
   id: string;
   business_key: string;
   kind: string;
+  reverses_transaction_id: string | null;
   created_at: Date;
 }
 
@@ -64,6 +68,7 @@ export interface OrderPaymentsTable {
   amount: ColumnType<string, number, number>;
   currency: string;
   paid_at: Date;
+  paid_event_id: string | null;
 }
 
 export interface OutboxTable {
@@ -113,6 +118,20 @@ export interface ReconciliationItemsTable {
   created_at: Date;
 }
 
+export interface OpsActionsTable {
+  /** identity bigint: đọc về là chuỗi, không ghi. */
+  seq: Generated<string>;
+  id: string;
+  action: string;
+  actor: string;
+  reason: string;
+  target: string;
+  idempotency_key: string;
+  fingerprint: string;
+  result: string;
+  created_at: Date;
+}
+
 export interface WalletDatabase {
   accounts: AccountsTable;
   ledger_transactions: LedgerTransactionsTable;
@@ -124,4 +143,5 @@ export interface WalletDatabase {
   outbox: OutboxTable;
   reconciliation_runs: ReconciliationRunsTable;
   reconciliation_items: ReconciliationItemsTable;
+  ops_actions: OpsActionsTable;
 }
