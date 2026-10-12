@@ -151,6 +151,7 @@ describe('HttpFaultProxy độ bền', () => {
     expect(proxy.log).toEqual([
       { method: 'POST', url: '/d', decision: 'duplicate-second-failed', status: 200 },
     ]);
+    expect(proxy.duplicateStatuses).toEqual([]); // lần hai hỏng nên không có mã trạng thái
   });
 
   it('HEAD giữ content-length của upstream và không có body', async () => {

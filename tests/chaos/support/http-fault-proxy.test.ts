@@ -115,6 +115,8 @@ describe('HttpFaultProxy', () => {
     expect(b.headers['idempotency-key']).toBe(a.headers['idempotency-key']);
     expect(a.body.equals(Buffer.from(body, 'utf8'))).toBe(true);
     expect(proxy.log).toEqual([{ method: 'POST', url: PATH, decision: 'duplicate', status: 201 }]);
+    // Mã trạng thái của bản gửi thứ hai được giữ lại (client không thấy nó).
+    expect(proxy.duplicateStatuses).toEqual([201]);
   });
 
   it('{ status: 503 }: trả 503 và mục tiêu không nhận gì', async () => {

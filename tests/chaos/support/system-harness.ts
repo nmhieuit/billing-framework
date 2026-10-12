@@ -59,6 +59,11 @@ export interface SystemOptions {
    * Chỉ đổi cấu hình dịch vụ; áp dụng cho cả hai chế độ (child nhận qua RECONCILE_AUTOFIX).
    */
   reconciliation?: { autofix?: boolean };
+  /**
+   * Lịch retry webhook của payment (giây); mặc định BACKOFF_SECONDS = [1, 2, 3] (hết lượt sau ~6s). Kịch bản mà wallet
+   * chết lâu hơn thế (S9) cần lịch dài hơn để webhook không bị bỏ trước khi wallet khởi động lại. Áp dụng cho cả hai chế độ.
+   */
+  webhookBackoffSeconds?: number[];
   /** Móc của wallet chạy sau khi PayOrder commit, trước khi ack (mô phỏng consumer chết giữa chừng). */
   afterOrderHandled?: () => Promise<void>;
 }
@@ -360,6 +365,9 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
       webhookUrl,
       workerIntervalMs,
       retention: retention.payment,
+      ...(options.webhookBackoffSeconds === undefined
+        ? {}
+        : { tuning: { webhookBackoffSeconds: options.webhookBackoffSeconds } }),
     });
 
     // Sinh tiến trình con rồi chờ /health; chờ hỏng thì giết ngay để không để lại mồ côi.

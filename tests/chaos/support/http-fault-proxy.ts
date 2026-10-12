@@ -62,6 +62,8 @@ function isValidDecision(decision: unknown): decision is ProxyDecision {
 // rồi (nếu có chuyển tiếp) gọi plan.hit(`${name}.response`) TRƯỚC khi trả phản hồi cho client.
 export class HttpFaultProxy {
   readonly log: ProxyLogEntry[] = [];
+  /** Mã trạng thái mục tiêu trả cho bản gửi THỨ HAI của decision 'duplicate' (client không bao giờ thấy). */
+  readonly duplicateStatuses: number[] = [];
   readonly baseUrl: string;
   private readonly sockets = new Set<Socket>();
   // Timer chờ và request upstream đang bay: stop() phải dọn để không còn chuyển tiếp sau khi dừng.
@@ -218,7 +220,9 @@ export class HttpFaultProxy {
     if (decision === 'duplicate') {
       label = 'duplicate';
       try {
-        await this.forward(req, raw); // lần hai: bỏ phản hồi, client chỉ thấy lần đầu
+        // Lần hai: client không thấy phản hồi, nhưng mã trạng thái được giữ lại để test kiểm bên nhận trả 2xx.
+        const second = await this.forward(req, raw);
+        this.duplicateStatuses.push(second.status);
       } catch {
         if (this.stopped) throw new Error('proxy đã dừng');
         label = 'duplicate-second-failed';
