@@ -64,10 +64,15 @@ export async function killSessionIds(admin: Kysely<unknown>, ids: number[]): Pro
   return killed;
 }
 
+// Mã tăng dần cho mỗi kết nối vật lý được bọc; info.connection cho rule phân biệt các transaction đồng thời.
+let nextConnectionId = 1;
+
 class FaultyConnection implements DatabaseConnection {
+  readonly id = nextConnectionId++;
+
   constructor(
     readonly inner: DatabaseConnection,
-    private readonly hit: (point: string, sqlText: string) => Promise<void>,
+    private readonly hit: (point: string, sqlText: string, connection: number) => Promise<void>,
   ) {
     if (inner.cancelQuery) this.cancelQuery = (p) => inner.cancelQuery!(p);
     else delete (this as Partial<FaultyConnection>).cancelQuery;
@@ -82,9 +87,9 @@ class FaultyConnection implements DatabaseConnection {
     options?: Parameters<DatabaseConnection['executeQuery']>[1],
   ): Promise<QueryResult<R>> {
     const text = compiledQuery.sql.toLowerCase();
-    await this.hit('sql.query.before', text);
+    await this.hit('sql.query.before', text, this.id);
     const result = await this.inner.executeQuery<R>(compiledQuery, options);
-    await this.hit('sql.query.after', text);
+    await this.hit('sql.query.after', text, this.id);
     return result;
   }
 
@@ -94,7 +99,7 @@ class FaultyConnection implements DatabaseConnection {
     options?: Parameters<DatabaseConnection['streamQuery']>[2],
   ): AsyncIterableIterator<QueryResult<R>> {
     // Có chủ đích: streamQuery chỉ phát 'sql.query.before', không có 'sql.query.after'.
-    await this.hit('sql.query.before', compiledQuery.sql.toLowerCase());
+    await this.hit('sql.query.before', compiledQuery.sql.toLowerCase(), this.id);
     yield* this.inner.streamQuery<R>(compiledQuery, chunkSize, options);
   }
 
@@ -115,24 +120,25 @@ export function faultyDialect(
     createIntrospector: (db) => dialect.createIntrospector(db),
     createDriver: (): Driver => {
       const inner = dialect.createDriver();
-      const hit = (point: string, sqlText: string): Promise<void> =>
-        plan.hit(point, { sql: sqlText, name: options.name });
+      const hit = (point: string, sqlText: string, connection: number): Promise<void> =>
+        plan.hit(point, { sql: sqlText, name: options.name, connection });
       const raw = (c: DatabaseConnection): DatabaseConnection =>
         c instanceof FaultyConnection ? c.inner : c;
+      const idOf = (c: DatabaseConnection): number => (c instanceof FaultyConnection ? c.id : 0);
       const driver: Driver = {
         init: (o) => inner.init(o),
         acquireConnection: async (o) => new FaultyConnection(await inner.acquireConnection(o), hit),
         beginTransaction: async (c: DatabaseConnection, s: TransactionSettings) => {
           await inner.beginTransaction(raw(c), s);
-          await hit('sql.begin.after', 'begin transaction');
+          await hit('sql.begin.after', 'begin transaction', idOf(c));
         },
         commitTransaction: async (c) => {
-          await hit('sql.commit.before', 'commit');
+          await hit('sql.commit.before', 'commit', idOf(c));
           await inner.commitTransaction(raw(c));
-          await hit('sql.commit.after', 'commit');
+          await hit('sql.commit.after', 'commit', idOf(c));
         },
         rollbackTransaction: async (c) => {
-          await hit('sql.rollback.before', 'rollback');
+          await hit('sql.rollback.before', 'rollback', idOf(c));
           await inner.rollbackTransaction(raw(c));
         },
         releaseConnection: (c, o) => inner.releaseConnection(raw(c), o),

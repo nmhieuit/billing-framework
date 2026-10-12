@@ -1,5 +1,5 @@
 import { createDatabase } from '@billing/database';
-import { createTestDatabase, type TestDatabase } from '@billing/testing';
+import { createTestDatabase, waitFor, type TestDatabase } from '@billing/testing';
 import { sql, type Kysely } from 'kysely';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FaultPlan } from './fault-plan.js';
@@ -218,6 +218,58 @@ describe('faultyDialect', () => {
     const last = seen.at(-1);
     expect(last?.name).toBe('wallet');
     expect(last?.sql).toBe('select 42 as answer');
+  });
+
+  it('info.connection giống nhau trong một transaction và khác nhau giữa các transaction đồng thời', async () => {
+    const plan = new FaultPlan({ log: new OpLog() });
+    const { db } = await newDb(faultyDialect(plan, { name: 'wallet' }));
+    const seen: Array<{ point: string; connection: unknown }> = [];
+    for (const point of [
+      'sql.begin.after',
+      'sql.query.before',
+      'sql.query.after',
+      'sql.commit.before',
+      'sql.commit.after',
+    ]) {
+      plan.add({
+        point,
+        action: (info) => {
+          seen.push({ point, connection: info.connection });
+        },
+      });
+    }
+
+    await db.transaction().execute(async (trx) => {
+      await sql`select 1 as a`.execute(trx);
+    });
+    const first = new Set(seen.map((s) => s.connection));
+    expect(first.size).toBe(1);
+    expect(typeof [...first][0]).toBe('number');
+    expect(seen.map((s) => s.point)).toContain('sql.commit.after');
+
+    seen.length = 0;
+    // Hai transaction chạy đồng thời giữ hai kết nối khác nhau.
+    let release: () => void = () => undefined;
+    const hold = { promise: new Promise<void>((resolve) => (release = resolve)) };
+    const both = Promise.all([
+      db.transaction().execute(async (trx) => {
+        await sql`select 1 as a`.execute(trx);
+        await hold.promise;
+      }),
+      db.transaction().execute(async (trx) => {
+        await sql`select 2 as a`.execute(trx);
+        await hold.promise;
+      }),
+    ]);
+    await waitFor(() => seen.filter((s) => s.point === 'sql.query.after').length >= 2, {
+      timeoutMs: 10_000,
+      intervalMs: 20,
+    });
+    release();
+    await both;
+    const queries = seen.filter((s) => s.point === 'sql.query.after').map((s) => s.connection);
+    expect(new Set(queries).size).toBe(2);
+    expect(new Set(seen.map((s) => s.connection)).size).toBe(2);
   });
 
   it('rule ném lỗi giả ở sql.query.before được lan ra phía gọi', async () => {
