@@ -98,6 +98,14 @@ describe('AccountRepository freeze state', () => {
     });
     const after = await h.uow.run(h.acme, ({ accounts }) => accounts.find('wallet:fz1'));
     expect(after?.toProps().frozen).toBeNull();
+    const raw = await sql<{
+      frozen_at: Date | null;
+      frozen_by: string | null;
+      frozen_reason: string | null;
+    }>`
+      select frozen_at, frozen_by, frozen_reason from ${sql.id('t_acme', 'accounts')}
+      where id = ${'wallet:fz1'}`.execute(h.db);
+    expect(raw.rows[0]).toEqual({ frozen_at: null, frozen_by: null, frozen_reason: null });
   });
 });
 
@@ -341,6 +349,27 @@ describe('LedgerRepository findTransaction and reversals', () => {
     );
     const stored = await h.uow.run(h.acme, ({ ledger }) => ledger.findTransaction('tx_rv2_rev'));
     expect(stored?.kind).toBe('REVERSAL');
+    // Khóa nghiệp vụ khác hẳn, nên chỉ unique index trên reverses_transaction_id có thể chặn.
+    const distinctKey = h.uow.run(h.acme, async ({ ledger }) => {
+      const original = await ledger.findTransaction('tx_rv2');
+      if (!original) throw new Error('missing original');
+      await ledger.post(
+        LedgerTransaction.create({
+          id: 'tx_rv2_rev3',
+          businessKey: 'reversal:other-key',
+          kind: 'REVERSAL',
+          entries: original.entries.map((e) => ({
+            accountId: e.accountId,
+            amount: e.amount.negate(),
+          })),
+          reverses: original.id,
+          now: t0,
+        }),
+      );
+    });
+    await expect(distinctKey).rejects.toSatisfy(
+      (error: unknown) => error instanceof DuplicateKeyError && error.source === 'ledger',
+    );
     await expect(reverse('tx_rv2_rev2')).rejects.toSatisfy(
       (error: unknown) => error instanceof DuplicateKeyError && error.source === 'ledger',
     );

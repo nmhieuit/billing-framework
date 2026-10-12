@@ -150,7 +150,8 @@ export class PayOrder {
       walletTransactionId: transactionId,
       amount: money,
       paidAt: now,
-      paidEventId: input.eventId,
+      // Task 7 sẽ ghi eventId thật của OrderPaidV1 (input.eventId là id của OrderReadyForPayment, không phải event này).
+      paidEventId: null,
     });
     await outbox.add(
       orderPaidMessage(context(), {
