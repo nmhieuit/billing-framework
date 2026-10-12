@@ -64,9 +64,25 @@ describe('KyselyOrderPaymentRepository', () => {
       walletTransactionId: 'tx_a',
       amount: Money.of(1000, 'VND'),
       paidAt: t0,
+      paidEventId: 'evt_paid_1',
     };
     await h.uow.run(h.acme, ({ orderPayments }) => orderPayments.insert(paid));
     const found = await h.uow.run(h.acme, ({ orderPayments }) => orderPayments.find('o1'));
+    expect(found).toEqual(paid);
+  });
+
+  it('allows a null paidEventId (orders paid before the event id was recorded)', async () => {
+    await postOrderTransaction(h.acme, 'tx_n', 'o_null');
+    const paid = {
+      orderId: 'o_null',
+      customerId: 'c1',
+      walletTransactionId: 'tx_n',
+      amount: Money.of(1000, 'VND'),
+      paidAt: t0,
+      paidEventId: null,
+    };
+    await h.uow.run(h.acme, ({ orderPayments }) => orderPayments.insert(paid));
+    const found = await h.uow.run(h.acme, ({ orderPayments }) => orderPayments.find('o_null'));
     expect(found).toEqual(paid);
   });
 
@@ -83,6 +99,7 @@ describe('KyselyOrderPaymentRepository', () => {
       walletTransactionId: 'tx_b',
       amount: Money.of(1000, 'VND'),
       paidAt: t0,
+      paidEventId: null,
     };
     await h.uow.run(h.acme, ({ orderPayments }) => orderPayments.insert(paid));
     await expect(

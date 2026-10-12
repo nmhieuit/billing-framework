@@ -150,6 +150,7 @@ export class PayOrder {
       walletTransactionId: transactionId,
       amount: money,
       paidAt: now,
+      paidEventId: input.eventId,
     });
     await outbox.add(
       orderPaidMessage(context(), {

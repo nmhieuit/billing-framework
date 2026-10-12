@@ -1,6 +1,11 @@
 import type { Money } from '@billing/money';
 import type { Account } from '../domain/account.js';
-import type { LedgerTransaction } from '../domain/ledger-transaction.js';
+import type {
+  LedgerEntry,
+  LedgerTransaction,
+  LedgerTransactionKind,
+} from '../domain/ledger-transaction.js';
+import type { OpsActionKind } from '../domain/ops.js';
 import type {
   AutofixAction,
   CaseStatus,
@@ -43,6 +48,8 @@ export interface AccountRepository {
   /** Khóa (UPDLOCK) từng tài khoản theo thứ tự id tăng dần; trả về theo thứ tự đó; thiếu tài khoản thì ném lỗi. */
   lockMany(ids: readonly string[]): Promise<Account[]>;
   saveBalance(account: Account): Promise<void>;
+  /** Ghi trạng thái đóng băng (`frozen_at/by/reason`) của tài khoản; `null` nghĩa là xóa đóng băng. */
+  saveFrozen(account: Account): Promise<void>;
 }
 
 export interface LedgerEntryRecord {
@@ -53,9 +60,19 @@ export interface LedgerEntryRecord {
   createdAt: Date;
 }
 
+/** Giao dịch sổ cái đã lưu, kèm các dòng (đồng tiền lấy từ tài khoản của dòng). */
+export interface StoredLedgerTransaction {
+  id: string;
+  kind: LedgerTransactionKind;
+  entries: readonly LedgerEntry[];
+}
+
 export interface LedgerRepository {
-  /** Ghi giao dịch và các dòng của nó. Ném `DuplicateKeyError` nếu `business_key` đã tồn tại. */
+  /** Ghi giao dịch và các dòng của nó. Ném `DuplicateKeyError` (nguồn `ledger`) nếu `business_key` hoặc `reverses_transaction_id` đã tồn tại. */
   post(transaction: LedgerTransaction): Promise<void>;
+  findTransaction(id: string): Promise<StoredLedgerTransaction | null>;
+  /** Id giao dịch `REVERSAL` đã đảo giao dịch này, hoặc `null` nếu chưa bị đảo. */
+  findReversalOf(transactionId: string): Promise<string | null>;
   /** Các dòng của một tài khoản, tăng dần theo `entryId`. */
   listEntries(query: {
     accountId: string;
@@ -121,6 +138,7 @@ export interface Repositories {
   idempotency: IdempotencyStore;
   inbox: Inbox;
   orderPayments: OrderPaymentRepository;
+  ops: OpsRepository;
   outbox: OutboxRepository;
   reconciliation: ReconciliationRepository;
   retention: RetentionRepository;
@@ -161,12 +179,37 @@ export interface PaidOrder {
   walletTransactionId: string;
   amount: Money;
   paidAt: Date;
+  /** Id event `OrderPaidV1` đã phát khi trả; `null` với đơn cũ không truy được. */
+  paidEventId: string | null;
 }
 
 export interface OrderPaymentRepository {
   find(orderId: string): Promise<PaidOrder | null>;
   /** Ném `DuplicateKeyError` (nguồn `order_payment`) nếu đơn đã được trả. */
   insert(order: PaidOrder): Promise<void>;
+}
+
+/** Bản ghi kiểm toán một thao tác vận hành (chỉ thêm, không sửa/xóa). */
+export interface OpsActionRecord {
+  id: string;
+  action: OpsActionKind;
+  actor: string;
+  reason: string;
+  target: string;
+  idempotencyKey: string;
+  fingerprint: string;
+  result: string;
+  createdAt: Date;
+  /** Số thứ tự tăng dần toàn schema; có khi đọc ra, dùng làm cursor phân trang. */
+  seq?: number;
+}
+
+export interface OpsRepository {
+  find(idempotencyKey: string): Promise<OpsActionRecord | null>;
+  /** Ném `DuplicateKeyError` (nguồn `ops_action`) khi trùng `idempotency_key` hoặc `id`. */
+  insert(record: OpsActionRecord): Promise<void>;
+  /** Giảm dần theo `seq`; `beforeSeq` null là từ bản ghi mới nhất. */
+  list(query: { limit: number; beforeSeq: number | null }): Promise<OpsActionRecord[]>;
 }
 
 export interface NewOutboxMessage {

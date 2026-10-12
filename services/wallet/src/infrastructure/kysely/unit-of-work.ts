@@ -5,6 +5,7 @@ import { KyselyAccountRepository } from './account.repository.js';
 import { KyselyIdempotencyStore } from './idempotency.repository.js';
 import { KyselyInbox } from './inbox.repository.js';
 import { KyselyLedgerRepository } from './ledger.repository.js';
+import { KyselyOpsRepository } from './ops.repository.js';
 import { KyselyOrderPaymentRepository } from './order-payment.repository.js';
 import { KyselyOutboxRepository } from './outbox.repository.js';
 import { KyselyReconciliationRepository } from './reconciliation.repository.js';
@@ -29,6 +30,7 @@ export class KyselyTenantUnitOfWork implements TenantUnitOfWork {
         idempotency: new KyselyIdempotencyStore(scoped),
         inbox: new KyselyInbox(scoped),
         orderPayments: new KyselyOrderPaymentRepository(scoped),
+        ops: new KyselyOpsRepository(scoped),
         outbox: new KyselyOutboxRepository(scoped, schema),
         reconciliation: new KyselyReconciliationRepository(scoped, schema),
         retention: new KyselyRetentionRepository(scoped, schema),
