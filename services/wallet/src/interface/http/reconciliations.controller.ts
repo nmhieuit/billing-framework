@@ -15,7 +15,7 @@ import type { ListReconciliationItems } from '../../application/list-reconciliat
 import type { ResolveReconciliationItem } from '../../application/resolve-reconciliation-item.js';
 import type { StartManualReconciliation } from '../../application/start-manual-reconciliation.js';
 import type { TenantId } from '../../domain/tenant-id.js';
-import { ApiError } from './errors.js';
+import { bodyObject, text } from './body.js';
 import { CurrentTenant, TenantGuard } from './tenant.guard.js';
 import {
   GET_RECONCILIATION_RUN,
@@ -23,16 +23,6 @@ import {
   RESOLVE_RECONCILIATION_ITEM,
   START_RECONCILIATION,
 } from './tokens.js';
-
-function bodyObject(body: unknown): Record<string, unknown> {
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    throw new ApiError(400, 'INVALID_REQUEST', 'body must be a JSON object');
-  }
-  return body as Record<string, unknown>;
-}
-
-/** Trường không phải chuỗi coi như rỗng để use case từ chối bằng 422 (không phải 400). */
-const text = (value: unknown): string => (typeof value === 'string' ? value : '');
 
 @Controller()
 @UseGuards(TenantGuard)

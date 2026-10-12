@@ -10,24 +10,35 @@ import { verifyWebhook } from '@billing/contracts';
 import { InvalidMoneyError } from '@billing/money';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import {
+  AlreadyReversedError,
+  EventIdUnknownError,
   IdempotencyConflictError,
   InvalidQueryError,
   MissingCustomerError,
   MissingTenantError,
+  OpsIdempotencyConflictError,
+  OrderNotFoundError,
+  OrderReversedError,
   ReconciliationConflictError,
   ReconciliationItemNotFoundError,
   ReconciliationNotFoundError,
+  ReversalNotPossibleError,
+  ReversalNotSupportedError,
   TopupNotFoundError,
+  TransactionNotFoundError,
   UnknownTenantError,
   WalletCurrencyConflictError,
   WalletNotFoundError,
 } from '../../application/errors.js';
 import type { Clock, Logger } from '../../application/ports.js';
 import {
+  InsufficientFundsError,
   InvalidCustomerError,
+  InvalidLedgerTransactionError,
   InvalidReconciliationError,
   InvalidTopupError,
 } from '../../domain/errors.js';
+import { InvalidOpsRequestError } from '../../domain/ops.js';
 import { CLOCK, LOGGER, WEBHOOK_SECRET } from './tokens.js';
 
 /** Lỗi do chính lớp HTTP phát hiện (thiếu/sai header hay body) trước khi vào use case. */
@@ -92,6 +103,57 @@ const RULES: ReadonlyArray<{ matches: (error: unknown) => boolean; status: numbe
       matches: (e) => e instanceof ReconciliationConflictError,
       status: 409,
       code: 'RECONCILIATION_CONFLICT',
+    },
+    {
+      matches: (e) =>
+        e instanceof InvalidOpsRequestError || e instanceof InvalidLedgerTransactionError,
+      status: 422,
+      code: 'INVALID_OPS_REQUEST',
+    },
+    {
+      matches: (e) => e instanceof OpsIdempotencyConflictError,
+      status: 409,
+      code: 'IDEMPOTENCY_CONFLICT',
+    },
+    {
+      matches: (e) => e instanceof TransactionNotFoundError,
+      status: 404,
+      code: 'TRANSACTION_NOT_FOUND',
+    },
+    {
+      matches: (e) => e instanceof OrderNotFoundError,
+      status: 404,
+      code: 'ORDER_NOT_FOUND',
+    },
+    {
+      matches: (e) => e instanceof AlreadyReversedError,
+      status: 409,
+      code: 'ALREADY_REVERSED',
+    },
+    {
+      matches: (e) => e instanceof ReversalNotSupportedError,
+      status: 409,
+      code: 'REVERSAL_NOT_SUPPORTED',
+    },
+    {
+      matches: (e) => e instanceof ReversalNotPossibleError,
+      status: 409,
+      code: 'REVERSAL_NOT_POSSIBLE',
+    },
+    {
+      matches: (e) => e instanceof OrderReversedError,
+      status: 409,
+      code: 'ORDER_REVERSED',
+    },
+    {
+      matches: (e) => e instanceof EventIdUnknownError,
+      status: 409,
+      code: 'EVENT_ID_UNKNOWN',
+    },
+    {
+      matches: (e) => e instanceof InsufficientFundsError,
+      status: 409,
+      code: 'INSUFFICIENT_FUNDS',
     },
   ];
 

@@ -59,6 +59,11 @@ function buildDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     getReconciliationRun: { execute: () => Promise.reject(new Error('not used')) },
     listReconciliationItems: { execute: () => Promise.reject(new Error('not used')) },
     resolveReconciliationItem: { execute: () => Promise.reject(new Error('not used')) },
+    freezeWallet: { execute: () => Promise.reject(new Error('not used')) },
+    adjustWallet: { execute: () => Promise.reject(new Error('not used')) },
+    reverseTransaction: { execute: () => Promise.reject(new Error('not used')) },
+    replayOrderPaid: { execute: () => Promise.reject(new Error('not used')) },
+    listOpsActions: { execute: () => Promise.reject(new Error('not used')) },
     ...overrides,
   };
 }

@@ -4,15 +4,19 @@ import { createLogger } from '@billing/observability';
 import { Worker, once, runAll } from '@billing/runtime';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Kysely } from 'kysely';
+import { AdjustWallet } from './application/adjust-wallet.js';
 import { ApplyPaymentResult } from './application/apply-payment-result.js';
 import { BackgroundRuns } from './application/background-runs.js';
 import { CreateWallet } from './application/create-wallet.js';
+import { FreezeWallet } from './application/freeze-wallet.js';
 import { GetReconciliationRun } from './application/get-reconciliation-run.js';
 import { GetTopup } from './application/get-topup.js';
 import { GetWallet } from './application/get-wallet.js';
 import { InlineTopupSubmitter } from './application/inline-topup-submitter.js';
 import { ListEntries } from './application/list-entries.js';
+import { ListOpsActions } from './application/list-ops-actions.js';
 import { ListReconciliationItems } from './application/list-reconciliation-items.js';
+import { OpsActionRecorder } from './application/ops-recorder.js';
 import { PayOrder } from './application/pay-order.js';
 import {
   noopMetrics,
@@ -22,8 +26,10 @@ import {
   type Metrics,
 } from './application/ports.js';
 import { DEFAULT_OUTBOX_BACKOFF_SECONDS, RelayOutbox } from './application/relay-outbox.js';
+import { ReplayOrderPaid } from './application/replay-order-paid.js';
 import { RequestTopup } from './application/request-topup.js';
 import { ResolveReconciliationItem } from './application/resolve-reconciliation-item.js';
+import { ReverseTransaction } from './application/reverse-transaction.js';
 import { RunReconciliation } from './application/run-reconciliation.js';
 import { RunRetention } from './application/retention.js';
 import { SampleState } from './application/sample-state.js';
@@ -151,6 +157,9 @@ export async function startService(
   });
   const orderReady = createOrderReadyHandler({ registry, payOrder, log, metrics });
 
+  // Mọi thao tác vận hành đi qua một recorder: cùng transaction với bản ghi kiểm toán và khóa idempotency.
+  const opsRecorder = new OpsActionRecorder({ uow, clock, ids, log, metrics });
+
   let app: NestFastifyApplication;
   try {
     await broker.consume({
@@ -178,6 +187,11 @@ export async function startService(
       getReconciliationRun: new GetReconciliationRun({ uow }),
       listReconciliationItems: new ListReconciliationItems({ uow }),
       resolveReconciliationItem: new ResolveReconciliationItem({ uow, clock }),
+      freezeWallet: new FreezeWallet({ recorder: opsRecorder }),
+      adjustWallet: new AdjustWallet({ recorder: opsRecorder, ids }),
+      reverseTransaction: new ReverseTransaction({ recorder: opsRecorder, ids }),
+      replayOrderPaid: new ReplayOrderPaid({ recorder: opsRecorder, ids }),
+      listOpsActions: new ListOpsActions({ uow }),
     });
   } catch (error) {
     await broker.close().catch(() => undefined);

@@ -46,6 +46,7 @@ beforeEach(async () => {
     log: silentLogger,
     options: { autofix: true, maxItems: 1000 },
   });
+  const notUsed = { execute: () => Promise.reject(new Error('not used')) };
   const deps: AppDeps = {
     registry: h.registry,
     clock: h.clock,
@@ -66,6 +67,11 @@ beforeEach(async () => {
     getReconciliationRun: new GetReconciliationRun({ uow: h.uow }),
     listReconciliationItems: new ListReconciliationItems({ uow: h.uow }),
     resolveReconciliationItem: new ResolveReconciliationItem({ uow: h.uow, clock: h.clock }),
+    freezeWallet: notUsed,
+    adjustWallet: notUsed,
+    reverseTransaction: notUsed,
+    replayOrderPaid: notUsed,
+    listOpsActions: notUsed,
   };
   app = await createApp(deps);
 });
