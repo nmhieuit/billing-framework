@@ -64,6 +64,46 @@ describe('KyselyOpsRepository', () => {
     expect(rest.map((r) => r.id)).toEqual(['act_10']);
   });
 
+  it('lockKey serializes transactions on the same key, but not on other keys or other tenants', async () => {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let locked!: () => void;
+    const lockedFirst = new Promise<void>((resolve) => (locked = resolve));
+    const first = h.uow.run(h.acme, async ({ ops }) => {
+      await ops.lockKey('lock-key-1');
+      locked();
+      await released;
+    });
+    await lockedFirst;
+
+    // Khóa khác, và cùng khóa ở tenant khác, không bị chặn.
+    await h.uow.run(h.acme, ({ ops }) => ops.lockKey('lock-key-2'));
+    await h.uow.run(h.beta, ({ ops }) => ops.lockKey('lock-key-1'));
+
+    let acquired = false;
+    const second = h.uow.run(h.acme, async ({ ops }) => {
+      await ops.lockKey('lock-key-1');
+      acquired = true;
+    });
+    // Chờ tới khi yêu cầu thứ hai thật sự bị chặn trong DB (không dựa vào một lần ngủ cố định).
+    const deadline = Date.now() + 15000;
+    let blocked = 0;
+    while (blocked < 1 && !acquired && Date.now() < deadline) {
+      const rows = await sql<{ n: number }>`
+        select count(*) as n from sys.dm_exec_requests where blocking_session_id <> 0`.execute(
+        h.db,
+      );
+      blocked = Number(rows.rows[0]?.n ?? 0);
+      if (blocked < 1) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const stillWaiting = !acquired;
+    release();
+    await first;
+    await second;
+    expect(stillWaiting).toBe(true);
+    expect(acquired).toBe(true);
+  });
+
   it('blocks direct update and delete with the append-only trigger', async () => {
     const t = sql.id('t_acme', 'ops_actions');
     await expect(sql`update ${t} set reason = 'x'`.execute(h.db)).rejects.toThrow();

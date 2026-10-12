@@ -30,7 +30,7 @@ export class KyselyTenantUnitOfWork implements TenantUnitOfWork {
         idempotency: new KyselyIdempotencyStore(scoped),
         inbox: new KyselyInbox(scoped),
         orderPayments: new KyselyOrderPaymentRepository(scoped),
-        ops: new KyselyOpsRepository(scoped),
+        ops: new KyselyOpsRepository(scoped, schema),
         outbox: new KyselyOutboxRepository(scoped, schema),
         reconciliation: new KyselyReconciliationRepository(scoped, schema),
         retention: new KyselyRetentionRepository(scoped, schema),

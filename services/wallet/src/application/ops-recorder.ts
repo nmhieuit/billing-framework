@@ -32,6 +32,8 @@ interface RunInput<T> {
     repositories: Repositories;
     actionId: string;
     now: Date;
+    /** Yêu cầu đã kiểm tra và cắt khoảng trắng: dùng giá trị này (không dùng đầu vào thô) cho actor/reason. */
+    request: OpsRequest;
   }) => Promise<{ result: T; record: boolean }>;
 }
 
@@ -65,6 +67,9 @@ export class OpsActionRecorder {
           )
           .digest('hex');
         const outcome = await this.deps.uow.run(input.tenant, async (repositories) => {
+          // Tuần tự hóa theo khóa idempotency TRƯỚC `find` (và trước mọi khóa tài khoản trong `work`, nên không deadlock):
+          // bên đến sau chờ bên trước commit rồi thấy bản ghi của nó qua `find` và trả đúng kết quả đã lưu.
+          await repositories.ops.lockKey(request.idempotencyKey);
           const existing = await repositories.ops.find(request.idempotencyKey);
           if (existing) {
             if (existing.fingerprint !== fingerprint) {
@@ -76,7 +81,7 @@ export class OpsActionRecorder {
           }
           const now = this.deps.clock.now();
           const actionId = this.deps.ids.eventId();
-          const done = await input.work({ repositories, actionId, now });
+          const done = await input.work({ repositories, actionId, now, request });
           if (done.record) {
             await repositories.ops.insert({
               id: actionId,
@@ -110,7 +115,7 @@ export class OpsActionRecorder {
         }
         return { result: outcome.result, replayed: outcome.replayed };
       } catch (error) {
-        // Hai yêu cầu cùng khóa đua nhau: bên thua vấp khóa duy nhất của ops_actions và rollback; chạy lại một lần sẽ phát lại kết quả của bên thắng.
+        // Chốt chặn phụ (khóa ứng dụng theo khóa idempotency đã tuần tự hóa): nếu vẫn vấp khóa duy nhất của ops_actions thì rollback và chạy lại một lần để phát lại kết quả của bên thắng.
         if (error instanceof DuplicateKeyError && error.source === 'ops_action' && attempt < 1) {
           continue;
         }

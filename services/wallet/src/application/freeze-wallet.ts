@@ -29,7 +29,7 @@ export class FreezeWallet {
       request: input,
       target: `wallet:${input.customerId}`,
       params: { frozen: input.frozen },
-      work: async ({ repositories, actionId, now }) => {
+      work: async ({ repositories, actionId, now, request }) => {
         const customerId = CustomerId.parse(input.customerId);
         const walletId = Account.walletId(customerId);
         const found = await repositories.accounts.find(walletId);
@@ -50,7 +50,7 @@ export class FreezeWallet {
           };
         }
         const next = input.frozen
-          ? locked.freeze(input.actor, input.reason, now)
+          ? locked.freeze(request.actor, request.reason, now)
           : locked.unfreeze();
         await repositories.accounts.saveFrozen(next);
         return {

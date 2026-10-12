@@ -142,6 +142,37 @@ describe('FreezeWallet', () => {
     },
   );
 
+  it('stores the validated (trimmed) actor and reason in frozen_by/frozen_reason, equal to the audit row', async () => {
+    const customer = newCustomer();
+    await fundWallet(h, { customer, amount: 1000 });
+    await freeze.execute({
+      ...input(customer, true),
+      actor: '  op@x  ',
+      reason: '  fraud review  ',
+    });
+    const row = await walletRow(customer);
+    const [audit] = await opsActions(customer);
+    expect(row.frozen_by).toBe('op@x');
+    expect(row.frozen_reason).toBe('fraud review');
+    expect(audit).toMatchObject({ actor: row.frozen_by, reason: row.frozen_reason });
+  });
+
+  it.each([2, 5])(
+    '%i concurrent requests with the SAME key all get the winner result: changed:true, one audit row',
+    async (count) => {
+      const customer = newCustomer();
+      await fundWallet(h, { customer, amount: 1000 });
+      const request = input(customer, true);
+      const results = await Promise.all(
+        Array.from({ length: count }, () => freeze.execute(request)),
+      );
+      expect(new Set(results.map((r) => JSON.stringify(r))).size).toBe(1);
+      expect(results[0]).toMatchObject({ frozen: true, changed: true });
+      expect(results[0]?.actionId).not.toBeNull();
+      expect(await opsActions(customer)).toHaveLength(1);
+    },
+  );
+
   it('rejects an unknown wallet', async () => {
     await expect(freeze.execute(input('nobody-fz', true))).rejects.toBeInstanceOf(
       WalletNotFoundError,

@@ -178,6 +178,30 @@ describe('ReverseTransaction', () => {
     expect(await balance('system:MERCHANT:VND')).toBe(merchantBefore - 50000);
   });
 
+  it.each([2, 5])(
+    '%i concurrent reversals with the SAME key all fulfil with one identical result and one REVERSAL',
+    async (count) => {
+      const customer = newCustomer();
+      await fundWallet(h, { customer, amount: 100000 });
+      const { transactionId } = await payOrder(customer);
+      const merchantBefore = await balance('system:MERCHANT:VND');
+      const countBefore = await txCount();
+      const req = request(transactionId);
+      const results = await Promise.all(Array.from({ length: count }, () => reverse.execute(req)));
+      expect(new Set(results.map((r) => JSON.stringify(r))).size).toBe(1);
+      expect(await txCount()).toBe(countBefore + 1);
+      expect(await balance(`wallet:${customer}`)).toBe(100000);
+      expect(await balance('system:MERCHANT:VND')).toBe(merchantBefore - 50000);
+      const audit = await h.db
+        .withSchema(schema(h.acme))
+        .selectFrom('ops_actions')
+        .select('id')
+        .where('idempotency_key', '=', req.idempotencyKey)
+        .execute();
+      expect(audit).toHaveLength(1);
+    },
+  );
+
   it('serializes concurrent reversals of an adjustment', async () => {
     const customer = newCustomer();
     await fundWallet(h, { customer, amount: 100000 });

@@ -205,6 +205,11 @@ export interface OpsActionRecord {
 }
 
 export interface OpsRepository {
+  /**
+   * Khóa độc quyền theo `idempotencyKey` (trong tenant) cho tới hết transaction hiện tại: các lần gọi cùng khóa được tuần tự
+   * hóa. Phải gọi TRƯỚC `find` và trước mọi khóa tài khoản. Chờ tối đa 10 giây rồi ném lỗi.
+   */
+  lockKey(idempotencyKey: string): Promise<void>;
   find(idempotencyKey: string): Promise<OpsActionRecord | null>;
   /** Ném `DuplicateKeyError` (nguồn `ops_action`) khi trùng `idempotency_key` hoặc `id`. */
   insert(record: OpsActionRecord): Promise<void>;
