@@ -51,8 +51,8 @@ Oracle có test riêng (mục 6): cố ý làm hỏng trạng thái và xác nh�
 Mỗi kịch bản: dựng hệ, gây một điểm lỗi cụ thể, chữa lành, gọi `assertSystemInvariants` và kiểm thêm kết quả riêng.
 
 - **S1:** KILL SQL giữa `PayOrder`, trước commit → không ghi nợ; giao lại thì trả đúng một lần.
-- **S2:** KILL SQL ngay sau commit `PayOrder`, trước ack → giao lại ra `REPLAYED`, ví chỉ bị trừ một lần, outbox đủ.
-- **S3:** consumer chết trước ack, giao lại nhiều lần → hội tụ về một khoản trả.
+- **S2:** KILL SQL ngay sau commit `PayOrder`, trước ack (kèm lỗi giả sau commit để consumer thấy thất bại) → giao lại CÙNG `eventId` ra `DUPLICATE` (dòng inbox đã commit), ví chỉ bị trừ một lần, outbox đủ. Nhánh `REPLAYED` (cùng `orderId`, `eventId` MỚI) có kịch bản riêng S2b: phát `OrderPaidV1` thứ hai với `eventId` mới, cùng `walletTransactionId`, ví vẫn chỉ bị trừ một lần.
+- **S3:** consumer chết trước ack, giao lại nhiều lần → hội tụ về một khoản trả. S3 (móc ném lỗi) đi qua đường retry-exchange; S3c cắt kết nối AMQP từ móc sau commit để ack thất bại và broker giao lại thật (`redelivered=true`), kết quả `DUPLICATE`, không vào DLQ.
 - **S4:** mất kết nối broker khi relay outbox vừa publish xong, chưa `markSent` → `OrderPaidV1` giao trùng cùng `eventId`, không mất.
 - **S5:** mất kết nối broker khi đang consume → client tự nối lại và xử lý tiếp, không mất message.
 - **S6:** payment trả 5xx hoặc timeout khi tạo charge → topup được thử lại, tối đa một charge, cuối cùng thành công.

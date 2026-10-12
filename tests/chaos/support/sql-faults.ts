@@ -64,7 +64,8 @@ export async function killSessionIds(admin: Kysely<unknown>, ids: number[]): Pro
   return killed;
 }
 
-// Mã tăng dần cho mỗi kết nối vật lý được bọc; info.connection cho rule phân biệt các transaction đồng thời.
+// Mã tăng dần cho mỗi LẦN LẤY kết nối (mỗi wrapper), không phải kết nối vật lý: một transaction giữ nguyên một wrapper
+// từ begin tới commit nên info.connection phân biệt được các transaction đồng thời; lần lấy sau có mã mới.
 let nextConnectionId = 1;
 
 class FaultyConnection implements DatabaseConnection {

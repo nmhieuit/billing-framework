@@ -93,6 +93,23 @@ const inboxRows = (s: System, eventId: string): Promise<number> =>
 const paidEvents = (s: System, orderId: string) =>
   s.orders.received().filter((r) => r.eventType === 'OrderPaidV1' && r.payload.orderId === orderId);
 
+/** Số dòng outbox OrderPaidV1 của đơn (tất định: không phụ thuộc việc relay đã gửi chưa). */
+const outboxPaidRows = (s: System, orderId: string): Promise<number> =>
+  count(
+    s,
+    sql<{
+      n: number;
+    }>`select count(*) as n from t_acme.outbox where event_type = 'OrderPaidV1' and json_value(payload, '$.orderId') = ${orderId}`,
+  );
+
+/** Orders nhận >= 1 bản OrderPaidV1; mọi bản trùng cùng messageId và cùng payload (at-least-once). */
+function expectIdenticalReceipts(s: System, orderId: string): void {
+  const events = paidEvents(s, orderId);
+  expect(events.length).toBeGreaterThanOrEqual(1);
+  expect(new Set(events.map((r) => r.messageId)).size).toBe(1);
+  for (const r of events) expect(r.payload).toEqual(events[0]?.payload);
+}
+
 /** Mở ví và nạp tiền bình thường (chưa có lỗi), chờ hội tụ; heal() tắt plan nên bật lại để rule có hiệu lực. */
 async function fundedWallet(s: System, customer: string, amount: number): Promise<void> {
   expect((await s.openWallet(TENANT, customer)).status).toBe(201);
@@ -144,20 +161,32 @@ describe('S1-S5: SQL Server and RabbitMQ failures around order payment', () => {
       action: () => undefined,
     });
 
+    // Đếm các lệnh insert order_payments (cùng matcher với rule KILL): phải đúng 2, một bị giết và một thật.
+    s.plan.add({
+      point: 'sql.query.before',
+      label: 's1-insert',
+      when: isOrderPaymentInsert,
+      action: () => undefined,
+    });
+
     await s.sendOrder({ ...order, orderId });
     await waitFor(() => atKill !== undefined, { timeoutMs: 30_000, intervalMs: 50 });
     // Lần thử đầu bị giết trước khi ghi nợ: không có khoản trả, không có bút toán, ví còn nguyên.
     expect(atKill).toEqual({ payments: 0, ledger: 0, balance: 100_000 });
-    // Chờ lần giao lại thật sự chạm handler (heal() sẽ tắt plan).
-    await waitFor(() => s.plan.fired('s1-inbox') >= 2, { timeoutMs: 30_000, intervalMs: 50 });
+    // Chờ lần giao lại thật sự chạm tới insert (heal() sẽ tắt plan).
+    await waitFor(() => s.plan.fired('s1-insert') >= 2, { timeoutMs: 30_000, intervalMs: 50 });
     await s.heal();
 
     expect(s.plan.fired('s1-kill')).toBe(1);
+    // Đúng hai lần insert: lần 1 bị giết trước khi chạy (rollback), lần 2 là khoản trả thật.
+    expect(s.plan.fired('s1-insert')).toBe(2);
+    expect(s.plan.fired('s1-inbox')).toBeGreaterThanOrEqual(2);
     expect(await orderPayments(s, orderId)).toBe(1);
     expect(await orderLedgerTransactions(s, orderId)).toBe(1);
     expect(await balanceOf(s, 's1')).toBe(70_000);
-    // Lần đầu rollback nên chưa có outbox: đúng một OrderPaidV1.
-    expect(paidEvents(s, orderId)).toHaveLength(1);
+    // Lần đầu rollback nên chỉ có một dòng outbox OrderPaidV1.
+    expect(await outboxPaidRows(s, orderId)).toBe(1);
+    expectIdenticalReceipts(s, orderId);
     await assertSystemInvariants(s);
   });
 
@@ -222,7 +251,8 @@ describe('S1-S5: SQL Server and RabbitMQ failures around order payment', () => {
     expect(await balanceOf(s, 's2')).toBe(70_000); // trừ đúng một lần
     expect(await inboxRows(s, eventId)).toBe(1);
     // Outbox được commit cùng khoản trả, lần giao lại là DUPLICATE (cùng eventId) nên không thêm sự kiện.
-    expect(paidEvents(s, orderId)).toHaveLength(1);
+    expect(await outboxPaidRows(s, orderId)).toBe(1);
+    expectIdenticalReceipts(s, orderId);
     await assertSystemInvariants(s);
   });
 
@@ -249,7 +279,8 @@ describe('S1-S5: SQL Server and RabbitMQ failures around order payment', () => {
     expect(await orderPayments(s, orderId)).toBe(1);
     expect(await orderLedgerTransactions(s, orderId)).toBe(1);
     expect(await balanceOf(s, 's3a')).toBe(70_000);
-    expect(paidEvents(s, orderId)).toHaveLength(1);
+    expect(await outboxPaidRows(s, orderId)).toBe(1);
+    expectIdenticalReceipts(s, orderId);
     await assertSystemInvariants(s);
   });
 
@@ -280,7 +311,75 @@ describe('S1-S5: SQL Server and RabbitMQ failures around order payment', () => {
     expect(await orderPayments(s, orderId)).toBe(1);
     expect(await orderLedgerTransactions(s, orderId)).toBe(1);
     expect(await balanceOf(s, 's3b')).toBe(70_000);
-    expect(paidEvents(s, orderId)).toHaveLength(1);
+    expect(await outboxPaidRows(s, orderId)).toBe(1);
+    expectIdenticalReceipts(s, orderId);
+    await assertSystemInvariants(s);
+  });
+
+  it('S3c: connection dies after commit, before ack (real unacked redelivery): paid once, redelivery is DUPLICATE, no dead letter', async () => {
+    const s = sys();
+    await fundedWallet(s, 's3c', 100_000);
+    let calls = 0;
+    let dropped = 0;
+    // Một lần duy nhất: kênh chết sau commit nên ack thất bại, broker requeue (redelivered=true) khi nối lại.
+    afterHandled = async () => {
+      calls += 1;
+      if (calls === 1) dropped = await s.dropWalletBrokerConnections();
+    };
+    s.plan.add({
+      point: 'sql.query.before',
+      label: 's3c-inbox',
+      when: isInboxInsert,
+      action: () => undefined,
+    });
+
+    const { orderId, eventId } = await s.sendOrder({
+      tenant: TENANT,
+      customer: 's3c',
+      amount: 30_000,
+    });
+    await waitFor(() => calls >= 2 && s.plan.fired('s3c-inbox') >= 2, {
+      timeoutMs: 60_000,
+      intervalMs: 50,
+    });
+    await s.heal();
+
+    expect(dropped).toBeGreaterThan(0);
+    expect(calls).toBe(2); // lần giao lại xử lý đúng một lần nữa
+    expect(await s.deadLettered()).not.toContain(eventId); // DLQ dùng chung cả tệp (S3b để lại một message)
+    expect(await inboxRows(s, eventId)).toBe(1); // lần giao lại là DUPLICATE
+    expect(await orderPayments(s, orderId)).toBe(1);
+    expect(await orderLedgerTransactions(s, orderId)).toBe(1);
+    expect(await balanceOf(s, 's3c')).toBe(70_000);
+    expect(await outboxPaidRows(s, orderId)).toBe(1);
+    expectIdenticalReceipts(s, orderId);
+    await assertSystemInvariants(s);
+  });
+
+  it('S2b: same orderId redelivered with a NEW eventId after payment: REPLAYED, second OrderPaidV1, debited once', async () => {
+    const s = sys();
+    await fundedWallet(s, 's2b', 100_000);
+    const first = await s.sendOrder({ tenant: TENANT, customer: 's2b', amount: 30_000 });
+    await s.heal();
+    expect(await balanceOf(s, 's2b')).toBe(70_000);
+    const second = await s.sendOrder({
+      tenant: TENANT,
+      customer: 's2b',
+      amount: 30_000,
+      orderId: first.orderId,
+    });
+    expect(second.eventId).not.toBe(first.eventId);
+    await s.heal();
+
+    const events = paidEvents(s, first.orderId);
+    expect(events).toHaveLength(2);
+    expect(new Set(events.map((r) => r.messageId)).size).toBe(2); // eventId mới
+    expect(events[1]?.payload.walletTransactionId).toBe(events[0]?.payload.walletTransactionId);
+    expect(events[1]?.payload.amount).toEqual(events[0]?.payload.amount);
+    expect(await outboxPaidRows(s, first.orderId)).toBe(2);
+    expect(await orderPayments(s, first.orderId)).toBe(1);
+    expect(await orderLedgerTransactions(s, first.orderId)).toBe(1);
+    expect(await balanceOf(s, 's2b')).toBe(70_000); // chỉ trừ một lần
     await assertSystemInvariants(s);
   });
 
@@ -304,9 +403,9 @@ describe('S1-S5: SQL Server and RabbitMQ failures around order payment', () => {
     expect(s.plan.fired('s4-lost-ack')).toBe(1);
     const paid = paidEvents(s, orderId);
     // Lần publish đầu đã tới broker (relay tưởng thất bại) + lần relay gửi lại.
-    expect(paid.length).toBeGreaterThanOrEqual(2);
-    expect(new Set(paid.map((r) => r.messageId)).size).toBe(1); // cùng eventId
-    for (const r of paid) expect(r.payload).toEqual(paid[0]?.payload); // cùng payload
+    expect(paid).toHaveLength(2);
+    expectIdenticalReceipts(s, orderId);
+    expect(await outboxPaidRows(s, orderId)).toBe(1);
     const outbox = await adminQuery(s.walletAdmin, (db) =>
       sql<{ status: string; attempts: number }>`
         select status, attempts from t_acme.outbox
@@ -314,7 +413,7 @@ describe('S1-S5: SQL Server and RabbitMQ failures around order payment', () => {
     );
     expect(outbox.rows).toHaveLength(1);
     expect(outbox.rows[0]?.status).toBe('SENT');
-    expect(outbox.rows[0]?.attempts).toBeGreaterThanOrEqual(1); // lần đầu bị tính là thất bại
+    expect(outbox.rows[0]?.attempts).toBe(1); // đúng một lần bị tính là thất bại
     expect(await orderPayments(s, orderId)).toBe(1);
     expect(await balanceOf(s, 's4')).toBe(70_000);
     await assertSystemInvariants(s);
@@ -324,27 +423,28 @@ describe('S1-S5: SQL Server and RabbitMQ failures around order payment', () => {
     const s = sys();
     await fundedWallet(s, 's5', 1_000_000);
     const orderIds: string[] = [];
-    const send = async (n: number): Promise<void> => {
-      for (let i = 0; i < n; i += 1) {
-        orderIds.push(
-          (await s.sendOrder({ tenant: TENANT, customer: 's5', amount: 10_000 })).orderId,
-        );
-      }
+    // Cắt kết nối tất định từ móc consumer (sau commit, trước ack) ở lần xử lý thứ 4 và thứ 8, không dựa vào thời gian.
+    let calls = 0;
+    const dropped: number[] = [];
+    afterHandled = async () => {
+      calls += 1;
+      if (calls === 4 || calls === 8) dropped.push(await s.dropWalletBrokerConnections());
     };
-    await send(4);
-    // Đợi consumer thực sự đang xử lý rồi mới cắt kết nối (giữa dòng).
-    await waitFor(() => s.orders.received().some((r) => r.payload.orderId === orderIds[0]), {
-      timeoutMs: 30_000,
-      intervalMs: 20,
-    });
-    const dropped1 = await s.dropWalletBrokerConnections();
-    await send(3);
-    const dropped2 = await s.dropWalletBrokerConnections();
-    await send(3);
-    expect(dropped1).toBeGreaterThan(0);
-    expect(dropped2).toBeGreaterThan(0);
+    const eventIds: string[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      const sent = await s.sendOrder({ tenant: TENANT, customer: 's5', amount: 10_000 });
+      orderIds.push(sent.orderId);
+      eventIds.push(sent.eventId);
+    }
+    await waitFor(() => dropped.length === 2, { timeoutMs: 60_000, intervalMs: 50 });
     await s.heal();
 
+    expect(dropped).toHaveLength(2);
+    expect(dropped.every((n) => n > 0)).toBe(true);
+    // Ack mất cùng kênh nên các message đang xử lý bị broker giao lại: số lần xử lý > 10.
+    expect(calls).toBeGreaterThan(10);
+    const dead = await s.deadLettered();
+    for (const eventId of eventIds) expect(dead).not.toContain(eventId);
     expect(orderIds).toHaveLength(10);
     const paidCount = await count(
       s,
