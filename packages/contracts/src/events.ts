@@ -71,7 +71,13 @@ export const orderPaymentFailedV1 = {
     orderId: { type: 'string', format: 'uuid' },
     reason: {
       type: 'string',
-      enum: ['INSUFFICIENT_FUNDS', 'WALLET_NOT_FOUND', 'CURRENCY_MISMATCH', 'CONFLICT', 'WALLET_FROZEN'],
+      enum: [
+        'INSUFFICIENT_FUNDS',
+        'WALLET_NOT_FOUND',
+        'CURRENCY_MISMATCH',
+        'CONFLICT',
+        'WALLET_FROZEN',
+      ],
     },
   },
 } as const;
