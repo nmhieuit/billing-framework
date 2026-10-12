@@ -186,6 +186,7 @@ describe('OpsActionRecorder', () => {
     const runs = await Promise.all(Array.from({ length: 5 }, () => recorder.run(input)));
     expect(new Set(runs.map((r) => JSON.stringify(r.result))).size).toBe(1);
     expect(runs.filter((r) => !r.replayed)).toHaveLength(1);
+    expect(effects.runs).toBe(1);
     expect(await opsRows(h.acme, key)).toHaveLength(1);
     expect(await accountRows(h.acme, 'wallet:rc6')).toHaveLength(1);
   });

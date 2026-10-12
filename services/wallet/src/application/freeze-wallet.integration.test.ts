@@ -117,6 +117,31 @@ describe('FreezeWallet', () => {
     expect((await opsActions(customer)).map((a) => a.action)).toEqual(['FREEZE', 'UNFREEZE']);
   });
 
+  it.each([true, false])(
+    'five concurrent requests with different keys change the state once (frozen=%s)',
+    async (frozen) => {
+      const customer = newCustomer();
+      await fundWallet(h, { customer, amount: 1000 });
+      if (!frozen) await freeze.execute(input(customer, true));
+      const before = (await opsActions(customer)).length;
+      const results = await Promise.all(
+        Array.from({ length: 5 }, (_, i) =>
+          freeze.execute({ ...input(customer, frozen), actor: `op${i}` }),
+        ),
+      );
+      expect(results.filter((r) => r.changed)).toHaveLength(1);
+      const audit = (await opsActions(customer)).slice(before);
+      expect(audit.map((a) => a.action)).toEqual([frozen ? 'FREEZE' : 'UNFREEZE']);
+      if (frozen) {
+        const winner = results.find((r) => r.changed);
+        expect(winner?.actionId).toBe(audit[0]?.id);
+        expect((await walletRow(customer)).frozen_by).toBe(audit[0]?.actor);
+      } else {
+        expect((await walletRow(customer)).frozen_at).toBeNull();
+      }
+    },
+  );
+
   it('rejects an unknown wallet', async () => {
     await expect(freeze.execute(input('nobody-fz', true))).rejects.toBeInstanceOf(
       WalletNotFoundError,

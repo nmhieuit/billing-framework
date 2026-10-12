@@ -34,20 +34,21 @@ export class FreezeWallet {
         const walletId = Account.walletId(customerId);
         const found = await repositories.accounts.find(walletId);
         if (!found) throw new WalletNotFoundError(`wallet for ${customerId.value} not found`);
-        if (found.isFrozen() === input.frozen) {
+        const [locked] = await repositories.accounts.lockMany([walletId]);
+        if (!locked) throw new WalletNotFoundError(`wallet for ${customerId.value} not found`);
+        // Kiểm tra lại trên bản đã khóa: hai yêu cầu đồng thời khác khóa không được cùng ghi "đã đổi".
+        if (locked.isFrozen() === input.frozen) {
           return {
             result: {
               customerId: customerId.value,
               frozen: input.frozen,
               changed: false,
-              frozenAt: found.toProps().frozen?.at.toISOString() ?? null,
+              frozenAt: locked.toProps().frozen?.at.toISOString() ?? null,
               actionId: null,
             },
             record: false,
           };
         }
-        const [locked] = await repositories.accounts.lockMany([walletId]);
-        if (!locked) throw new WalletNotFoundError(`wallet for ${customerId.value} not found`);
         const next = input.frozen
           ? locked.freeze(input.actor, input.reason, now)
           : locked.unfreeze();

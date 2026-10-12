@@ -150,6 +150,42 @@ describe('AdjustWallet', () => {
     );
   });
 
+  it('five concurrent calls with the same key post one adjustment and share one result', async () => {
+    const customer = newCustomer();
+    await fundWallet(h, { customer, amount: 100000 });
+    const request = input(customer);
+    const results = await Promise.all(Array.from({ length: 5 }, () => adjust.execute(request)));
+    expect(new Set(results.map((r) => JSON.stringify(r))).size).toBe(1);
+    expect(await opsCount(request.idempotencyKey)).toBe(1);
+    expect(await balance(`wallet:${customer}`)).toBe(130000);
+    const txs = await h.db
+      .withSchema(schema(h.acme))
+      .selectFrom('ledger_transactions')
+      .select('id')
+      .where('kind', '=', 'ADJUSTMENT')
+      .where('business_key', 'like', 'adjustment:%')
+      .where('id', '=', results[0]?.transactionId ?? '')
+      .execute();
+    expect(txs).toHaveLength(1);
+  });
+
+  it('eight concurrent debits of 300 on 1,100 succeed exactly three times', async () => {
+    const customer = newCustomer();
+    await fundWallet(h, { customer, amount: 1100 });
+    const settled = await Promise.allSettled(
+      Array.from({ length: 8 }, () =>
+        adjust.execute(input(customer, { direction: 'DEBIT', amount: 300 })),
+      ),
+    );
+    expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(3);
+    const rejected = settled.filter((r) => r.status === 'rejected');
+    expect(rejected).toHaveLength(5);
+    for (const r of rejected) {
+      expect((r as PromiseRejectedResult).reason).toBeInstanceOf(InsufficientFundsError);
+    }
+    expect(await balance(`wallet:${customer}`)).toBe(200);
+  });
+
   it('rejects an unknown wallet', async () => {
     await expect(adjust.execute(input('nobody-aj'))).rejects.toBeInstanceOf(WalletNotFoundError);
   });
