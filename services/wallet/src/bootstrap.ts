@@ -3,7 +3,7 @@ import { BrokerClient, deadLetterQueueName } from '@billing/messaging';
 import { createLogger } from '@billing/observability';
 import { Worker, once, runAll } from '@billing/runtime';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
-import type { Kysely } from 'kysely';
+import type { Dialect, Kysely } from 'kysely';
 import { AdjustWallet } from './application/adjust-wallet.js';
 import { ApplyPaymentResult } from './application/apply-payment-result.js';
 import { BackgroundRuns } from './application/background-runs.js';
@@ -21,6 +21,7 @@ import { PayOrder } from './application/pay-order.js';
 import {
   noopMetrics,
   type Clock,
+  type EventPublisher,
   type IdGenerator,
   type Logger,
   type Metrics,
@@ -58,6 +59,10 @@ export interface StartOverrides {
   afterOrderHandled?: () => Promise<void>;
   /** Cổng đo đạc vận hành; mặc định không làm gì (chạy trần và test không đổi hành vi). */
   metrics?: Metrics;
+  /** Chỉ dùng cho test: bọc dialect cơ sở dữ liệu để chèn lỗi. Mặc định không bọc. */
+  wrapDialect?: (dialect: Dialect) => Dialect;
+  /** Chỉ dùng cho test: bọc publisher của outbox để chèn lỗi. Mặc định không bọc. */
+  wrapPublisher?: (publisher: EventPublisher) => EventPublisher;
 }
 
 export interface RunningService {
@@ -76,7 +81,10 @@ export async function startService(
     warn: (details, message) => pino.warn(details, message),
     error: (details, message) => pino.error(details, message),
   };
-  const db = createDatabase<WalletDatabase>(config.database);
+  const db = createDatabase<WalletDatabase>(
+    config.database,
+    overrides.wrapDialect ? { wrapDialect: overrides.wrapDialect } : {},
+  );
 
   try {
     // Từ chối chạy khi còn tenant chưa được cấp phát/migrate, kèm thông báo nêu rõ tenant nào còn thiếu gì.
@@ -148,9 +156,10 @@ export async function startService(
   });
 
   const payOrder = new PayOrder({ uow, clock, ids, log });
+  const amqpPublisher = new AmqpEventPublisher(broker.publisher);
   const relay = new RelayOutbox({
     uow,
-    publisher: new AmqpEventPublisher(broker.publisher),
+    publisher: overrides.wrapPublisher ? overrides.wrapPublisher(amqpPublisher) : amqpPublisher,
     clock,
     log,
     backoffSeconds: DEFAULT_OUTBOX_BACKOFF_SECONDS,

@@ -2,6 +2,7 @@ import { createDatabase } from '@billing/database';
 import { createLogger } from '@billing/observability';
 import { Worker, once, runAll } from '@billing/runtime';
 import type { FastifyInstance } from 'fastify';
+import type { Dialect } from 'kysely';
 import { CompleteDueCharges } from './application/complete-due-charges.js';
 import { CreateCharge } from './application/create-charge.js';
 import { DeliverDueWebhooks } from './application/deliver-due-webhooks.js';
@@ -22,6 +23,8 @@ export interface StartOverrides {
   ids?: IdGenerator;
   /** Cổng đo đạc vận hành; mặc định không làm gì (chạy trần và test không đổi hành vi). */
   metrics?: Metrics;
+  /** Chỉ dùng cho test: bọc dialect cơ sở dữ liệu để chèn lỗi. Mặc định không bọc. */
+  wrapDialect?: (dialect: Dialect) => Dialect;
 }
 
 export interface RunningService {
@@ -35,7 +38,10 @@ export async function startService(
   overrides: StartOverrides = {},
 ): Promise<RunningService> {
   const log = createLogger('payment');
-  const db = createDatabase<PaymentDatabase>(config.database);
+  const db = createDatabase<PaymentDatabase>(
+    config.database,
+    overrides.wrapDialect ? { wrapDialect: overrides.wrapDialect } : {},
+  );
   const clock = overrides.clock ?? new SystemClock();
   const ids = overrides.ids ?? new RandomIdGenerator();
   const metrics = overrides.metrics ?? noopMetrics;

@@ -8,3 +8,6 @@ coverage/
 
 # Tham số rule/dashboard Kibana cục bộ
 /deploy/kibana/params.local.json
+
+# Kết quả chạy chaos test (seed, nhật ký lỗi)
+/tests/chaos/.out/
