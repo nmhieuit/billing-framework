@@ -316,6 +316,103 @@ describe('in-process system harness', () => {
     expect(await balanceOf('acme', 'h-conn')).toBe(8_000);
   });
 
+  it('heal({ allowUnsettledTopups }) returns while a topup is unsettled, but still waits for everything else', async () => {
+    const s = sys();
+    await s.openWallet('acme', 'h-unsettled');
+    const topup = await s.topup('acme', 'h-unsettled', 12_000, 'k-us');
+    const id = topup.topupId as string;
+    await s.heal();
+    const set = (status: string) =>
+      sql`update t_acme.topups set status = ${status} where id = ${id}`.execute(s.walletAdmin);
+    await set('PENDING');
+    try {
+      // Mặc định vẫn chờ topup (đã kiểm ở test heal() ở trên); có tùy chọn thì không chờ nó.
+      const started = Date.now();
+      await s.heal({ timeoutMs: 15_000, allowUnsettledTopups: true });
+      expect(Date.now() - started).toBeLessThan(10_000);
+      // Các điều kiện khác vẫn áp dụng: một charge PENDING chưa đến hạn thì heal vẫn phải chờ nó.
+      await sql`insert into charges (id, reference, amount, currency, status, scenario, due_at, created_at, metadata)
+        values ('ch_h_unsettled', 'h-unsettled-ref', 1000, 'VND', 'PENDING', '{}',
+                dateadd(hour, 1, sysutcdatetime()), sysutcdatetime(), '{"tenantId":"acme"}')`.execute(
+        s.paymentAdmin,
+      );
+      await expect(s.heal({ timeoutMs: 1_500, allowUnsettledTopups: true })).rejects.toThrow(
+        /quiesce hết hạn.*charges còn PENDING/,
+      );
+    } finally {
+      await set('SUCCEEDED');
+      await sql`delete from charges where id = 'ch_h_unsettled'`.execute(s.paymentAdmin);
+    }
+    await s.heal({ timeoutMs: 15_000 });
+  });
+
+  it('records only client-acknowledged successes in expectations', async () => {
+    const s = sys();
+    const e = s.expectations;
+    expect(s.retentionDeletes).toBe(false);
+    await s.openWallet('acme', 'h-exp');
+
+    const topups = e.topupsCreated.size;
+    const ok = await s.topup('acme', 'h-exp', 10_000, 'k-exp');
+    expect(ok.status).toBe(202);
+    expect(e.topupsCreated.has(`acme/${ok.topupId}`)).toBe(true);
+    expect(e.topupsCreated.size).toBe(topups + 1);
+    // Phản hồi lỗi (kết quả không xác định) không được ghi nhận; gọi lại cùng khóa trả cùng topup nên không thêm.
+    const bad = await s.topup('acme', 'h-exp', -5, 'k-exp-bad');
+    expect(bad.status).toBeGreaterThanOrEqual(400);
+    expect(e.topupsCreated.size).toBe(topups + 1);
+    expect((await s.topup('acme', 'h-exp', 10_000, 'k-exp')).topupId).toBe(ok.topupId);
+    expect(e.topupsCreated.size).toBe(topups + 1);
+    await s.heal();
+
+    const actions = e.opsActions;
+    const adjust = {
+      reason: 'expectations',
+      idempotencyKey: 'exp-adjust-1',
+      direction: 'CREDIT',
+      amount: 100,
+      currency: 'VND',
+    };
+    expect((await s.ops('acme', '/ops/wallets/h-exp/adjustments', adjust)).status).toBe(201);
+    expect(e.opsActions).toBe(actions + 1);
+    expect((await s.ops('acme', '/ops/wallets/h-exp/adjustments', adjust)).status).toBe(201);
+    expect(e.opsActions).toBe(actions + 1); // phát lại cùng khóa idempotency
+    const refused = await s.ops('acme', '/ops/wallets/h-nobody/adjustments', adjust);
+    expect(refused.status).toBeGreaterThanOrEqual(400);
+    expect(e.opsActions).toBe(actions + 1);
+    const freeze = { reason: 'expectations', idempotencyKey: 'exp-freeze-1' };
+    expect((await s.ops('acme', '/ops/wallets/h-exp/freeze', freeze)).status).toBe(200);
+    expect(e.opsActions).toBe(actions + 2);
+    // Đã đóng băng rồi: không đổi gì, không ghi kiểm toán (actionId null) nên không được kỳ vọng.
+    expect(
+      (
+        await s.ops('acme', '/ops/wallets/h-exp/freeze', {
+          ...freeze,
+          idempotencyKey: 'exp-freeze-2',
+        })
+      ).status,
+    ).toBe(200);
+    expect(e.opsActions).toBe(actions + 2);
+    expect(
+      (
+        await s.ops('acme', '/ops/wallets/h-exp/unfreeze', {
+          ...freeze,
+          idempotencyKey: 'exp-unfreeze',
+        })
+      ).status,
+    ).toBe(200);
+    expect(e.opsActions).toBe(actions + 3);
+    expect(e.opsActionIds.size).toBe(e.opsActions);
+
+    // Đơn: chỉ ghi khi Orders đã nhận OrderPaidV1, tại thời điểm heal().
+    const { orderId } = await s.sendOrder({ tenant: 'acme', customer: 'h-exp', amount: 1_000 });
+    const ghost = await s.sendOrder({ tenant: 'acme', customer: 'h-nobody-order', amount: 1_000 });
+    expect(e.ordersPaid.has(`acme/${orderId}`)).toBe(false);
+    await s.heal();
+    expect(e.ordersPaid.has(`acme/${orderId}`)).toBe(true);
+    expect(e.ordersPaid.has(`acme/${ghost.orderId}`)).toBe(false); // bị từ chối: OrderPaymentFailedV1, không phải đã trả
+  });
+
   it('stop() drops databases and vhost, and is idempotent', async () => {
     const own = await createSystem({ seed: 2, tenants: ['acme'] });
     const dbName = own.walletDb.database;

@@ -27,6 +27,7 @@ import { OpLog } from './op-log.js';
 import { createPrng, resolveSeed } from './prng.js';
 import { quiesce, type QuiesceCondition } from './quiesce.js';
 import {
+  DEFAULT_RECONCILIATION,
   paymentConfigFor,
   paymentEnv,
   retentionFor,
@@ -53,13 +54,36 @@ export interface SystemOptions {
   tenants?: string[];
   workerIntervalMs?: number;
   retention?: RetentionOption;
+  /**
+   * Đối soát của wallet. `autofix` mặc định BẬT (như cấu hình harness từ trước); tắt để thử ca "đối soát chỉ báo, không ghi bù".
+   * Chỉ đổi cấu hình dịch vụ; áp dụng cho cả hai chế độ (child nhận qua RECONCILE_AUTOFIX).
+   */
+  reconciliation?: { autofix?: boolean };
   /** Móc của wallet chạy sau khi PayOrder commit, trước khi ack (mô phỏng consumer chết giữa chừng). */
   afterOrderHandled?: () => Promise<void>;
+}
+
+/**
+ * Những gì client ĐÃ NHẬN XÁC NHẬN THÀNH CÔNG (retention không bao giờ được làm mất chúng; oracle INV-7 đối chiếu).
+ * Client nhận lỗi/không có phản hồi = kết quả không xác định nên KHÔNG ghi vào đây.
+ */
+export interface Expectations {
+  /** `<tenant>/<orderId>` của đơn mà Orders giả đã nhận OrderPaidV1, tính tới lần heal() gần nhất (xem heal()). */
+  readonly ordersPaid: Set<string>;
+  /** `<tenant>/<topupId>` của lần nạp mà POST /topups đã trả 2xx kèm topupId. */
+  readonly topupsCreated: Set<string>;
+  /** `<tenant>/<actionId>` của thao tác ops POST đã trả 2xx kèm actionId (đã ghi ops_actions). Gọi lại cùng khóa không tăng. */
+  readonly opsActionIds: Set<string>;
+  /** Số thao tác ops đã được ghi nhận (= opsActionIds.size). */
+  readonly opsActions: number;
 }
 
 export interface System {
   readonly mode: 'inproc' | 'child';
   readonly seed: number;
+  /** Đúng khi retention ở chế độ THẬT (enabled, dryRun=false): outbox SENT / idempotency key / processed_messages có thể đã bị dọn. */
+  readonly retentionDeletes: boolean;
+  readonly expectations: Expectations;
   /** Plan duy nhất; rule phân biệt dịch vụ bằng info.name ('wallet' | 'payment' | 'wallet-to-payment' | 'payment-to-wallet'). */
   readonly plan: FaultPlan;
   readonly log: OpLog;
@@ -110,8 +134,11 @@ export interface System {
    * webhook_events/charges không còn PENDING, topups ở trạng thái cuối, mọi đơn đã gửi đã được xử lý hoặc nằm trong DLQ,
    * và mọi kết quả OrderPaid/OrderPaymentFailed đã SENT đều đã tới Orders giả. heal() cũng đẩy nhanh backoff của outbox.
    * Plan giữ trạng thái tắt sau heal (gọi plan.enable() nếu muốn tiêm lỗi tiếp).
+   * `allowUnsettledTopups`: không chờ topup rời REQUESTED/PENDING (kịch bản mất webhook có chủ ý, S7: wallet sẽ không bao giờ
+   * nhận kết quả, chỉ đối soát sửa được); mọi điều kiện khác (outbox, queue, webhook, charge, đơn hàng) vẫn phải hội tụ.
+   * Cuối heal, các OrderPaidV1 Orders giả đã nhận được ghi vào expectations.ordersPaid.
    */
-  heal(options?: { timeoutMs?: number }): Promise<void>;
+  heal(options?: { timeoutMs?: number; allowUnsettledTopups?: boolean }): Promise<void>;
   /** Idempotent; luôn cố dọn hết (kể cả giết mọi tiến trình con) rồi mới ném lỗi gộp (nếu có). */
   stop(): Promise<void>;
 }
@@ -184,6 +211,38 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
   const tenants = tenantNames.map((t) => TenantId.parse(t));
   const workerIntervalMs = options.workerIntervalMs ?? 50;
   const retention = retentionFor(options.retention ?? 'off');
+  const retentionDeletes = retention.wallet.enabled && !retention.wallet.dryRun;
+  // Xác nhận thành công phía client (xem Expectations); chỉ ghi khi nhận phản hồi 2xx.
+  const ordersPaid = new Set<string>();
+  const topupsCreated = new Set<string>();
+  const opsActionIds = new Set<string>();
+  const expectations: Expectations = {
+    ordersPaid,
+    topupsCreated,
+    opsActionIds,
+    get opsActions() {
+      return opsActionIds.size;
+    },
+  };
+  let receivedCursor = 0;
+  // Ghi các OrderPaidV1 Orders giả đã nhận (từ lần ghi trước tới giờ). Chỉ gọi ở cuối heal(): trước đó test có thể tự
+  // chèn kết quả giả vào simulator.results để thử oracle, nên không đọc liên tục.
+  const syncOrdersPaid = (): void => {
+    const all = orders?.received() ?? [];
+    receivedCursor = Math.min(receivedCursor, all.length);
+    for (const r of all.slice(receivedCursor)) {
+      const tenant = r.payload.tenantId;
+      const orderId = r.payload.orderId;
+      if (
+        r.eventType === 'OrderPaidV1' &&
+        typeof tenant === 'string' &&
+        typeof orderId === 'string'
+      ) {
+        ordersPaid.add(`${tenant}/${orderId}`);
+      }
+    }
+    receivedCursor = all.length;
+  };
 
   // Tài nguyên được gán dần; stop() dọn đúng những gì đã dựng xong (kể cả khi createSystem hỏng giữa chừng).
   let walletDbHandle: TestDatabase | undefined;
@@ -280,6 +339,12 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
       broker: brokerAccess.wallet,
       workerIntervalMs,
       retention: retention.wallet,
+      tuning: {
+        reconciliation: {
+          ...DEFAULT_RECONCILIATION,
+          autofix: options.reconciliation?.autofix ?? DEFAULT_RECONCILIATION.autofix,
+        },
+      },
     });
     const paymentConfig = paymentConfigFor({
       port: paymentPort,
@@ -394,7 +459,7 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
         .map((m) => m.messageId)
         .filter((id): id is string => id !== undefined);
 
-    const conditions = (): QuiesceCondition[] => {
+    const conditions = (allowUnsettledTopups: boolean): QuiesceCondition[] => {
       const list: QuiesceCondition[] = [];
       // Backoff của relay outbox cứng trong sản phẩm (1,5,30,120,600 giây) và có thể vượt timeout của heal:
       // mỗi vòng chờ ta kéo các dòng PENDING đang chờ backoff/lease về "đến hạn" bằng kết nối quản trị
@@ -420,6 +485,7 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
               sql<{ n: number }>`select count(*) as n from ${schema}.outbox where status <> 'SENT'`,
             )) === 0,
         });
+        if (allowUnsettledTopups) continue;
         list.push({
           name: `topups ${tenant} chưa ở trạng thái cuối`,
           check: async () =>
@@ -504,12 +570,17 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
       return list;
     };
 
-    const heal = async (healOptions: { timeoutMs?: number } = {}): Promise<void> => {
+    const heal = async (
+      healOptions: { timeoutMs?: number; allowUnsettledTopups?: boolean } = {},
+    ): Promise<void> => {
       plan.disable();
       log.record('heal.start');
       if (payment === undefined) payment = await launchPayment();
       if (wallet === undefined) wallet = await launchWallet();
-      await quiesce(conditions(), { timeoutMs: healOptions.timeoutMs ?? HEAL_TIMEOUT_MS });
+      await quiesce(conditions(healOptions.allowUnsettledTopups === true), {
+        timeoutMs: healOptions.timeoutMs ?? HEAL_TIMEOUT_MS,
+      });
+      syncOrdersPaid();
       log.record('heal.done');
     };
 
@@ -521,6 +592,8 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
     const system: System = {
       mode,
       seed,
+      retentionDeletes,
+      expectations,
       plan,
       log,
       walletUrl,
@@ -552,6 +625,9 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
         });
         const body = (await response.json().catch(() => ({}))) as { topupId?: string };
         log.record('topup', { tenant, customer, amount, key, status: response.status });
+        if (response.ok && body.topupId !== undefined) {
+          topupsCreated.add(`${tenant}/${body.topupId}`);
+        }
         return body.topupId === undefined
           ? { status: response.status }
           : { status: response.status, topupId: body.topupId };
@@ -601,6 +677,11 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
           parsed = text === '' ? undefined : JSON.parse(text);
         } catch (error) {
           if (!(error instanceof SyntaxError)) throw error;
+        }
+        // Thao tác ghi đã được ops_actions xác nhận khi phản hồi 2xx có actionId (freeze không đổi trạng thái trả actionId null).
+        if (response.ok && body !== undefined && typeof parsed === 'object' && parsed !== null) {
+          const actionId = (parsed as { actionId?: unknown }).actionId;
+          if (typeof actionId === 'string') opsActionIds.add(`${tenant}/${actionId}`);
         }
         return { status: response.status, body: parsed };
       },

@@ -1,9 +1,13 @@
+import { waitFor } from '@billing/testing';
 import { sql, type Kysely, type RawBuilder } from 'kysely';
+import { isProcessAlive } from './crash.js';
 import { adminQuery, type System } from './system-harness.js';
 
 /**
  * Oracle bất biến của hệ chaos (spec §3). Chạy SAU heal() trên mọi tenant của hệ, chỉ đọc, bằng kết nối quản trị
- * KHÔNG bị plan can thiệp (walletAdmin / paymentAdmin). Đã cài: INV-1..INV-4; INV-5..INV-8 do task sau bổ sung.
+ * KHÔNG bị plan can thiệp (walletAdmin / paymentAdmin); riêng INV-5 gọi API đối soát của wallet (CÓ ghi bù) và INV-8 gọi
+ * HTTP của hai dịch vụ. Đầu vào chính: assertSystemInvariants/runInvariants (thứ tự kiểm tra bắt buộc, xem runInvariants);
+ * collectViolations là một lượt CHỈ ĐỌC các bất biến chọn (không có INV-5).
  *
  * Nguyên tắc:
  *  - Mọi lỗi truy vấn đều NÉM ra (adminQuery chỉ thử lại đúng một lần, cho trường hợp session của kết nối quản trị
@@ -27,6 +31,21 @@ import { adminQuery, type System } from './system-harness.js';
  *         | DUPLICATE_CHARGE_ID (một charge_id cho nhiều topup) | DUPLICATE_CHARGE_REF (nhiều charge cho một reference)
  *         | CHARGE_MULTIPLE_KEYS | KEY_CHARGE_MISMATCH
  *  INV-4  OUTBOX_NOT_SENT | SENT_NOT_RECEIVED | PAID_NOT_RECEIVED | OUTBOX_PAID_UNKNOWN_ORDER | RECEIVED_PAID_UNKNOWN_ORDER
+ *         | PAID_WITHOUT_OUTBOX (chỉ khi retention không xóa thật: dòng outbox SENT có thể đã bị dọn)
+ *  INV-5  RECONCILIATION_RUN_FAILED | LEDGER_UNBALANCED_OPEN | BALANCE_MISMATCH_OPEN | MISSING_AT_WALLET_UNFIXED
+ *         | RECONCILIATION_ITEM_OPEN (loại khác còn OPEN) | AUTOFIX_UNEXPECTED | AUTOFIX_MISSING
+ *         | RECONCILIATION_NOT_CONVERGED (lượt thứ hai vẫn thấy sai lệch)
+ *  INV-6  OPS_DUPLICATE_KEY | OPS_DUPLICATE_ID | ADJUST_TX_MISSING | ADJUST_TX_WRONG_WALLET | ADJUST_TX_RESULT_MISMATCH
+ *         | REVERSE_TX_MISSING | REVERSE_TX_RESULT_MISMATCH | REVERSE_ACTION_DUPLICATE | FREEZE_STATE_MISMATCH
+ *         | ADJUSTMENT_TX_ORPHAN | REVERSAL_TX_ORPHAN
+ *  INV-7  ACKED_ORDER_MISSING | ACKED_TOPUP_MISSING | ACKED_OPS_ACTION_MISSING
+ *  INV-8  HEALTH_FAILED | READ_FAILED | SERVICE_DOWN
+ *  Vi phạm tìm thấy lúc kiểm lại SAU đối soát mang thêm `detail.phase = 'after-reconciliation'`.
+ *
+ * Retention THẬT (System.retentionDeletes): outbox SENT / idempotency key / processed_messages có thể đã bị dọn. Mọi kiểm tra
+ * trong oracle chỉ nhìn các dòng còn lại nên không báo oan; riêng kiểm tra "đã trả thì còn dòng outbox OrderPaidV1"
+ * (PAID_WITHOUT_OUTBOX) cần dòng đã dọn nên chỉ chạy khi retention không xóa thật. INV-3 phần idempotency key chỉ xét khóa
+ * còn tồn tại nên dung thứ khóa đã bị dọn.
  */
 
 export type InvariantId =
@@ -56,7 +75,17 @@ export class InvariantViolationError extends Error {
 }
 
 export interface InvariantOptions {
+  /** Chỉ chạy các bất biến này (luôn theo thứ tự chuẩn); INV-5 đòi kèm đủ INV-1..4 (xem runInvariants). */
   only?: readonly InvariantId[];
+  /**
+   * Webhook thành công bị mất CÓ CHỦ Ý (S7): trước đối soát INV-3 được phép còn đúng các trạng thái MISSING_AT_WALLET
+   * (explainedByMissingAtWallet), đối soát phải ghi bù đúng tập charge đó; sau đối soát INV-3 vẫn phải chặt.
+   */
+  expectMissingAtWallet?: boolean;
+  /** Ngày UTC `YYYY-MM-DD` đối soát thêm ngoài các ngày suy ra từ dữ liệu. */
+  reconcileDays?: string[];
+  /** Chỉ dành cho test của chính oracle: thay cách chạy một lượt đối soát (mặc định gọi API HTTP của wallet). */
+  reconcileRunner?: ReconcileRunner;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -750,6 +779,22 @@ async function checkInv4(system: System, tenants: Tenant[]): Promise<Violation[]
         detail: { tenant: tenant.name, outboxIds: phantom.map((r) => r.id) },
       });
     }
+
+    // (e) ngược lại: mỗi đơn đã trả phải còn dòng outbox OrderPaidV1 của nó. Retention thật dọn dòng SENT cũ nên khi đó bỏ qua.
+    if (!system.retentionDeletes) {
+      const withRow = new Set(
+        resultRows.filter((r) => r.event_type === 'OrderPaidV1').map((r) => r.order_id),
+      );
+      const lostRow = [...paid.keys()].filter((orderId) => !withRow.has(orderId));
+      if (lostRow.length > 0) {
+        out.push({
+          invariant: 'INV-4',
+          code: 'PAID_WITHOUT_OUTBOX',
+          message: `tenant ${tenant.name}: đơn đã trả nhưng không có dòng outbox OrderPaidV1: ${listIds(lostRow)}`,
+          detail: { tenant: tenant.name, orderIds: lostRow },
+        });
+      }
+    }
   }
 
   // (d') ... và Orders giả cũng không được nhận OrderPaidV1 cho đơn không có order_payments (kể cả tenant lạ).
@@ -776,32 +821,818 @@ async function checkInv4(system: System, tenants: Tenant[]): Promise<Violation[]
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// INV-5: đối soát với payment (chạy qua HTTP của wallet, CÓ ghi bù khi autofix bật)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface ReconcileItem {
+  id: string;
+  kind: string;
+  chargeId: string | null;
+  topupId: string | null;
+  action: string;
+  caseStatus: string;
+  detail: Record<string, unknown>;
+}
+
+export interface ReconcileRun {
+  tenant: string;
+  day: string;
+  runId: string;
+  status: string;
+  failureReason: string | null;
+  /** Tổng theo đồng tiền mà lượt đối soát đã đọc từ payment / từ wallet (cùng ngày). */
+  gatewayTotals: Record<string, number>;
+  walletTotals: Record<string, number>;
+  items: ReconcileItem[];
+}
+
+/** Chạy một lượt đối soát cho (tenant, ngày); tách thành hàm để test của oracle thay thế (xem InvariantOptions.reconcileRunner). */
+export type ReconcileRunner = (
+  system: System,
+  tenant: string,
+  day: string,
+  /** 1 = lượt đối soát (có ghi bù), 2 = lượt kiểm hội tụ. */
+  pass: 1 | 2,
+) => Promise<ReconcileRun>;
+
+const RECONCILE_TIMEOUT_MS = 60_000;
+
+async function walletJson<T>(
+  system: System,
+  tenant: string,
+  path: string,
+  init: { method: 'GET' | 'POST'; body?: unknown; expect: number },
+): Promise<T> {
+  const response = await fetch(`${system.walletUrl}${path}`, {
+    method: init.method,
+    headers: { 'content-type': 'application/json', 'x-tenant-id': tenant },
+    ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+    signal: AbortSignal.timeout(RECONCILE_TIMEOUT_MS),
+  });
+  const text = await response.text();
+  if (response.status !== init.expect) {
+    throw new Error(
+      `đối soát: ${init.method} ${path} (tenant ${tenant}) trả ${response.status}, mong ${init.expect}: ${text.slice(0, 300)}`,
+    );
+  }
+  return JSON.parse(text) as T;
+}
+
+/**
+ * Đối soát THỦ CÔNG qua API của wallet: `POST /reconciliations` {date} → chờ `GET /reconciliations/:id` rời RUNNING →
+ * đọc hết `GET /reconciliations/:id/items` (theo cursor). Mọi phản hồi lạ đều ném lỗi.
+ */
+export const runReconciliationViaHttp: ReconcileRunner = async (system, tenant, day) => {
+  const { runId } = await walletJson<{ runId: string }>(system, tenant, '/reconciliations', {
+    method: 'POST',
+    body: { date: day },
+    expect: 202,
+  });
+  let run:
+    | {
+        status: string;
+        failureReason: string | null;
+        gatewayTotals: Record<string, number>;
+        walletTotals: Record<string, number>;
+      }
+    | undefined;
+  await waitFor(
+    async () => {
+      run = await walletJson(system, tenant, `/reconciliations/${runId}`, {
+        method: 'GET',
+        expect: 200,
+      });
+      return run?.status !== 'RUNNING';
+    },
+    { timeoutMs: RECONCILE_TIMEOUT_MS, intervalMs: 100 },
+  );
+  const finished = run as NonNullable<typeof run>;
+  const items: ReconcileItem[] = [];
+  let cursor: string | null = null;
+  do {
+    const page: { items: ReconcileItem[]; nextCursor: string | null } = await walletJson(
+      system,
+      tenant,
+      `/reconciliations/${runId}/items?limit=500${cursor === null ? '' : `&cursor=${cursor}`}`,
+      { method: 'GET', expect: 200 },
+    );
+    items.push(...page.items);
+    cursor = page.nextCursor;
+  } while (cursor !== null);
+  return {
+    tenant,
+    day,
+    runId,
+    status: finished.status,
+    failureReason: finished.failureReason,
+    gatewayTotals: finished.gatewayTotals,
+    walletTotals: finished.walletTotals,
+    items,
+  };
+};
+
+const addDays = (day: string, delta: number): string =>
+  new Date(Date.parse(`${day}T00:00:00.000Z`) + delta * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * Các ngày UTC cần đối soát, suy ra từ DỮ LIỆU (không từ đồng hồ, vì test có thể vắt qua nửa đêm): ngày của mọi charge bên
+ * payment và mọi topup bên wallet (tạo/hoàn tất), cộng ngày liền trước mỗi ngày đó (đối soát tra cứu ngày D-1) và các ngày
+ * người gọi chỉ định. Bỏ ngày tương lai (wallet từ chối). Không có dữ liệu thì lấy hôm nay.
+ */
+export async function reconcileDaysOf(
+  system: System,
+  tenants: Tenant[],
+  extra: readonly string[],
+): Promise<string[]> {
+  const days = new Set<string>(extra);
+  const charges = await rows(
+    system.paymentAdmin,
+    sql<{ d: string }>`
+      select distinct convert(char(10), completed_at, 23) as d from charges where completed_at is not null
+      union select distinct convert(char(10), created_at, 23) from charges`,
+  );
+  for (const row of charges) days.add(row.d);
+  for (const tenant of tenants) {
+    const topups = await rows(
+      system.walletAdmin,
+      sql<{ d: string }>`
+        select distinct convert(char(10), completed_at, 23) as d from ${table(tenant, 'topups')} where completed_at is not null
+        union select distinct convert(char(10), created_at, 23) from ${table(tenant, 'topups')}`,
+    );
+    for (const row of topups) days.add(row.d);
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const all = new Set<string>();
+  for (const day of days) {
+    all.add(day);
+    all.add(addDays(day, -1));
+  }
+  if (all.size === 0) all.add(today);
+  return [...all].filter((day) => day <= today).sort();
+}
+
+interface Reconciled {
+  runs: ReconcileRun[];
+  violations: Violation[];
+  /** `<tenant>/<chargeId>` của các item MISSING_AT_WALLET đã AUTO_APPLIED. */
+  autoApplied: Set<string>;
+}
+
+async function reconcileAll(
+  system: System,
+  tenants: Tenant[],
+  extraDays: readonly string[],
+  runner: ReconcileRunner,
+  pass: 1 | 2,
+): Promise<{ days: string[]; runs: ReconcileRun[] }> {
+  const days = await reconcileDaysOf(system, tenants, extraDays);
+  const runs = await Promise.all(
+    tenants.flatMap((tenant) => days.map((day) => runner(system, tenant.name, day, pass))),
+  );
+  return { days, runs };
+}
+
+function judgeFirstPass(runs: readonly ReconcileRun[]): Reconciled {
+  const violations: Violation[] = [];
+  const autoApplied = new Set<string>();
+  for (const run of runs) {
+    const where = { tenant: run.tenant, day: run.day, runId: run.runId };
+    if (run.status !== 'COMPLETED') {
+      violations.push({
+        invariant: 'INV-5',
+        code: 'RECONCILIATION_RUN_FAILED',
+        message: `tenant ${run.tenant}: lượt đối soát ngày ${run.day} (${run.runId}) kết thúc ${run.status}: ${run.failureReason ?? 'không rõ lý do'}`,
+        detail: { ...where, status: run.status, failureReason: run.failureReason },
+      });
+      continue;
+    }
+    for (const item of run.items) {
+      const detail = {
+        ...where,
+        itemId: item.id,
+        kind: item.kind,
+        chargeId: item.chargeId,
+        topupId: item.topupId,
+        action: item.action,
+        caseStatus: item.caseStatus,
+      };
+      if (item.kind === 'LEDGER_UNBALANCED' || item.kind === 'BALANCE_MISMATCH') {
+        if (item.caseStatus === 'OPEN') {
+          violations.push({
+            invariant: 'INV-5',
+            code: `${item.kind}_OPEN`,
+            message: `tenant ${run.tenant}: đối soát ngày ${run.day} báo ${item.kind} chưa xử lý (item ${item.id}): ${JSON.stringify(item.detail)}`,
+            detail: { ...detail, itemDetail: item.detail },
+          });
+        }
+      } else if (item.kind === 'MISSING_AT_WALLET') {
+        if (item.action === 'AUTO_APPLIED' && item.caseStatus !== 'OPEN') {
+          autoApplied.add(`${run.tenant}/${String(item.chargeId)}`);
+        } else {
+          violations.push({
+            invariant: 'INV-5',
+            code: 'MISSING_AT_WALLET_UNFIXED',
+            message: `tenant ${run.tenant}: charge ${item.chargeId} (topup ${item.topupId}) thiếu ở wallet nhưng đối soát ngày ${run.day} chưa ghi bù (action ${item.action}, ${item.caseStatus})`,
+            detail,
+          });
+        }
+      } else if (item.caseStatus === 'OPEN') {
+        violations.push({
+          invariant: 'INV-5',
+          code: 'RECONCILIATION_ITEM_OPEN',
+          message: `tenant ${run.tenant}: đối soát ngày ${run.day} còn item ${item.kind} chưa xử lý (item ${item.id}, charge ${item.chargeId}, topup ${item.topupId})`,
+          detail: { ...detail, itemDetail: item.detail },
+        });
+      }
+    }
+  }
+  return { runs: [...runs], violations, autoApplied };
+}
+
+/**
+ * INV-5: không còn sai lệch sổ cái chưa xử lý, mọi khoản MISSING_AT_WALLET đều đã được ghi bù ĐÚNG tập mà INV-3 đã giải thích
+ * (`remembered`), và lượt đối soát thứ hai không còn phát hiện gì (hội tụ). Lượt thứ hai chỉ chạy khi lượt đầu sạch.
+ */
+async function checkInv5(
+  system: System,
+  tenants: Tenant[],
+  ctx: { extraDays: readonly string[]; runner: ReconcileRunner; remembered: ReadonlySet<string> },
+): Promise<Violation[]> {
+  const first = await reconcileAll(system, tenants, ctx.extraDays, ctx.runner, 1);
+  const judged = judgeFirstPass(first.runs);
+  const out = judged.violations;
+
+  const unfixed = new Set(
+    out
+      .filter((v) => v.code === 'MISSING_AT_WALLET_UNFIXED')
+      .map((v) => `${String(v.detail?.tenant)}/${String(v.detail?.chargeId)}`),
+  );
+  const unexpected = [...judged.autoApplied].filter((key) => !ctx.remembered.has(key));
+  if (unexpected.length > 0) {
+    out.push({
+      invariant: 'INV-5',
+      code: 'AUTOFIX_UNEXPECTED',
+      message: `đối soát đã ghi bù charge mà INV-3 không hề báo thiếu: ${listIds(unexpected)}`,
+      detail: { charges: unexpected },
+    });
+  }
+  const absent = [...ctx.remembered].filter(
+    (key) => !judged.autoApplied.has(key) && !unfixed.has(key),
+  );
+  if (absent.length > 0) {
+    out.push({
+      invariant: 'INV-5',
+      code: 'AUTOFIX_MISSING',
+      message: `charge thiếu ở wallet (INV-3) nhưng đối soát không ghi bù: ${listIds(absent)}`,
+      detail: { charges: absent },
+    });
+  }
+  if (out.length > 0) return out;
+
+  // Hội tụ: sau lượt đầu (và việc ghi bù), một lượt nữa trên cùng dữ liệu (ngày suy ra lại: ghi bù có thể sang ngày mới) phải trống.
+  const second = await reconcileAll(system, tenants, ctx.extraDays, ctx.runner, 2);
+  for (const run of second.runs) {
+    if (run.status === 'COMPLETED' && run.items.length === 0) continue;
+    out.push({
+      invariant: 'INV-5',
+      code: 'RECONCILIATION_NOT_CONVERGED',
+      message: `tenant ${run.tenant}: lượt đối soát thứ hai ngày ${run.day} (${run.runId}) ${
+        run.status === 'COMPLETED'
+          ? `vẫn phát hiện ${run.items.length} sai lệch: ${listIds(run.items.map((i) => `${i.kind} (charge ${i.chargeId}, topup ${i.topupId})`))}`
+          : `kết thúc ${run.status}: ${run.failureReason ?? 'không rõ lý do'}`
+      }`,
+      detail: {
+        tenant: run.tenant,
+        day: run.day,
+        runId: run.runId,
+        status: run.status,
+        kinds: run.items.map((i) => i.kind),
+      },
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// INV-6: thao tác vận hành (ops) nguyên tử: mỗi dòng ops_actions đều có hiệu ứng và ngược lại
+// ---------------------------------------------------------------------------------------------------------------------
+
+interface OpsActionRow {
+  seq: string;
+  id: string;
+  action: string;
+  target: string;
+  idempotency_key: string;
+  result: string;
+}
+
+async function checkInv6(system: System, tenants: Tenant[]): Promise<Violation[]> {
+  const out: Violation[] = [];
+  for (const tenant of tenants) {
+    const actions = await rows(
+      system.walletAdmin,
+      sql<OpsActionRow>`
+        select seq, id, action, target, idempotency_key, result from ${table(tenant, 'ops_actions')} order by seq`,
+    );
+    const txs = await rows(
+      system.walletAdmin,
+      sql<{
+        id: string;
+        business_key: string;
+        kind: string;
+        reverses_transaction_id: string | null;
+      }>`
+        select id, business_key, kind, reverses_transaction_id from ${table(tenant, 'ledger_transactions')}
+        where kind in ('ADJUSTMENT', 'REVERSAL')`,
+    );
+    const touched = await rows(
+      system.walletAdmin,
+      sql<{ transaction_id: string; account_id: string }>`
+        select e.transaction_id, e.account_id from ${table(tenant, 'ledger_entries')} e
+        join ${table(tenant, 'ledger_transactions')} x on x.id = e.transaction_id
+        where x.kind = 'ADJUSTMENT'`,
+    );
+    const wallets = await rows(
+      system.walletAdmin,
+      sql<{ id: string; frozen_at: Date | null }>`
+        select id, frozen_at from ${table(tenant, 'accounts')} where kind = 'WALLET'`,
+    );
+    const base = { tenant: tenant.name };
+
+    // (a) khóa idempotency (và id) không trùng ở mức dữ liệu (ràng buộc unique có thể bị tháo nhầm).
+    for (const [field, label] of [
+      ['idempotency_key', 'khóa idempotency'],
+      ['id', 'id'],
+    ] as const) {
+      const seen = new Map<string, string[]>();
+      for (const a of actions) seen.set(a[field], [...(seen.get(a[field]) ?? []), a.id]);
+      const dup = [...seen].filter(([, ids]) => ids.length > 1);
+      if (dup.length > 0) {
+        out.push({
+          invariant: 'INV-6',
+          code: field === 'id' ? 'OPS_DUPLICATE_ID' : 'OPS_DUPLICATE_KEY',
+          message: `tenant ${tenant.name}: nhiều dòng ops_actions cùng ${label}: ${listIds(dup.map(([k, ids]) => `${k} ← ${ids.join(' & ')}`))}`,
+          detail: { ...base, values: dup.map(([k]) => k) },
+        });
+      }
+    }
+
+    const adjustTxByKey = new Map(
+      txs.filter((x) => x.kind === 'ADJUSTMENT').map((x) => [x.business_key, x]),
+    );
+    const reversalByTarget = new Map(
+      txs
+        .filter((x) => x.kind === 'REVERSAL' && x.reverses_transaction_id !== null)
+        .map((x) => [x.reverses_transaction_id as string, x]),
+    );
+    const accountsOf = new Map<string, Set<string>>();
+    for (const e of touched) {
+      accountsOf.set(
+        e.transaction_id,
+        (accountsOf.get(e.transaction_id) ?? new Set()).add(e.account_id),
+      );
+    }
+    const parsedTransactionId = (action: OpsActionRow): string | undefined => {
+      try {
+        const id = (JSON.parse(action.result) as { transactionId?: unknown }).transactionId;
+        return typeof id === 'string' ? id : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+
+    const adjustKeys = new Set<string>();
+    const reverseTargets = new Map<string, string[]>();
+    const lastFreeze = new Map<string, OpsActionRow>(); // wallet:<customer> → hành động FREEZE/UNFREEZE cuối (theo seq)
+    for (const action of actions) {
+      if (action.action === 'ADJUST') {
+        adjustKeys.add(`adjustment:${action.id}`);
+        const tx = adjustTxByKey.get(`adjustment:${action.id}`);
+        if (tx === undefined) {
+          out.push({
+            invariant: 'INV-6',
+            code: 'ADJUST_TX_MISSING',
+            message: `tenant ${tenant.name}: ops ADJUST ${action.id} (${action.target}) không có giao dịch ADJUSTMENT adjustment:${action.id}`,
+            detail: { ...base, actionId: action.id, target: action.target },
+          });
+          continue;
+        }
+        const walletId = action.target;
+        if (!accountsOf.get(tx.id)?.has(walletId)) {
+          out.push({
+            invariant: 'INV-6',
+            code: 'ADJUST_TX_WRONG_WALLET',
+            message: `tenant ${tenant.name}: ops ADJUST ${action.id} nhắm ${action.target} nhưng giao dịch ${tx.id} không có dòng nào của ví đó`,
+            detail: { ...base, actionId: action.id, transactionId: tx.id, target: action.target },
+          });
+        }
+        const recorded = parsedTransactionId(action);
+        if (recorded !== undefined && recorded !== tx.id) {
+          out.push({
+            invariant: 'INV-6',
+            code: 'ADJUST_TX_RESULT_MISMATCH',
+            message: `tenant ${tenant.name}: ops ADJUST ${action.id} ghi kết quả giao dịch ${recorded} nhưng giao dịch thật là ${tx.id}`,
+            detail: { ...base, actionId: action.id, recorded, transactionId: tx.id },
+          });
+        }
+      } else if (action.action === 'REVERSE') {
+        const target = action.target.replace(/^transaction:/, '');
+        reverseTargets.set(target, [...(reverseTargets.get(target) ?? []), action.id]);
+        const tx = reversalByTarget.get(target);
+        if (tx === undefined) {
+          out.push({
+            invariant: 'INV-6',
+            code: 'REVERSE_TX_MISSING',
+            message: `tenant ${tenant.name}: ops REVERSE ${action.id} (${action.target}) không có giao dịch REVERSAL đảo giao dịch ${target}`,
+            detail: { ...base, actionId: action.id, target },
+          });
+          continue;
+        }
+        const recorded = parsedTransactionId(action);
+        if (recorded !== undefined && recorded !== tx.id) {
+          out.push({
+            invariant: 'INV-6',
+            code: 'REVERSE_TX_RESULT_MISMATCH',
+            message: `tenant ${tenant.name}: ops REVERSE ${action.id} ghi kết quả giao dịch ${recorded} nhưng giao dịch đảo thật là ${tx.id}`,
+            detail: { ...base, actionId: action.id, recorded, transactionId: tx.id },
+          });
+        }
+      } else if (action.action === 'FREEZE' || action.action === 'UNFREEZE') {
+        lastFreeze.set(action.target, action);
+      }
+    }
+
+    // (b) mỗi giao dịch đảo chỉ do đúng một thao tác REVERSE.
+    const doubled = [...reverseTargets].filter(([, ids]) => ids.length > 1);
+    if (doubled.length > 0) {
+      out.push({
+        invariant: 'INV-6',
+        code: 'REVERSE_ACTION_DUPLICATE',
+        message: `tenant ${tenant.name}: nhiều thao tác REVERSE cho cùng một giao dịch: ${listIds(doubled.map(([t, ids]) => `${t} ← ${ids.join(' & ')}`))}`,
+        detail: { ...base, targets: doubled.map(([t]) => t) },
+      });
+    }
+
+    // (c) đóng băng: frozen_at của từng ví khớp thao tác FREEZE/UNFREEZE cuối cùng (không có thao tác nào ⇒ không bị đóng băng).
+    const badFreeze: string[] = [];
+    for (const wallet of wallets) {
+      const customer = wallet.id.replace(/^wallet:/, '');
+      const last = lastFreeze.get(`wallet:${customer}`);
+      const expectFrozen = last?.action === 'FREEZE';
+      if ((wallet.frozen_at !== null) !== expectFrozen) {
+        badFreeze.push(
+          `${wallet.id} (frozen_at ${wallet.frozen_at === null ? 'null' : 'có'}, thao tác cuối ${last?.action ?? 'không có'})`,
+        );
+      }
+    }
+    if (badFreeze.length > 0) {
+      out.push({
+        invariant: 'INV-6',
+        code: 'FREEZE_STATE_MISMATCH',
+        message: `tenant ${tenant.name}: trạng thái đóng băng không khớp thao tác ops cuối cùng: ${listIds(badFreeze)}`,
+        detail: { ...base, wallets: badFreeze },
+      });
+    }
+
+    // (d) hiệu ứng mồ côi: ADJUSTMENT/REVERSAL không thuộc thao tác ops nào.
+    const orphanAdjust = txs.filter(
+      (x) => x.kind === 'ADJUSTMENT' && !adjustKeys.has(x.business_key),
+    );
+    if (orphanAdjust.length > 0) {
+      out.push({
+        invariant: 'INV-6',
+        code: 'ADJUSTMENT_TX_ORPHAN',
+        message: `tenant ${tenant.name}: giao dịch ADJUSTMENT không có dòng ops_actions: ${listIds(orphanAdjust.map((x) => `${x.id} (${x.business_key})`))}`,
+        detail: { ...base, transactionIds: orphanAdjust.map((x) => x.id) },
+      });
+    }
+    const orphanReversal = txs.filter(
+      (x) => x.kind === 'REVERSAL' && !reverseTargets.has(x.reverses_transaction_id ?? ''),
+    );
+    if (orphanReversal.length > 0) {
+      out.push({
+        invariant: 'INV-6',
+        code: 'REVERSAL_TX_ORPHAN',
+        message: `tenant ${tenant.name}: giao dịch REVERSAL không có dòng ops_actions REVERSE: ${listIds(orphanReversal.map((x) => `${x.id} (đảo ${x.reverses_transaction_id})`))}`,
+        detail: { ...base, transactionIds: orphanReversal.map((x) => x.id) },
+      });
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// INV-7: retention an toàn — mọi thứ client đã được xác nhận thành công vẫn còn nguyên
+// ---------------------------------------------------------------------------------------------------------------------
+
+function splitKey(key: string): { tenant: string; id: string } {
+  const at = key.indexOf('/');
+  return { tenant: key.slice(0, at), id: key.slice(at + 1) };
+}
+
+/**
+ * Đối chiếu System.expectations (chỉ ghi khi client nhận thành công): đơn Orders đã nhận OrderPaidV1 còn order_payments,
+ * lần nạp đã trả topupId còn dòng topups, thao tác ops đã trả actionId còn dòng ops_actions. Retention không được đụng tới
+ * các bảng này; xóa nhầm (hoặc mất dữ liệu do lỗi) sẽ bị bắt ở đây. Kết quả không xác định (lỗi) không bao giờ bị đòi.
+ */
+async function checkInv7(system: System, tenants: Tenant[]): Promise<Violation[]> {
+  const out: Violation[] = [];
+  const known = new Map(tenants.map((t) => [t.name, t]));
+  const expectations = system.expectations;
+  const groups = [
+    {
+      keys: [...expectations.ordersPaid],
+      code: 'ACKED_ORDER_MISSING',
+      label: 'đơn đã trả (Orders đã nhận OrderPaidV1) không còn order_payments',
+      load: async (tenant: Tenant) =>
+        (
+          await rows(
+            system.walletAdmin,
+            sql<{ id: string }>`select order_id as id from ${table(tenant, 'order_payments')}`,
+          )
+        ).map((r) => r.id),
+    },
+    {
+      keys: [...expectations.topupsCreated],
+      code: 'ACKED_TOPUP_MISSING',
+      label: 'lần nạp đã tạo (đã trả topupId) không còn dòng topups',
+      load: async (tenant: Tenant) =>
+        (
+          await rows(
+            system.walletAdmin,
+            sql<{ id: string }>`select id from ${table(tenant, 'topups')}`,
+          )
+        ).map((r) => r.id),
+    },
+    {
+      keys: [...expectations.opsActionIds],
+      code: 'ACKED_OPS_ACTION_MISSING',
+      label: 'thao tác ops đã xác nhận (đã trả actionId) không còn dòng ops_actions',
+      load: async (tenant: Tenant) =>
+        (
+          await rows(
+            system.walletAdmin,
+            sql<{ id: string }>`select id from ${table(tenant, 'ops_actions')}`,
+          )
+        ).map((r) => r.id),
+    },
+  ];
+  for (const group of groups) {
+    const present = new Map<string, Set<string>>();
+    const lost: string[] = [];
+    for (const key of group.keys) {
+      const { tenant, id } = splitKey(key);
+      const schema = known.get(tenant);
+      if (schema === undefined) {
+        lost.push(key);
+        continue;
+      }
+      if (!present.has(tenant)) present.set(tenant, new Set(await group.load(schema)));
+      if (!(present.get(tenant) as Set<string>).has(id)) lost.push(key);
+    }
+    if (lost.length > 0) {
+      out.push({
+        invariant: 'INV-7',
+        code: group.code,
+        message: `${group.label}: ${listIds(lost)}`,
+        detail: { keys: lost },
+      });
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// INV-8: phục hồi — cả hai dịch vụ sống, đọc được qua pool của chính nó
+// ---------------------------------------------------------------------------------------------------------------------
+
+const HEALTH_TIMEOUT_MS = 10_000;
+
+async function probe(
+  url: string,
+  headers: Record<string, string> = {},
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  try {
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
+    await response.arrayBuffer();
+    return response.status === 200
+      ? { ok: true }
+      : { ok: false, reason: `HTTP ${response.status}` };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * `GET /health` = 200 cho cả hai dịch vụ; một lần đọc nhẹ đi qua pool DB của từng dịch vụ (wallet: GET /ops/actions;
+ * payment: GET /settlements của hôm qua) thành công trong 10 giây; không dịch vụ con nào còn chết (chế độ child).
+ * Lỗi kết nối KHÔNG ném mà thành vi phạm (đó chính là điều INV-8 phát hiện).
+ */
+async function checkInv8(system: System, tenants: Tenant[]): Promise<Violation[]> {
+  const out: Violation[] = [];
+  const first = tenants[0];
+  const yesterday = addDays(new Date().toISOString().slice(0, 10), -1);
+  const checks: Array<{
+    service: 'wallet' | 'payment';
+    what: string;
+    code: string;
+    url: string;
+    headers?: Record<string, string>;
+  }> = [
+    {
+      service: 'wallet',
+      what: 'GET /health',
+      code: 'HEALTH_FAILED',
+      url: `${system.walletUrl}/health`,
+    },
+    {
+      service: 'payment',
+      what: 'GET /health',
+      code: 'HEALTH_FAILED',
+      url: `${system.paymentUrl}/health`,
+    },
+    {
+      service: 'wallet',
+      what: 'đọc nhẹ qua pool (GET /ops/actions)',
+      code: 'READ_FAILED',
+      url: `${system.walletUrl}/ops/actions?limit=1`,
+      headers: {
+        'x-tenant-id': first?.name ?? '',
+        'x-actor-id': 'chaos-oracle',
+        'x-actor-role': 'OPS',
+      },
+    },
+    {
+      service: 'payment',
+      what: 'đọc nhẹ qua pool (GET /settlements)',
+      code: 'READ_FAILED',
+      url: `${system.paymentUrl}/settlements?date=${yesterday}&limit=1`,
+    },
+  ];
+  const results = await Promise.all(checks.map((check) => probe(check.url, check.headers)));
+  checks.forEach((check, index) => {
+    const result = results[index];
+    if (result === undefined || result.ok) return;
+    out.push({
+      invariant: 'INV-8',
+      code: check.code,
+      message: `${check.service}: ${check.what} thất bại (${result.reason})`,
+      detail: { service: check.service, reason: result.reason },
+    });
+  });
+  const pids = (system as { pids?: () => { wallet?: number; payment?: number } }).pids;
+  if (system.mode === 'child' && typeof pids === 'function') {
+    const alive = pids.call(system);
+    for (const service of ['wallet', 'payment'] as const) {
+      const pid = alive[service];
+      if (pid === undefined || !isProcessAlive(pid)) {
+        out.push({
+          invariant: 'INV-8',
+          code: 'SERVICE_DOWN',
+          message: `${service}: tiến trình con không còn chạy (pid ${pid ?? 'không có'})`,
+          detail: { service, pid: pid ?? null },
+        });
+      }
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // API
 // ---------------------------------------------------------------------------------------------------------------------
 
 type Check = (system: System, tenants: Tenant[]) => Promise<Violation[]>;
 
+/** Kiểm tra CHỈ ĐỌC. INV-5 không nằm ở đây vì nó ghi (đối soát có autofix): chỉ chạy được qua runInvariants/assertSystemInvariants. */
 const CHECKS: Partial<Record<InvariantId, Check>> = {
   'INV-1': checkInv1,
   'INV-2': checkInv2,
   'INV-3': checkInv3,
   'INV-4': checkInv4,
+  'INV-6': checkInv6,
+  'INV-7': checkInv7,
+  'INV-8': checkInv8,
 };
 
-/** Thu mọi vi phạm của các bất biến đã chọn (mặc định: tất cả bất biến đã cài). Lỗi truy vấn được ném, không bao giờ thành "đạt". */
+const ALL: readonly InvariantId[] = [
+  'INV-1',
+  'INV-2',
+  'INV-3',
+  'INV-4',
+  'INV-5',
+  'INV-6',
+  'INV-7',
+  'INV-8',
+];
+const READ_ONLY: readonly InvariantId[] = ALL.filter((id) => id !== 'INV-5');
+
+function select(
+  only: readonly InvariantId[] | undefined,
+  fallback: readonly InvariantId[],
+): InvariantId[] {
+  const wanted = only ?? fallback;
+  for (const id of wanted) {
+    if (!ALL.includes(id)) throw new Error(`bất biến ${String(id)} không tồn tại`);
+  }
+  return ALL.filter((id) => wanted.includes(id)); // luôn theo thứ tự chuẩn, bất kể thứ tự người gọi liệt kê
+}
+
+/**
+ * Một lượt kiểm tra CHỈ ĐỌC các bất biến đã chọn (mặc định INV-1..4, 6, 7, 8; thứ tự chuẩn). Lỗi truy vấn được ném, không bao
+ * giờ thành "đạt". Không chạy INV-5 (đối soát có ghi bù thay đổi trạng thái, cần thứ tự kiểm tra riêng): dùng runInvariants.
+ */
 export async function collectViolations(
   system: System,
   options: InvariantOptions = {},
 ): Promise<Violation[]> {
-  const selected = options.only ?? (Object.keys(CHECKS) as InvariantId[]);
-  for (const id of selected) {
-    if (CHECKS[id] === undefined) throw new Error(`bất biến ${id} chưa được cài trong oracle`);
+  const selected = select(options.only, READ_ONLY);
+  if (selected.includes('INV-5')) {
+    throw new Error(
+      'INV-5 chạy đối soát có ghi bù nên không thu được bằng collectViolations; dùng runInvariants/assertSystemInvariants',
+    );
   }
   const tenants = await discoverTenants(system);
   const out: Violation[] = [];
   for (const id of selected) {
     out.push(...(await (CHECKS[id] as Check)(system, tenants)));
   }
+  return out;
+}
+
+const PRE_AND_POST: readonly InvariantId[] = ['INV-1', 'INV-2', 'INV-3', 'INV-4'];
+
+/**
+ * Toàn bộ oracle, theo THỨ TỰ bắt buộc vì đối soát có thể ghi bù (autofix) và che lỗi:
+ *  1. INV-1, INV-2, INV-4 chặt (đối soát không bao giờ đụng tới đơn hàng hay outbox);
+ *  2. INV-3 TRƯỚC đối soát: phải rỗng; riêng `expectMissingAtWallet` (webhook bị mất có chủ ý, S7) thì chỉ được phép còn
+ *     đúng các trạng thái MISSING_AT_WALLET (explainedByMissingAtWallet), và tập charge đó được nhớ lại;
+ *  3. INV-8 (cần wallet sống để đối soát);
+ *  4. nếu các bước trên sạch: đối soát có autofix qua API, mọi tenant, mọi ngày UTC có dữ liệu (INV-5), rồi kiểm lại
+ *     INV-1..4 CHẶT (không còn miễn trừ) để chứng minh ghi bù đúng một lần và sổ cái vẫn cân;
+ *  5. INV-6, INV-7.
+ * Có vi phạm ở bước 1-3 thì KHÔNG chạy đối soát (đừng để autofix đổi hiện trường hoặc che lỗi); INV-6/7/8 vẫn được kiểm.
+ *
+ * `only`: chỉ chạy các bất biến liệt kê (luôn theo thứ tự chuẩn trên, không theo thứ tự liệt kê). INV-5 đòi liệt kê đủ
+ * INV-1..INV-4: chạy đối soát mà không kiểm INV-3 trước/INV-1,2,4 trước và sau là cách để đối soát che lỗi, nên bị từ chối.
+ */
+export async function runInvariants(
+  system: System,
+  options: InvariantOptions = {},
+): Promise<Violation[]> {
+  const selected = select(options.only, ALL);
+  const has = (id: InvariantId): boolean => selected.includes(id);
+  if (has('INV-5')) {
+    const lacking = PRE_AND_POST.filter((id) => !has(id));
+    if (lacking.length > 0) {
+      throw new Error(
+        `INV-5 (đối soát có ghi bù) đòi kiểm cả INV-1..INV-4 trước và sau đối soát; thiếu ${lacking.join(', ')}`,
+      );
+    }
+  }
+  const tenants = await discoverTenants(system);
+  const strict: Violation[] = [];
+  for (const id of ['INV-1', 'INV-2', 'INV-4'] as const) {
+    if (has(id)) strict.push(...(await (CHECKS[id] as Check)(system, tenants)));
+  }
+
+  // Charge (tenant/chargeId) mà webhook bị mất có chủ ý: INV-3 cho phép đúng trạng thái này TRƯỚC đối soát.
+  const remembered = new Set<string>();
+  if (has('INV-3')) {
+    const inv3 = await checkInv3(system, tenants);
+    if (options.expectMissingAtWallet === true && explainedByMissingAtWallet(inv3)) {
+      for (const v of inv3.filter(isMissingAtWallet)) {
+        remembered.add(`${String(v.detail?.tenant)}/${String(v.detail?.chargeId)}`);
+      }
+    } else {
+      strict.push(...inv3);
+    }
+  }
+  const health = has('INV-8') ? await checkInv8(system, tenants) : [];
+
+  const out: Violation[] = [...strict];
+  if (has('INV-5') && strict.length === 0 && health.length === 0) {
+    out.push(
+      ...(await checkInv5(system, tenants, {
+        extraDays: options.reconcileDays ?? [],
+        runner: options.reconcileRunner ?? runReconciliationViaHttp,
+        remembered,
+      })),
+    );
+    // Sau đối soát mọi thứ phải chặt: ghi bù đúng một lần, sổ cái cân, đơn hàng và outbox không bị đụng tới.
+    for (const id of PRE_AND_POST) {
+      for (const v of await (CHECKS[id] as Check)(system, tenants)) {
+        out.push({
+          ...v,
+          message: `(sau đối soát) ${v.message}`,
+          detail: { ...v.detail, phase: 'after-reconciliation' },
+        });
+      }
+    }
+  }
+  if (has('INV-6')) out.push(...(await checkInv6(system, tenants)));
+  if (has('INV-7')) out.push(...(await checkInv7(system, tenants)));
+  out.push(...health);
   return out;
 }
 
@@ -854,6 +1685,6 @@ export async function assertSystemInvariants(
   system: System,
   options: InvariantOptions = {},
 ): Promise<void> {
-  const violations = await collectViolations(system, options);
+  const violations = await runInvariants(system, options);
   if (violations.length > 0) throw new InvariantViolationError(violations);
 }

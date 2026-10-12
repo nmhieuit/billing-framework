@@ -1,3 +1,4 @@
+import { waitFor } from '@billing/testing';
 import { sql, type Kysely } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -6,7 +7,12 @@ import {
   explainedByMissingAtWallet,
   InvariantViolationError,
   isMissingAtWallet,
+  reconcileDaysOf,
+  runInvariants,
+  runReconciliationViaHttp,
   type InvariantId,
+  type ReconcileRun,
+  type ReconcileRunner,
   type Violation,
 } from './support/invariants.js';
 import { killSessions } from './support/sql-faults.js';
@@ -974,10 +980,17 @@ describe('oracle với lỗi chèn vào sổ cái (hệ riêng cho từng ca, kh
       await insertEntry(s, 'chaos-u2', 'system:ADJUSTMENT:VND', -5);
       await bump(s, 'wallet:alice', 5);
       await bump(s, 'system:ADJUSTMENT:VND', -5);
+      // Giao dịch ADJUSTMENT chèn tay không có ops_actions nên INV-6 cũng đúng khi báo chúng là hiệu ứng mồ côi.
       await expectViolations(
         s,
-        ['INV-1'],
-        ['giao dịch có tổng dòng khác 0', 'chaos-u1', 'chaos-u2', 'code:TX_UNBALANCED'],
+        ['INV-1', 'INV-6'],
+        [
+          'giao dịch có tổng dòng khác 0',
+          'chaos-u1',
+          'chaos-u2',
+          'code:TX_UNBALANCED',
+          'code:ADJUSTMENT_TX_ORPHAN',
+        ],
       );
     });
   });
@@ -985,7 +998,11 @@ describe('oracle với lỗi chèn vào sổ cái (hệ riêng cho từng ca, kh
   it('INV-1: detects a ledger transaction with no entries', async () => {
     await withFreshSystem(true, async (s) => {
       await insertTx(s, 'chaos-empty', 'adjustment:chaos-empty', 'ADJUSTMENT');
-      await expectViolations(s, ['INV-1'], ['không có dòng nào', 'chaos-empty', 'code:TX_EMPTY']);
+      await expectViolations(
+        s,
+        ['INV-1', 'INV-6'],
+        ['không có dòng nào', 'chaos-empty', 'code:TX_EMPTY', 'code:ADJUSTMENT_TX_ORPHAN'],
+      );
     });
   });
 
@@ -1214,5 +1231,1058 @@ describe('oracle phân loại MISSING_AT_WALLET trên dữ liệu thật (có ho
       await run(s.walletAdmin, sql`delete from t_acme.topups where id = 'chaos-mw-topup'`);
     }
     await assertSystemInvariants(s);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// INV-4 (e) PAID_WITHOUT_OUTBOX và retention
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe('oracle INV-4 (e): đơn đã trả phải còn dòng outbox OrderPaidV1 (trừ khi retention xóa thật)', () => {
+  it('detects a paid order whose OrderPaidV1 outbox row vanished, unless retention may have purged it', async () => {
+    const s = sys();
+    const { orderId } = seeded().paid;
+    // Đổi loại sự kiện để dòng "biến mất" khỏi mọi kiểm tra INV-4 khác mà vẫn hoàn tác được (outbox cho phép sửa).
+    await run(
+      s.walletAdmin,
+      sql`update t_acme.outbox set event_type = 'ChaosHidden' where event_type = 'OrderPaidV1' and json_value(payload, '$.orderId') = ${orderId}`,
+    );
+    try {
+      const strict = await collectViolations(s, { only: ['INV-4'] });
+      expect(strict.map((v) => v.code)).toEqual(['PAID_WITHOUT_OUTBOX']);
+      expect(strict[0]?.message).toContain(orderId);
+      // Retention thật có thể đã dọn dòng SENT: cùng dữ liệu, oracle không được báo oan.
+      expect(
+        await collectViolations({ ...s, retentionDeletes: true }, { only: ['INV-4'] }),
+      ).toEqual([]);
+    } finally {
+      await run(
+        s.walletAdmin,
+        sql`update t_acme.outbox set event_type = 'OrderPaidV1' where event_type = 'ChaosHidden'`,
+      );
+    }
+    await assertSystemInvariants(s);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// assertSystemInvariants: thứ tự kiểm tra, đối soát thật (INV-5)
+// ---------------------------------------------------------------------------------------------------------------------
+
+const today = (): string => new Date().toISOString().slice(0, 10);
+
+/** Bọc runner thật: ghi lại mọi lượt và cho test chèn hiệu ứng phụ / sửa kết quả (hook có thể gọi runReconciliationViaHttp). */
+function spyRunner(hook?: ReconcileRunner) {
+  const calls: Array<{ tenant: string; day: string; pass: 1 | 2 }> = [];
+  const runs: ReconcileRun[] = [];
+  const runner: ReconcileRunner = async (sys, tenant, day, pass) => {
+    calls.push({ tenant, day, pass });
+    const result = await (hook ?? runReconciliationViaHttp)(sys, tenant, day, pass);
+    runs.push(result);
+    return result;
+  };
+  return { runner, calls, runs };
+}
+
+const emptyRun = (
+  tenant: string,
+  day: string,
+  items: ReconcileRun['items'] = [],
+): ReconcileRun => ({
+  tenant,
+  day,
+  runId: 'chaos-fake-run',
+  status: 'COMPLETED',
+  failureReason: null,
+  gatewayTotals: {},
+  walletTotals: {},
+  items,
+});
+
+const fakeItem = (
+  kind: string,
+  action = 'NONE',
+  caseStatus = 'OPEN',
+): ReconcileRun['items'][number] => ({
+  id: `chaos-fake-item-${kind}`,
+  kind,
+  chargeId: 'ch_chaos_fake',
+  topupId: 'chaos-fake-topup',
+  action,
+  caseStatus,
+  detail: {},
+});
+
+const codesOf = (violations: readonly Violation[], invariant?: InvariantId): string[] =>
+  violations.filter((v) => invariant === undefined || v.invariant === invariant).map((v) => v.code);
+
+describe('assertSystemInvariants: đối soát thật trên hệ sạch', () => {
+  it('reconciles every tenant and data day twice against the real settlement, finds nothing, and is repeatable', async () => {
+    const s = sys();
+    const spy = spyRunner();
+    expect(await runInvariants(s, { reconcileRunner: spy.runner })).toEqual([]);
+
+    const first = spy.calls.filter((c) => c.pass === 1);
+    const second = spy.calls.filter((c) => c.pass === 2);
+    // 2 tenant × (ngày dữ liệu + ngày liền trước).
+    expect(first.length).toBeGreaterThanOrEqual(4);
+    expect(second).toHaveLength(first.length);
+    expect(new Set(first.map((c) => c.tenant))).toEqual(new Set(['acme', 'beta']));
+    expect(new Set(first.map((c) => c.day)).size).toBeGreaterThanOrEqual(2);
+
+    // Đối soát thật: payment (qua /settlements) và wallet cùng thấy đúng số tiền đã nạp (acme 230k, beta 60k).
+    const sum = (tenant: string, field: 'gatewayTotals' | 'walletTotals'): number =>
+      spy.runs
+        .filter((r, index) => r.tenant === tenant && spy.calls[index]?.pass === 1)
+        .reduce((total, r) => total + (r[field].VND ?? 0), 0);
+    expect(sum('acme', 'gatewayTotals')).toBe(230_000);
+    expect(sum('acme', 'walletTotals')).toBe(230_000);
+    expect(sum('beta', 'gatewayTotals')).toBe(60_000);
+    expect(spy.runs.every((r) => r.status === 'COMPLETED' && r.items.length === 0)).toBe(true);
+
+    // Lặp lại vẫn sạch (đối soát không để lại dấu vết làm lần sau lệch).
+    await expect(assertSystemInvariants(s)).resolves.toBeUndefined();
+  });
+
+  it('derives the reconciliation days from the data (not the clock) and adds explicit days', async () => {
+    const s = sys();
+    const tenants = [
+      { name: 'acme', schema: 't_acme' },
+      { name: 'beta', schema: 't_beta' },
+    ];
+    const nowDay = today();
+    const dayBefore = (day: string) =>
+      new Date(Date.parse(`${day}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+    const days = await reconcileDaysOf(s, tenants, ['2020-01-05']);
+    expect(days).toContain('2020-01-05');
+    expect(days).toContain('2020-01-04');
+    expect(days.some((d) => d >= dayBefore(nowDay))).toBe(true);
+    expect([...days].sort()).toEqual(days);
+    expect(days.every((d) => d <= nowDay)).toBe(true);
+
+    // Một charge hoàn tất vào một ngày khác (do dữ liệu, không do đồng hồ) làm xuất hiện đúng ngày đó và ngày liền trước.
+    const chargeId = (
+      await sql<{ id: string }>`select top 1 id from charges order by created_at`.execute(
+        s.paymentAdmin,
+      )
+    ).rows[0]?.id as string;
+    const original = (
+      await sql<{
+        completed_at: Date;
+      }>`select completed_at from charges where id = ${chargeId}`.execute(s.paymentAdmin)
+    ).rows[0]?.completed_at as Date;
+    await run(
+      s.paymentAdmin,
+      sql`update charges set completed_at = '2021-03-10T23:59:59.000' where id = ${chargeId}`,
+    );
+    try {
+      const shifted = await reconcileDaysOf(s, tenants, []);
+      expect(shifted).toContain('2021-03-10');
+      expect(shifted).toContain('2021-03-09');
+    } finally {
+      await run(
+        s.paymentAdmin,
+        sql`update charges set completed_at = ${original} where id = ${chargeId}`,
+      );
+    }
+    await assertSystemInvariants(s);
+  });
+
+  it('does not run reconciliation while a strict invariant already fails (autofix must not mask evidence)', async () => {
+    const s = sys();
+    const account = seeded().topups[0]?.accountId as string;
+    const spy = spyRunner();
+    await run(
+      s.walletAdmin,
+      sql`update t_acme.accounts set balance = balance + 1 where id = ${account}`,
+    );
+    try {
+      const violations = await runInvariants(s, { reconcileRunner: spy.runner });
+      expect(invariantsOf(violations)).toEqual(['INV-1']);
+      expect(violations.every((v) => v.detail?.phase === undefined)).toBe(true);
+      expect(spy.calls).toEqual([]);
+    } finally {
+      await run(
+        s.walletAdmin,
+        sql`update t_acme.accounts set balance = balance - 1 where id = ${account}`,
+      );
+    }
+    await assertSystemInvariants(s);
+  });
+
+  it('treats a charge with no topup as a real INV-3 failure even with expectMissingAtWallet (never explained, never reconciled)', async () => {
+    const s = sys();
+    const spy = spyRunner();
+    await run(
+      s.paymentAdmin,
+      sql`insert into charges (id, reference, amount, currency, status, scenario, due_at, created_at, completed_at, metadata)
+          values ('ch_chaos_nowhere', 'chaos-nowhere', 4000, 'VND', 'SUCCEEDED', '{}', ${now}, ${now}, ${now}, '{"tenantId":"acme"}')`,
+    );
+    try {
+      for (const expectMissingAtWallet of [false, true]) {
+        const violations = await runInvariants(s, {
+          expectMissingAtWallet,
+          reconcileRunner: spy.runner,
+        });
+        expect(invariantsOf(violations)).toEqual(['INV-3']);
+        expect(codesOf(violations)).toContain('CHARGE_WITHOUT_TOPUP');
+        expect(violations.some(isMissingAtWallet)).toBe(false);
+      }
+      expect(spy.calls).toEqual([]);
+    } finally {
+      await run(s.paymentAdmin, sql`delete from charges where id = 'ch_chaos_nowhere'`);
+    }
+    await assertSystemInvariants(s);
+  });
+
+  it('refuses selections that would let reconciliation hide failures, and keeps the canonical order for `only`', async () => {
+    const s = sys();
+    await expect(runInvariants(s, { only: ['INV-5'] })).rejects.toThrow(
+      /INV-1, INV-2, INV-3, INV-4/,
+    );
+    await expect(runInvariants(s, { only: ['INV-5', 'INV-1', 'INV-2', 'INV-4'] })).rejects.toThrow(
+      /thiếu INV-3/,
+    );
+    await expect(collectViolations(s, { only: ['INV-5'] })).rejects.toThrow(/INV-5/);
+    await expect(runInvariants(s, { only: ['INV-9' as InvariantId] })).rejects.toThrow(/INV-9/);
+
+    // Không INV-5 thì không đối soát; thứ tự liệt kê không ảnh hưởng (luôn theo thứ tự chuẩn).
+    const spy = spyRunner();
+    expect(
+      await runInvariants(s, { only: ['INV-8', 'INV-3', 'INV-1'], reconcileRunner: spy.runner }),
+    ).toEqual([]);
+    expect(spy.calls).toEqual([]);
+  });
+});
+
+describe('oracle INV-5: đối soát (làm hỏng giữa lúc đối soát, có hoàn tác)', () => {
+  it('reports a BALANCE_MISMATCH that is still OPEN, and the strict re-check after reconciliation agrees', async () => {
+    const s = sys();
+    const account = seeded().topups[0]?.accountId as string;
+    let bumped = false;
+    // Hỏng xuất hiện NGAY trước một lượt đối soát (mô phỏng đối soát/luồng khác làm lệch số dư).
+    const spy = spyRunner(async (sys2, tenant, day, pass) => {
+      if (tenant === 'acme' && pass === 1 && !bumped) {
+        bumped = true;
+        await run(
+          s.walletAdmin,
+          sql`update t_acme.accounts set balance = balance + 1 where id = ${account}`,
+        );
+      }
+      return runReconciliationViaHttp(sys2, tenant, day, pass);
+    });
+    try {
+      const violations = await runInvariants(s, { reconcileRunner: spy.runner });
+      expect(invariantsOf(violations)).toEqual(['INV-1', 'INV-5']);
+      expect(codesOf(violations, 'INV-5')).toContain('BALANCE_MISMATCH_OPEN');
+      const after = violations.filter((v) => v.invariant === 'INV-1');
+      expect(after.every((v) => v.detail?.phase === 'after-reconciliation')).toBe(true);
+      expect(codesOf(after)).toEqual(expect.arrayContaining(['TOTAL_NONZERO', 'BALANCE_DRIFT']));
+      // Lượt hội tụ không chạy khi lượt đầu đã có vi phạm.
+      expect(spy.calls.some((c) => c.pass === 2)).toBe(false);
+    } finally {
+      await run(
+        s.walletAdmin,
+        sql`update t_acme.accounts set balance = balance - 1 where id = ${account}`,
+      );
+    }
+    await assertSystemInvariants(s);
+  });
+
+  it('fails when the second reconciliation pass still finds discrepancies (convergence)', async () => {
+    const s = sys();
+    const spy = spyRunner(async (sys2, tenant, day, pass) => {
+      const real = await runReconciliationViaHttp(sys2, tenant, day, pass);
+      return pass === 2 && tenant === 'beta'
+        ? { ...real, items: [fakeItem('AMOUNT_MISMATCH')] }
+        : real;
+    });
+    const violations = await runInvariants(s, { reconcileRunner: spy.runner });
+    expect(invariantsOf(violations)).toEqual(['INV-5']);
+    expect(new Set(codesOf(violations))).toEqual(new Set(['RECONCILIATION_NOT_CONVERGED']));
+    expect(violations.every((v) => v.detail?.tenant === 'beta')).toBe(true);
+    expect(spy.calls.filter((c) => c.pass === 2).length).toBeGreaterThan(0);
+  });
+
+  it('fails the second pass when its run FAILED too, and the first pass when a run FAILED', async () => {
+    const s = sys();
+    const failed = (r: ReconcileRun): ReconcileRun => ({
+      ...r,
+      status: 'FAILED',
+      failureReason: 'chaos: settlement không đọc được',
+    });
+    const first = await runInvariants(s, {
+      reconcileRunner: spyRunner(async (sys2, tenant, day, pass) => {
+        const real = await runReconciliationViaHttp(sys2, tenant, day, pass);
+        return pass === 1 && tenant === 'acme' ? failed(real) : real;
+      }).runner,
+    });
+    expect(invariantsOf(first)).toEqual(['INV-5']);
+    expect(new Set(codesOf(first))).toEqual(new Set(['RECONCILIATION_RUN_FAILED']));
+    expect(first[0]?.message).toContain('chaos: settlement không đọc được');
+
+    const second = await runInvariants(s, {
+      reconcileRunner: spyRunner(async (sys2, tenant, day, pass) => {
+        const real = await runReconciliationViaHttp(sys2, tenant, day, pass);
+        return pass === 2 && tenant === 'acme' ? failed(real) : real;
+      }).runner,
+    });
+    expect(new Set(codesOf(second))).toEqual(new Set(['RECONCILIATION_NOT_CONVERGED']));
+  });
+
+  it('reports OPEN items of other kinds and an AUTO_APPLIED charge that INV-3 never flagged', async () => {
+    const s = sys();
+    const other = await runInvariants(s, {
+      reconcileRunner: spyRunner(async (sys2, tenant, day, pass) => {
+        const real = await runReconciliationViaHttp(sys2, tenant, day, pass);
+        return pass === 1 && tenant === 'acme'
+          ? { ...real, items: [fakeItem('UNKNOWN_CHARGE')] }
+          : real;
+      }).runner,
+    });
+    expect(invariantsOf(other)).toEqual(['INV-5']);
+    expect(new Set(codesOf(other))).toEqual(new Set(['RECONCILIATION_ITEM_OPEN']));
+
+    const unexpected = await runInvariants(s, {
+      reconcileRunner: spyRunner(async (sys2, tenant, day, pass) => {
+        const real = await runReconciliationViaHttp(sys2, tenant, day, pass);
+        return pass === 1 && tenant === 'acme'
+          ? { ...real, items: [fakeItem('MISSING_AT_WALLET', 'AUTO_APPLIED', 'RESOLVED')] }
+          : real;
+      }).runner,
+    });
+    expect(invariantsOf(unexpected)).toEqual(['INV-5']);
+    expect(codesOf(unexpected)).toContain('AUTOFIX_UNEXPECTED');
+  });
+
+  it('re-checks INV-1..4 strictly AFTER reconciliation (a ledger change made by reconciliation is caught)', async () => {
+    const s = sys();
+    const account = seeded().topups[0]?.accountId as string;
+    let bumped = false;
+    // Lượt 2 được giả lập "sạch" nhưng làm lệch số dư đúng một lần: INV-5 không thấy gì, chỉ kiểm lại INV-1 sau đối soát mới bắt được.
+    const spy = spyRunner(async (sys2, tenant, day, pass) => {
+      if (pass === 1) return runReconciliationViaHttp(sys2, tenant, day, pass);
+      if (!bumped) {
+        bumped = true;
+        await run(
+          s.walletAdmin,
+          sql`update t_acme.accounts set balance = balance + 1 where id = ${account}`,
+        );
+      }
+      return emptyRun(tenant, day);
+    });
+    try {
+      const violations = await runInvariants(s, { reconcileRunner: spy.runner });
+      expect(invariantsOf(violations)).toEqual(['INV-1']);
+      expect(violations.every((v) => v.detail?.phase === 'after-reconciliation')).toBe(true);
+      expect(codesOf(violations)).toEqual(
+        expect.arrayContaining(['TOTAL_NONZERO', 'BALANCE_DRIFT']),
+      );
+    } finally {
+      await run(
+        s.walletAdmin,
+        sql`update t_acme.accounts set balance = balance - 1 where id = ${account}`,
+      );
+    }
+    await assertSystemInvariants(s);
+  });
+
+  it('reports an unbalanced ledger transaction as LEDGER_UNBALANCED_OPEN (fresh system: ledger rows cannot be removed)', async () => {
+    await withFreshSystem(true, async (s) => {
+      let inserted = false;
+      const spy = spyRunner(async (sys2, tenant, day, pass) => {
+        if (tenant === 'acme' && pass === 1 && !inserted) {
+          inserted = true;
+          await run(
+            s.walletAdmin,
+            sql`insert into t_acme.ledger_transactions (id, business_key, kind, created_at) values ('chaos-ub', 'topup:chaos-ub', 'TOPUP', ${now})`,
+          );
+          await run(
+            s.walletAdmin,
+            sql`insert into t_acme.ledger_entries (transaction_id, account_id, amount, created_at) values ('chaos-ub', 'wallet:alice', 5, ${now})`,
+          );
+          await run(
+            s.walletAdmin,
+            sql`update t_acme.accounts set balance = balance + 5 where id = 'wallet:alice'`,
+          );
+        }
+        return runReconciliationViaHttp(sys2, tenant, day, pass);
+      });
+      const violations = await runInvariants(s, { reconcileRunner: spy.runner });
+      expect(codesOf(violations, 'INV-5')).toContain('LEDGER_UNBALANCED_OPEN');
+      const after = violations.filter((v) => v.invariant === 'INV-1');
+      expect(codesOf(after)).toContain('TX_UNBALANCED');
+      expect(after.every((v) => v.detail?.phase === 'after-reconciliation')).toBe(true);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// S7: webhook thành công bị mất có chủ ý → wallet thiếu khoản nạp → chỉ đối soát sửa được
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * Bỏ mọi webhook payment→wallet cho tới khi payment bỏ cuộc (FAILED), trong lúc một lần nạp hoàn tất bên payment.
+ * Trả topupId; topup còn PENDING ở wallet (heal chỉ chờ phần còn lại, không chờ topup).
+ */
+async function loseWebhook(
+  s: System,
+  tenant: string,
+  customer: string,
+  amount: number,
+  key: string,
+): Promise<string> {
+  s.plan.enable();
+  s.plan.add({
+    point: 'payment-to-wallet.request',
+    label: `lose-webhook-${key}`,
+    action: (info) => {
+      info.decision = 'drop';
+    },
+  });
+  expect((await s.openWallet(tenant, customer)).status).toBe(201);
+  const topup = await s.topup(tenant, customer, amount, key);
+  expect(topup.status).toBe(202);
+  await waitFor(
+    async () => {
+      const result = await sql<{ failed: number | null; pending: number | null }>`
+        select sum(case when status = 'FAILED' then 1 else 0 end) as failed,
+               sum(case when status = 'PENDING' then 1 else 0 end) as pending
+        from webhook_events`.execute(s.paymentAdmin);
+      return Number(result.rows[0]?.failed ?? 0) >= 1 && Number(result.rows[0]?.pending ?? 0) === 0;
+    },
+    { timeoutMs: 60_000, intervalMs: 200 },
+  );
+  await s.heal({ allowUnsettledTopups: true });
+  s.plan.clear();
+  return topup.topupId as string;
+}
+
+const topupState = async (s: System, tenant: string, id: string) => {
+  const result = await sql<{ status: string; charge_id: string | null }>`
+    select status, charge_id from ${sql.id(`t_${tenant}`, 'topups')} where id = ${id}`.execute(
+    s.walletAdmin,
+  );
+  const tx = await sql<{ n: number }>`
+    select count(*) as n from ${sql.id(`t_${tenant}`, 'ledger_transactions')}
+    where business_key = concat('topup:', ${id})`.execute(s.walletAdmin);
+  return { ...result.rows[0], txCount: Number(tx.rows[0]?.n ?? 0) };
+};
+
+describe('S7: mất webhook có chủ ý (expectMissingAtWallet) và đối soát ghi bù', () => {
+  let lost: System | undefined;
+  let lostTopupId = '';
+  const sysLost = (): System => {
+    if (lost === undefined) throw new Error('hệ S7 chưa dựng xong');
+    return lost;
+  };
+
+  beforeAll(async () => {
+    lost = await createSystem({ seed: 11, tenants: ['acme'] });
+    // Một lần nạp bình thường trước, rồi một lần mất webhook: oracle phải phân biệt hai trường hợp.
+    await lost.openWallet('acme', 'dave');
+    expect((await lost.topup('acme', 'dave', 20_000, 'k-dave')).status).toBe(202);
+    await lost.heal();
+    lostTopupId = await loseWebhook(lost, 'acme', 'erin', 70_000, 'k-erin');
+  });
+
+  afterAll(async () => {
+    await lost?.stop();
+  });
+
+  it('without the flag the same state fails INV-3 and reconciliation never runs (nothing is credited)', async () => {
+    const s = sysLost();
+    expect(await topupState(s, 'acme', lostTopupId)).toMatchObject({
+      status: 'PENDING',
+      txCount: 0,
+    });
+    const spy = spyRunner();
+    const violations = await runInvariants(s, { reconcileRunner: spy.runner });
+    expect(invariantsOf(violations)).toEqual(['INV-3']);
+    expect(codesOf(violations)).toEqual(
+      expect.arrayContaining(['CHARGE_TOPUP_NOT_SUCCEEDED', 'SUM_MISMATCH']),
+    );
+    expect(explainedByMissingAtWallet(violations)).toBe(true);
+    expect(spy.calls).toEqual([]);
+    expect(await topupState(s, 'acme', lostTopupId)).toMatchObject({
+      status: 'PENDING',
+      txCount: 0,
+    });
+    await expect(assertSystemInvariants(s)).rejects.toBeInstanceOf(InvariantViolationError);
+    // collectViolations (chỉ đọc) cũng thấy cùng trạng thái, có phân loại MISSING_AT_WALLET.
+    expect((await collectViolations(s)).filter(isMissingAtWallet)).toHaveLength(1);
+  });
+
+  it('fails INV-5 AUTOFIX_MISSING when reconciliation does not credit the charge INV-3 explained', async () => {
+    const s = sysLost();
+    // Đối soát "không thấy gì": ghi bù không xảy ra ⇒ INV-5 báo thiếu, INV-3 sau đối soát (chặt) cũng báo.
+    const violations = await runInvariants(s, {
+      expectMissingAtWallet: true,
+      reconcileRunner: async (_sys, tenant, day) => emptyRun(tenant, day),
+    });
+    expect(invariantsOf(violations)).toEqual(['INV-3', 'INV-5']);
+    expect(codesOf(violations, 'INV-5')).toEqual(['AUTOFIX_MISSING']);
+    const inv3 = violations.filter((v) => v.invariant === 'INV-3');
+    expect(inv3.every((v) => v.detail?.phase === 'after-reconciliation')).toBe(true);
+    expect(await topupState(s, 'acme', lostTopupId)).toMatchObject({
+      status: 'PENDING',
+      txCount: 0,
+    });
+  });
+
+  it('with the flag passes and reconciliation credits the lost topup exactly once (and again is a no-op)', async () => {
+    const s = sysLost();
+    const spy = spyRunner();
+    await expect(
+      assertSystemInvariants(s, { expectMissingAtWallet: true, reconcileRunner: spy.runner }),
+    ).resolves.toBeUndefined();
+
+    const applied = spy.runs
+      .flatMap((r) => r.items)
+      .filter((i) => i.kind === 'MISSING_AT_WALLET' && i.action === 'AUTO_APPLIED');
+    expect(applied).toHaveLength(1);
+    expect(applied[0]).toMatchObject({ topupId: lostTopupId, caseStatus: 'RESOLVED' });
+    expect(await topupState(s, 'acme', lostTopupId)).toMatchObject({
+      status: 'SUCCEEDED',
+      txCount: 1,
+    });
+    const balance = await sql<{ balance: string }>`
+      select balance from t_acme.accounts where id = 'wallet:erin'`.execute(s.walletAdmin);
+    expect(Number(balance.rows[0]?.balance)).toBe(70_000);
+
+    // Chạy lại (cờ vẫn bật): INV-3 giờ sạch, đối soát không ghi bù thêm, số dư không đổi.
+    const again = spyRunner();
+    await assertSystemInvariants(s, { expectMissingAtWallet: true, reconcileRunner: again.runner });
+    expect(again.runs.flatMap((r) => r.items)).toEqual([]);
+    expect(await topupState(s, 'acme', lostTopupId)).toMatchObject({ txCount: 1 });
+    const balanceAfter = await sql<{ balance: string }>`
+      select balance from t_acme.accounts where id = 'wallet:erin'`.execute(s.walletAdmin);
+    expect(Number(balanceAfter.rows[0]?.balance)).toBe(70_000);
+    await assertSystemInvariants(s);
+  });
+});
+
+describe('S7 với autofix TẮT (reconciliation: { autofix: false })', () => {
+  it('reports INV-5 MISSING_AT_WALLET_UNFIXED and credits nothing; INV-3 stays strict afterwards', async () => {
+    const s = await createSystem({
+      seed: 12,
+      tenants: ['acme'],
+      reconciliation: { autofix: false },
+    });
+    try {
+      const topupId = await loseWebhook(s, 'acme', 'frank', 55_000, 'k-frank');
+      const spy = spyRunner();
+      const violations = await runInvariants(s, {
+        expectMissingAtWallet: true,
+        reconcileRunner: spy.runner,
+      });
+      expect(invariantsOf(violations)).toEqual(['INV-3', 'INV-5']);
+      expect(codesOf(violations, 'INV-5')).toEqual(['MISSING_AT_WALLET_UNFIXED']);
+      expect(violations.find((v) => v.invariant === 'INV-5')?.detail).toMatchObject({
+        tenant: 'acme',
+        topupId,
+        action: 'NONE',
+        caseStatus: 'OPEN',
+      });
+      const inv3 = violations.filter((v) => v.invariant === 'INV-3');
+      expect(inv3.every((v) => v.detail?.phase === 'after-reconciliation')).toBe(true);
+      expect(await topupState(s, 'acme', topupId)).toMatchObject({ status: 'PENDING', txCount: 0 });
+      // Lượt hội tụ không chạy khi lượt đầu còn vi phạm.
+      expect(spy.calls.some((c) => c.pass === 2)).toBe(false);
+    } finally {
+      await s.stop();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// INV-6: thao tác vận hành
+// ---------------------------------------------------------------------------------------------------------------------
+
+const insertOps = (
+  s: System,
+  id: string,
+  action: string,
+  target: string,
+  key: string,
+  result = '{}',
+) =>
+  run(
+    s.walletAdmin,
+    sql`insert into t_acme.ops_actions (id, action, actor, reason, target, idempotency_key, fingerprint, result, created_at)
+        values (${id}, ${action}, 'chaos', 'chaos', ${target}, ${key}, 'fp', ${result}, ${now})`,
+  );
+
+/** ops_actions là append-only (trigger): chỉ để HOÀN TÁC dòng do chính test chèn, tắt trigger rồi bật lại ngay. */
+async function removeOps(s: System, ids: string[]): Promise<void> {
+  await sql`disable trigger t_acme.trg_ops_actions_append_only on t_acme.ops_actions`.execute(
+    s.walletAdmin,
+  );
+  try {
+    await sql`delete from t_acme.ops_actions where id in (${sql.join(ids)})`.execute(s.walletAdmin);
+  } finally {
+    await sql`enable trigger t_acme.trg_ops_actions_append_only on t_acme.ops_actions`.execute(
+      s.walletAdmin,
+    );
+  }
+}
+
+describe('oracle INV-6: ops nguyên tử (làm hỏng có hoàn tác)', () => {
+  beforeAll(async () => {
+    const s = sys();
+    // carol (beta) đóng băng; bob (acme) đóng rồi mở băng: hai hướng của thao tác cuối.
+    const body = (idempotencyKey: string) => ({ reason: 'chaos oracle seed', idempotencyKey });
+    expect(
+      (await s.ops('beta', '/ops/wallets/carol/freeze', body('inv6-freeze-carol'))).status,
+    ).toBe(200);
+    expect((await s.ops('acme', '/ops/wallets/bob/freeze', body('inv6-freeze-bob'))).status).toBe(
+      200,
+    );
+    expect(
+      (await s.ops('acme', '/ops/wallets/bob/unfreeze', body('inv6-unfreeze-bob'))).status,
+    ).toBe(200);
+    await s.heal();
+  });
+
+  it('is clean on real FREEZE, UNFREEZE, ADJUST, REVERSE and REPLAY_PAID actions', async () => {
+    const s = sys();
+    const kinds = await sql<{ action: string }>`
+      select distinct action from t_acme.ops_actions`.execute(s.walletAdmin);
+    expect(kinds.rows.map((r) => r.action).sort()).toEqual(
+      ['ADJUST', 'REPLAY_PAID', 'REVERSE', 'UNFREEZE', 'FREEZE'].sort(),
+    );
+    expect(await collectViolations(s, { only: ['INV-6'] })).toEqual([]);
+  });
+
+  const frozenAt = async (s: System, schema: string, account: string): Promise<Date | null> =>
+    (
+      await sql<{ frozen_at: Date | null }>`
+        select frozen_at from ${sql.id(schema, 'accounts')} where id = ${account}`.execute(
+        s.walletAdmin,
+      )
+    ).rows[0]?.frozen_at ?? null;
+
+  it('detects frozen_at that disagrees with the last FREEZE/UNFREEZE (both directions, and a wallet never frozen by ops)', async () => {
+    const s = sys();
+    const carolAt = await frozenAt(s, 't_beta', 'wallet:carol');
+    expect(carolAt).not.toBeNull();
+    // FREEZE là thao tác cuối nhưng ví không còn đóng băng.
+    await corrupted(
+      s,
+      () =>
+        run(
+          s.walletAdmin,
+          sql`update t_beta.accounts set frozen_at = null where id = 'wallet:carol'`,
+        ),
+      () =>
+        run(
+          s.walletAdmin,
+          sql`update t_beta.accounts set frozen_at = ${carolAt} where id = 'wallet:carol'`,
+        ),
+      ['INV-6'],
+      ['tenant beta', 'wallet:carol', 'thao tác cuối FREEZE', 'code:FREEZE_STATE_MISMATCH'],
+    );
+    // UNFREEZE là thao tác cuối nhưng ví lại bị đóng băng.
+    await corrupted(
+      s,
+      () =>
+        run(
+          s.walletAdmin,
+          sql`update t_acme.accounts set frozen_at = ${now} where id = 'wallet:bob'`,
+        ),
+      () =>
+        run(
+          s.walletAdmin,
+          sql`update t_acme.accounts set frozen_at = null where id = 'wallet:bob'`,
+        ),
+      ['INV-6'],
+      ['wallet:bob', 'thao tác cuối UNFREEZE', 'code:FREEZE_STATE_MISMATCH'],
+    );
+    // Ví chưa từng bị ops đóng băng mà có frozen_at.
+    await corrupted(
+      s,
+      () =>
+        run(
+          s.walletAdmin,
+          sql`update t_acme.accounts set frozen_at = ${now} where id = 'wallet:alice'`,
+        ),
+      () =>
+        run(
+          s.walletAdmin,
+          sql`update t_acme.accounts set frozen_at = null where id = 'wallet:alice'`,
+        ),
+      ['INV-6'],
+      ['wallet:alice', 'thao tác cuối không có', 'code:FREEZE_STATE_MISMATCH'],
+    );
+  });
+
+  it('detects an ADJUST action with no ADJUSTMENT transaction', async () => {
+    const s = sys();
+    await corrupted(
+      s,
+      () => insertOps(s, 'chaos-op-adj', 'ADJUST', 'wallet:alice', 'chaos-key-adj'),
+      () => removeOps(s, ['chaos-op-adj']),
+      ['INV-6'],
+      ['chaos-op-adj', 'adjustment:chaos-op-adj', 'code:ADJUST_TX_MISSING'],
+    );
+  });
+
+  it('detects a REVERSE action with no matching REVERSAL, and a second REVERSE for an already reversed transaction', async () => {
+    const s = sys();
+    const topupTx = seeded().topups[0]?.transactionId as string;
+    await corrupted(
+      s,
+      () => insertOps(s, 'chaos-op-rev', 'REVERSE', `transaction:${topupTx}`, 'chaos-key-rev'),
+      () => removeOps(s, ['chaos-op-rev']),
+      ['INV-6'],
+      ['chaos-op-rev', topupTx, 'code:REVERSE_TX_MISSING'],
+    );
+
+    const reversed = (
+      await sql<{ id: string }>`
+        select reverses_transaction_id as id from t_acme.ledger_transactions where kind = 'REVERSAL'`.execute(
+        s.walletAdmin,
+      )
+    ).rows[0]?.id as string;
+    await corrupted(
+      s,
+      () => insertOps(s, 'chaos-op-rev2', 'REVERSE', `transaction:${reversed}`, 'chaos-key-rev2'),
+      () => removeOps(s, ['chaos-op-rev2']),
+      ['INV-6'],
+      [reversed, 'code:REVERSE_ACTION_DUPLICATE'],
+    );
+  });
+});
+
+describe('oracle INV-6 với dòng sổ cái chèn thêm (hệ riêng, không hoàn tác được)', () => {
+  const insertTx = (
+    s: System,
+    id: string,
+    key: string,
+    kind: string,
+    reverses: string | null = null,
+  ) =>
+    run(
+      s.walletAdmin,
+      sql`insert into t_acme.ledger_transactions (id, business_key, kind, reverses_transaction_id, created_at)
+          values (${id}, ${key}, ${kind}, ${reverses}, ${now})`,
+    );
+  /** Cặp dòng cân bằng: cộng `wallet` và trừ tài khoản ADJUSTMENT, số dư cập nhật khớp ⇒ INV-1 không bị báo. */
+  const balanced = async (s: System, tx: string, wallet: string, amount: number) => {
+    await run(
+      s.walletAdmin,
+      sql`insert into t_acme.ledger_entries (transaction_id, account_id, amount, created_at) values (${tx}, ${wallet}, ${amount}, ${now})`,
+    );
+    await run(
+      s.walletAdmin,
+      sql`insert into t_acme.ledger_entries (transaction_id, account_id, amount, created_at) values (${tx}, 'system:ADJUSTMENT:VND', ${-amount}, ${now})`,
+    );
+    await run(
+      s.walletAdmin,
+      sql`update t_acme.accounts set balance = balance + ${amount} where id = ${wallet}`,
+    );
+    await run(
+      s.walletAdmin,
+      sql`update t_acme.accounts set balance = balance - ${amount} where id = 'system:ADJUSTMENT:VND'`,
+    );
+  };
+
+  it('detects ADJUSTMENT and REVERSAL transactions without any ops_actions row', async () => {
+    await withFreshSystem(true, async (s, d) => {
+      await insertTx(s, 'chaos-orph-adj', 'adjustment:chaos-orph-adj', 'ADJUSTMENT');
+      await balanced(s, 'chaos-orph-adj', 'wallet:alice', 100);
+      const topupTx = d.topups[0]?.transactionId as string;
+      await insertTx(s, 'chaos-orph-rev', 'reversal:chaos-orph', 'REVERSAL', topupTx);
+      await balanced(s, 'chaos-orph-rev', 'wallet:alice', 200);
+      await expectViolations(
+        s,
+        ['INV-6'],
+        [
+          'chaos-orph-adj',
+          'chaos-orph-rev',
+          topupTx,
+          'code:ADJUSTMENT_TX_ORPHAN',
+          'code:REVERSAL_TX_ORPHAN',
+        ],
+      );
+    });
+  });
+
+  it('detects an ADJUST action that touched another wallet, or recorded another transaction id', async () => {
+    await withFreshSystem(false, async (s) => {
+      // chaos-w1: giao dịch tác động ví alice nhưng thao tác ghi mục tiêu bob.
+      await insertTx(s, 'chaos-tx-w1', 'adjustment:chaos-w1', 'ADJUSTMENT');
+      await balanced(s, 'chaos-tx-w1', 'wallet:alice', 100);
+      await insertOps(
+        s,
+        'chaos-w1',
+        'ADJUST',
+        'wallet:bob',
+        'chaos-kw1',
+        '{"transactionId":"chaos-tx-w1"}',
+      );
+      // chaos-w2: đúng ví nhưng kết quả đã ghi trỏ giao dịch khác.
+      await insertTx(s, 'chaos-tx-w2', 'adjustment:chaos-w2', 'ADJUSTMENT');
+      await balanced(s, 'chaos-tx-w2', 'wallet:alice', 300);
+      await insertOps(
+        s,
+        'chaos-w2',
+        'ADJUST',
+        'wallet:alice',
+        'chaos-kw2',
+        '{"transactionId":"bogus"}',
+      );
+      await expectViolations(
+        s,
+        ['INV-6'],
+        [
+          'chaos-w1',
+          'wallet:bob',
+          'chaos-w2',
+          'bogus',
+          'code:ADJUST_TX_WRONG_WALLET',
+          'code:ADJUST_TX_RESULT_MISMATCH',
+        ],
+      );
+    });
+  });
+
+  it('detects two ops_actions rows sharing an idempotency key (unique constraint dropped on purpose)', async () => {
+    await withFreshSystem(true, async (s) => {
+      await sql`alter table t_acme.ops_actions drop constraint uq_ops_actions_key`.execute(
+        s.walletAdmin,
+      );
+      await insertOps(s, 'chaos-dup-1', 'REPLAY_PAID', 'order:x', 'chaos-same-key');
+      await insertOps(s, 'chaos-dup-2', 'REPLAY_PAID', 'order:y', 'chaos-same-key');
+      await expectViolations(
+        s,
+        ['INV-6'],
+        ['chaos-same-key', 'chaos-dup-1', 'chaos-dup-2', 'code:OPS_DUPLICATE_KEY'],
+      );
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// INV-7: mọi thứ đã xác nhận thành công vẫn còn
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe('oracle INV-7: expectations (retention không được làm mất dữ liệu đã xác nhận)', () => {
+  it('has real acknowledged orders, topups and ops actions to compare against, and is clean', async () => {
+    const s = sys();
+    const e = s.expectations;
+    expect(e.ordersPaid.size).toBe(4);
+    expect(e.topupsCreated.size).toBe(4);
+    expect(e.opsActions).toBeGreaterThanOrEqual(3);
+    expect(e.opsActionIds.size).toBe(e.opsActions);
+    expect([...e.ordersPaid].every((k) => k.includes('/'))).toBe(true);
+    expect(await collectViolations(s, { only: ['INV-7'] })).toEqual([]);
+  });
+
+  const scenarios: Array<{
+    name: string;
+    set: 'ordersPaid' | 'topupsCreated' | 'opsActionIds';
+    key: string;
+    code: string;
+  }> = [
+    {
+      name: 'order',
+      set: 'ordersPaid',
+      key: 'acme/chaos-ghost-order',
+      code: 'ACKED_ORDER_MISSING',
+    },
+    {
+      name: 'topup',
+      set: 'topupsCreated',
+      key: 'beta/chaos-ghost-topup',
+      code: 'ACKED_TOPUP_MISSING',
+    },
+    {
+      name: 'ops action',
+      set: 'opsActionIds',
+      key: 'acme/chaos-ghost-action',
+      code: 'ACKED_OPS_ACTION_MISSING',
+    },
+    {
+      name: 'order of an unknown tenant',
+      set: 'ordersPaid',
+      key: 'zzz/chaos-ghost-order',
+      code: 'ACKED_ORDER_MISSING',
+    },
+  ];
+  for (const scenario of scenarios) {
+    it(`detects an acknowledged ${scenario.name} that no longer exists`, async () => {
+      const s = sys();
+      await corrupted(
+        s,
+        async () => {
+          s.expectations[scenario.set].add(scenario.key);
+        },
+        async () => {
+          s.expectations[scenario.set].delete(scenario.key);
+        },
+        ['INV-7'],
+        [scenario.key, `code:${scenario.code}`],
+      );
+    });
+  }
+
+  it('detects a really deleted order_payments row that Orders had acknowledged (with its knock-on INV-2/INV-4)', async () => {
+    const s = sys();
+    const { orderId } = seeded().paid;
+    const row = (
+      await sql<{
+        order_id: string;
+        customer_id: string;
+        wallet_transaction_id: string;
+        amount: string;
+        currency: string;
+        paid_at: Date;
+        paid_event_id: string | null;
+      }>`select * from t_acme.order_payments where order_id = ${orderId}`.execute(s.walletAdmin)
+    ).rows[0];
+    expect(row).toBeDefined();
+    await run(s.walletAdmin, sql`delete from t_acme.order_payments where order_id = ${orderId}`);
+    try {
+      const violations = await collectViolations(s);
+      const inv7 = violations.filter((v) => v.invariant === 'INV-7');
+      expect(inv7.map((v) => v.code)).toEqual(['ACKED_ORDER_MISSING']);
+      expect(inv7[0]?.message).toContain(`acme/${orderId}`);
+      // Kéo theo các bất biến chặt khác (đơn mồ côi ở sổ cái, OrderPaidV1 cho đơn không còn); INV-1/INV-3 không bị báo oan.
+      expect(invariantsOf(violations)).toEqual(['INV-2', 'INV-4', 'INV-7']);
+    } finally {
+      await run(
+        s.walletAdmin,
+        sql`insert into t_acme.order_payments (order_id, customer_id, wallet_transaction_id, amount, currency, paid_at, paid_event_id)
+            values (${row?.order_id}, ${row?.customer_id}, ${row?.wallet_transaction_id}, ${row?.amount}, ${row?.currency}, ${row?.paid_at}, ${row?.paid_event_id})`,
+      );
+    }
+    await assertSystemInvariants(s);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// INV-8: phục hồi — dịch vụ sống và đọc được
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe('oracle INV-8: dịch vụ sống (chế độ child, dừng hẳn từng dịch vụ)', () => {
+  it('is clean on a healthy child system, flags a crashed wallet or payment precisely, and recovers after heal()', async () => {
+    const s = await createSystem({ mode: 'child', seed: 21, tenants: ['acme'] });
+    try {
+      await s.openWallet('acme', 'gina');
+      expect((await s.topup('acme', 'gina', 10_000, 'k-gina')).status).toBe(202);
+      await s.heal();
+      expect(await runInvariants(s)).toEqual([]);
+
+      const servicesOf = (violations: readonly Violation[]): string[] =>
+        [...new Set(violations.map((v) => String(v.detail?.service)))].sort();
+
+      await s.crashWallet();
+      // Không ném, không đối soát (wallet chết): chỉ INV-8 và đúng cho wallet.
+      const spy = spyRunner();
+      let violations = await runInvariants(s, { reconcileRunner: spy.runner });
+      expect(invariantsOf(violations)).toEqual(['INV-8']);
+      expect(servicesOf(violations)).toEqual(['wallet']);
+      expect(new Set(codesOf(violations))).toEqual(
+        new Set(['HEALTH_FAILED', 'READ_FAILED', 'SERVICE_DOWN']),
+      );
+      expect(spy.calls).toEqual([]);
+      await s.heal();
+      expect(await runInvariants(s)).toEqual([]);
+
+      await s.crashPayment();
+      violations = await collectViolations(s, { only: ['INV-8'] });
+      expect(servicesOf(violations)).toEqual(['payment']);
+      expect(new Set(codesOf(violations))).toEqual(
+        new Set(['HEALTH_FAILED', 'READ_FAILED', 'SERVICE_DOWN']),
+      );
+      await s.heal();
+      expect(await collectViolations(s, { only: ['INV-8'] })).toEqual([]);
+    } finally {
+      await s.stop();
+    }
+  });
+
+  it('treats a service that answers /health but cannot read through its pool as a READ_FAILED', async () => {
+    const s = sys();
+    // Pool của payment bị phá: mọi truy vấn SQL của payment ném lỗi nhưng /health (không chạm DB) vẫn 200.
+    s.plan.enable();
+    s.plan.add({
+      point: 'sql.query.before',
+      label: 'break-payment-reads',
+      when: (i) => i.name === 'payment',
+      action: () => {
+        throw new Error('pool payment hỏng');
+      },
+    });
+    try {
+      const violations = await collectViolations(s, { only: ['INV-8'] });
+      expect(violations.map((v) => `${String(v.detail?.service)}:${v.code}`)).toEqual([
+        'payment:READ_FAILED',
+      ]);
+    } finally {
+      s.plan.clear();
+      s.plan.disable();
+    }
+    expect(await collectViolations(s, { only: ['INV-8'] })).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Retention thật: oracle không báo oan khi dòng outbox SENT / idempotency key đã bị dọn
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe('oracle với retention thật (retentionDeletes)', () => {
+  it('does not false-fail after outbox SENT rows and idempotency keys were purged, and still checks acknowledgements', async () => {
+    const s = await createSystem({
+      seed: 31,
+      tenants: ['acme'],
+      retention: {
+        dryRun: false,
+        intervalMinutes: 0.02,
+        days: {
+          wallet: { outboxSent: 0, processedMessages: 0, idempotencyKeys: 0 },
+          payment: { webhook: 0, idempotencyKeys: 0 },
+        },
+      },
+    });
+    try {
+      expect(s.retentionDeletes).toBe(true);
+      await s.openWallet('acme', 'hana');
+      expect((await s.topup('acme', 'hana', 90_000, 'k-hana')).status).toBe(202);
+      await s.heal();
+      await s.sendOrder({ tenant: 'acme', customer: 'hana', amount: 25_000 });
+      await s.heal();
+
+      const count = async (db: Db, table: string, where = '1 = 1'): Promise<number> =>
+        Number(
+          (
+            await sql<{
+              n: number;
+            }>`select count(*) as n from ${sql.raw(table)} where ${sql.raw(where)}`.execute(db)
+          ).rows[0]?.n ?? 0,
+        );
+      // Retention chạy nền: chờ tới khi nó thật sự dọn (điều kiện, không ngủ cố định).
+      await waitFor(
+        async () =>
+          (await count(s.walletAdmin, 't_acme.outbox', "status = 'SENT'")) === 0 &&
+          (await count(s.walletAdmin, 't_acme.idempotency_keys')) === 0 &&
+          (await count(s.paymentAdmin, 'idempotency_keys')) === 0,
+        { timeoutMs: 60_000, intervalMs: 300 },
+      );
+      expect(await count(s.walletAdmin, 't_acme.order_payments')).toBe(1);
+
+      expect(await runInvariants(s)).toEqual([]);
+      // Cùng dữ liệu nhưng nếu oracle tin retention không xóa: dòng OrderPaidV1 đã mất bị báo (kiểm tra có điều kiện thật sự có tác dụng).
+      expect(
+        codesOf(await collectViolations({ ...s, retentionDeletes: false }, { only: ['INV-4'] })),
+      ).toEqual(['PAID_WITHOUT_OUTBOX']);
+      // Nhưng thứ client đã được xác nhận thì retention không được đụng tới.
+      expect(s.expectations.topupsCreated.size).toBe(1);
+      expect(s.expectations.ordersPaid.size).toBe(1);
+      expect(await collectViolations(s, { only: ['INV-7'] })).toEqual([]);
+    } finally {
+      await s.stop();
+    }
   });
 });

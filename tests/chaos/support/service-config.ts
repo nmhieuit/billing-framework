@@ -15,6 +15,14 @@ import type { TenantId } from '../../../services/wallet/src/domain/tenant-id.js'
 export const SECRET = 'whsec_chaos';
 export const BACKOFF_SECONDS = [1, 2, 3];
 
+/** Đối soát mặc định của harness: tự ghi bù (autofix) bật; bản thân lượt tự động 23h UTC hầu như không chạy trong test. */
+export const DEFAULT_RECONCILIATION: WalletConfig['reconciliation'] = {
+  autofix: true,
+  atUtcHour: 23,
+  maxAttempts: 3,
+  maxItems: 1000,
+};
+
 /** Cấu hình dọn dữ liệu cũ cho kịch bản retention; mặc định 'off' (worker retention không chạy). */
 export type RetentionOption =
   | 'off'
@@ -93,12 +101,7 @@ export function walletConfigFor(input: {
     },
     broker: input.broker,
     orders: input.tuning?.orders ?? { prefetch: 5, retryDelaysSeconds: [1, 2], outboxBatch: 50 },
-    reconciliation: input.tuning?.reconciliation ?? {
-      autofix: true,
-      atUtcHour: 23,
-      maxAttempts: 3,
-      maxItems: 1000,
-    },
+    reconciliation: input.tuning?.reconciliation ?? DEFAULT_RECONCILIATION,
     retention: input.retention,
     topupBackoffSeconds: input.tuning?.topupBackoffSeconds ?? BACKOFF_SECONDS,
     workerIntervalMs: input.workerIntervalMs,
