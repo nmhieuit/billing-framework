@@ -100,6 +100,7 @@ describe('createOrderReadyHandler', () => {
     [{ kind: 'REPLAYED', walletTransactionId: 'tx_1' }, 'replayed'],
     [{ kind: 'DUPLICATE' }, 'duplicate'],
     [{ kind: 'REJECTED', reason: 'INSUFFICIENT_FUNDS' }, 'failed:INSUFFICIENT_FUNDS'],
+    [{ kind: 'REJECTED', reason: 'WALLET_FROZEN' }, 'failed:WALLET_FROZEN'],
   ])('records the order payment metric for %j as %s', async (outcome, label) => {
     const { handler, metrics } = setup(outcome);
     await handler(message(event));

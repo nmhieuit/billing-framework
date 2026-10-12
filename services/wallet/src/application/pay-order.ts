@@ -123,6 +123,9 @@ export class PayOrder {
     const merchant = byId.get(merchantId);
     if (!lockedWallet || !merchant) throw new Error(`missing account for order ${input.orderId}`);
 
+    // Ví đóng băng không được trả order. Kiểm tra sau nhánh đã-trả (order đã trả vẫn phát lại) và trên ví đã khóa.
+    if (lockedWallet.isFrozen()) return reject('WALLET_FROZEN');
+
     let debited: Account;
     try {
       debited = lockedWallet.apply(money.negate());
@@ -144,17 +147,18 @@ export class PayOrder {
         now,
       }),
     );
+    // Tạo ngữ cảnh một lần để cùng một eventId vừa nằm ở order_payments.paid_event_id vừa ở payload OrderPaidV1.
+    const paidContext = context();
     await orderPayments.insert({
       orderId: input.orderId,
       customerId: customerId.value,
       walletTransactionId: transactionId,
       amount: money,
       paidAt: now,
-      // Task 7 sẽ ghi eventId thật của OrderPaidV1 (input.eventId là id của OrderReadyForPayment, không phải event này).
-      paidEventId: null,
+      paidEventId: paidContext.eventId,
     });
     await outbox.add(
-      orderPaidMessage(context(), {
+      orderPaidMessage(paidContext, {
         orderId: input.orderId,
         walletTransactionId: transactionId,
         amount: money,

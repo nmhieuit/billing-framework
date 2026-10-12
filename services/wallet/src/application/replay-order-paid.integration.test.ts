@@ -71,7 +71,7 @@ const txCount = async (): Promise<number> =>
   (await h.db.withSchema(schema(h.acme)).selectFrom('ledger_transactions').select('id').execute())
     .length;
 
-/** Tạo một đơn đã trả và mô phỏng dòng `order_payments` sau Task 7 bằng cách gán `paid_event_id` thật. */
+/** Tạo một đơn đã trả và mô phỏng dòng `order_payments` với `paid_event_id` biết trước (hoặc null cho đơn cũ). */
 const paidOrder = async (withEventId = true) => {
   const customer = `rp${++counter}`;
   await fundWallet(h, { customer, amount: 100000 });
@@ -88,14 +88,13 @@ const paidOrder = async (withEventId = true) => {
   });
   if (outcome.kind !== 'PAID') throw new Error('order not paid');
   const paidEventId = randomUUID();
-  if (withEventId) {
-    await h.db
-      .withSchema(schema(h.acme))
-      .updateTable('order_payments')
-      .set({ paid_event_id: paidEventId })
-      .where('order_id', '=', orderId)
-      .execute();
-  }
+  // PayOrder đã ghi paid_event_id thật; ở đây ghi đè bằng id đã biết, hoặc xóa để mô phỏng đơn trả trước khi có cột này.
+  await h.db
+    .withSchema(schema(h.acme))
+    .updateTable('order_payments')
+    .set({ paid_event_id: withEventId ? paidEventId : null })
+    .where('order_id', '=', orderId)
+    .execute();
   return { orderId, paidEventId, transactionId: outcome.walletTransactionId };
 };
 

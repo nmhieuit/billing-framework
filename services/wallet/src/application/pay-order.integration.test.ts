@@ -10,7 +10,10 @@ import {
   silentLogger,
   type Harness,
 } from '../test-support.js';
+import { RecordingMetrics } from '../test-support-metrics.js';
 import { ApplyPaymentResult } from './apply-payment-result.js';
+import { FreezeWallet } from './freeze-wallet.js';
+import { OpsActionRecorder } from './ops-recorder.js';
 import { PayOrder, type PayOrderInput } from './pay-order.js';
 import type { Logger } from './ports.js';
 
@@ -257,6 +260,117 @@ describe('PayOrder — duplicates never charge twice', () => {
       reason: 'CONFLICT',
     });
     expect(await balance(h.acme, `wallet:${other}`)).toBe(100000);
+  });
+});
+
+describe('PayOrder — frozen wallet', () => {
+  let freezeKey = 0;
+  const freezeWallet = () =>
+    new FreezeWallet({
+      recorder: new OpsActionRecorder({
+        uow: h.uow,
+        clock: h.clock,
+        ids: h.ids,
+        log: silentLogger,
+        metrics: new RecordingMetrics(),
+      }),
+    });
+  const setFrozen = async (customer: string, frozen: boolean) => {
+    await freezeWallet().execute({
+      tenant: h.acme,
+      customerId: customer,
+      frozen,
+      actor: 'op@x',
+      reason: 'fraud review',
+      idempotencyKey: `pf-key-${++freezeKey}`,
+    });
+  };
+
+  it('rejects WALLET_FROZEN even with enough money: balance untouched, nothing remembered, one valid failure event, inbox kept', async () => {
+    const customer = newCustomer();
+    await fundWallet(h, { customer, amount: 120000 });
+    await setFrozen(customer, true);
+    const input = order(customer);
+
+    expect(await pay.execute(input)).toEqual({ kind: 'REJECTED', reason: 'WALLET_FROZEN' });
+
+    expect(await balance(h.acme, `wallet:${customer}`)).toBe(120000);
+    expect(await ledgerFor(input.orderId)).toHaveLength(0);
+    expect(await paidRows(input.orderId)).toHaveLength(0);
+    const rows = await outboxFor(input.orderId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ event_type: 'OrderPaymentFailedV1' });
+    expect(rows[0]?.body).toMatchObject({ reason: 'WALLET_FROZEN', orderId: input.orderId });
+    expect(validateEvent('OrderPaymentFailedV1', rows[0]?.body).ok).toBe(true);
+    expect(await pay.execute(input)).toEqual({ kind: 'DUPLICATE' });
+    expect(await outboxFor(input.orderId)).toHaveLength(1);
+  });
+
+  it('still accepts a top-up while frozen', async () => {
+    const customer = newCustomer();
+    await fundWallet(h, { customer, amount: 10000 });
+    await setFrozen(customer, true);
+    const seeded = await seedTopup(h, { customer, amount: 7000 });
+    const result = await new ApplyPaymentResult({
+      uow: h.uow,
+      clock: h.clock,
+      ids: h.ids,
+      log: silentLogger,
+    }).execute({
+      tenant: h.acme,
+      eventId: randomUUID(),
+      type: 'charge.succeeded',
+      chargeId: seeded.chargeId,
+      reference: seeded.topupId,
+      amount: 7000,
+      currency: 'VND',
+    });
+    expect(result).toBe('APPLIED');
+    expect(await balance(h.acme, `wallet:${customer}`)).toBe(17000);
+  });
+
+  it('still replays an order that was paid before the wallet was frozen', async () => {
+    const customer = newCustomer();
+    await fundWallet(h, { customer, amount: 100000 });
+    const first = order(customer);
+    const paid = await pay.execute(first);
+    await setFrozen(customer, true);
+
+    expect(await pay.execute({ ...first, eventId: randomUUID() })).toEqual({
+      kind: 'REPLAYED',
+      walletTransactionId: paid.kind === 'PAID' ? paid.walletTransactionId : '?',
+    });
+    expect(await balance(h.acme, `wallet:${customer}`)).toBe(50000);
+  });
+
+  it('pays the previously refused order once the wallet is unfrozen', async () => {
+    const customer = newCustomer();
+    await fundWallet(h, { customer, amount: 100000 });
+    await setFrozen(customer, true);
+    const orderId = randomUUID();
+    expect(await pay.execute(order(customer, { orderId }))).toEqual({
+      kind: 'REJECTED',
+      reason: 'WALLET_FROZEN',
+    });
+    await setFrozen(customer, false);
+    expect((await pay.execute(order(customer, { orderId }))).kind).toBe('PAID');
+    expect(await balance(h.acme, `wallet:${customer}`)).toBe(50000);
+  });
+});
+
+describe('PayOrder — paid_event_id', () => {
+  it('stores the eventId of the OrderPaidV1 outbox payload on order_payments', async () => {
+    const customer = newCustomer();
+    await fundWallet(h, { customer, amount: 100000 });
+    const input = order(customer);
+    expect((await pay.execute(input)).kind).toBe('PAID');
+
+    const [row] = await paidRows(input.orderId);
+    const [event] = await outboxFor(input.orderId);
+    expect(event?.event_type).toBe('OrderPaidV1');
+    expect(row?.paid_event_id).not.toBeNull();
+    expect(row?.paid_event_id).toBe(event?.body['eventId']);
+    expect(row?.paid_event_id).not.toBe(input.eventId);
   });
 });
 
