@@ -38,12 +38,16 @@ Trường chung bắt buộc của cả ba: `eventId` (UUID), `occurredAtUtc` (R
 `reason` ∈ `INSUFFICIENT_FUNDS`, `WALLET_NOT_FOUND`, `CURRENCY_MISMATCH`, `CONFLICT`, `WALLET_FROZEN`.
 
 > Cảnh báo: consumer (Orders) phải coi lý do lạ là "thất bại, giữ `Unpaid`" và phải triển khai trước khi bật freeze ở môi trường dùng chung.
+>
+> `WALLET_FROZEN`: ví của khách đang bị người vận hành đóng băng ([ops-tools](../ops/ops-tools.vi.md)), nên wallet từ chối trả order. Giữ order ở `Unpaid`; sau khi ví được mở băng, publish lại `OrderReadyForPaymentV1` (cùng `orderId`, `eventId` mới) để thử lại.
 
 Giới hạn giá trị (schema từ chối nếu vượt, vì wallet không lưu được): `tenantId` và `customerId` 1..64 ký tự,
 `correlationId` 1..100 ký tự, `amount` là số nguyên từ 1 đến 9007199254740991 (`Number.MAX_SAFE_INTEGER`).
 
-Thuộc tính AMQP wallet đặt khi phát: `contentType = application/json`, `messageId = eventId`, `type =` tên event,
-`deliveryMode = 2` (persistent), header `x-correlation-id`.
+Thuộc tính AMQP wallet đặt khi phát: `contentType = application/json`, `messageId =` id dòng outbox, `type =` tên event,
+`deliveryMode = 2` (persistent), header `x-correlation-id`. `messageId` bằng `eventId` của payload **chỉ với sự kiện phát lần đầu**; bản
+phát lại bởi người vận hành (xem dưới) giữ nguyên `eventId` nhưng có `messageId` mới. Vì vậy consumer **phải khử trùng theo `eventId`
+trong payload, không theo `messageId` AMQP**.
 
 <!-- example: OrderReadyForPaymentV1 -->
 ```json
@@ -98,8 +102,14 @@ Thuộc tính AMQP wallet đặt khi phát: `contentType = application/json`, `m
 ## Quy tắc nghiệp vụ cần biết
 
 - **Idempotency theo `orderId`:** gửi lại cùng `orderId` với cùng khách, số tiền, đồng tiền thì wallet **không trừ thêm** và phát
-  lại `OrderPaidV1` với đúng `walletTransactionId` cũ (`eventId` mới). Cùng `orderId` nhưng khác khách/số tiền/đồng tiền →
+  lại `OrderPaidV1` với đúng `walletTransactionId` cũ (`eventId` mới, vì đây là một lần xử lý mới; khác với phát lại do vận hành bên dưới). Cùng `orderId` nhưng khác khách/số tiền/đồng tiền →
   `OrderPaymentFailedV1(CONFLICT)`, không trừ tiền, wallet ghi cảnh báo.
+- **Phát lại `OrderPaidV1` do vận hành:** nếu Orders mất sự kiện, người vận hành gọi `POST /ops/orders/{orderId}/replay-paid`. Sự kiện
+  phát lại giữ **nguyên `eventId` và `occurredAtUtc` gốc** (nên bỏ qua được nếu đã xử lý) nhưng có `messageId` AMQP mới và
+  `correlationId = ops-replay:<id thao tác>`. Chỉ phát lại cho order đã trả và chưa bị đảo.
+- **Đảo thanh toán không phát sự kiện:** khi vận hành đảo khoản trả của một order (`POST /ops/transactions/{id}/reversals`), wallet
+  **không** phát sự kiện hoàn tiền cho Orders (chưa có hợp đồng). Người vận hành tự báo bên Orders để hủy/hoàn order; sau đó
+  `replay-paid` cho order đó bị từ chối. Xem [ops-tools](../ops/ops-tools.vi.md).
 - **Thiếu tiền** → `INSUFFICIENT_FUNDS`; wallet **không ghi nhớ** lần từ chối, nên sau khi khách nạp thêm tiền ecommerce có thể
   publish lại `OrderReadyForPaymentV1` (cùng `orderId`, `eventId` mới) để thử lại.
 - Message sai schema hoặc `tenantId` wallet không phục vụ sẽ vào hàng đợi chết của wallet (`wallet.order-payments.dlq`) và không

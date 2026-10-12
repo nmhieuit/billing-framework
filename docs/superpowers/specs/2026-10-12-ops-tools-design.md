@@ -1,7 +1,7 @@
 # Bước 6c — Công cụ vận hành (ops tools): thiết kế
 
 **Ngày:** 2026-10-12
-**Trạng thái:** Bản thiết kế, chờ duyệt
+**Trạng thái:** Đã triển khai (các điểm code khác bản thiết kế ban đầu được ghi ở mục 9)
 **Phạm vi:** Bốn công cụ cho người vận hành trong **wallet** — đóng/mở băng ví, điều chỉnh số dư, đảo giao dịch, phát lại `OrderPaidV1` — cùng nhật ký kiểm toán chung, API `/ops/...` và quan sát tối thiểu. Là vòng ba của Bước 6. Dựa trên sổ cái kép (ADR-0002), trả order từ ví (`2026-10-10-order-payment-integration-design.md`), đối soát (ADR-0010) và retention (ADR-0012). Payment không đổi.
 
 ## 1. Quyết định đã chốt
@@ -22,14 +22,14 @@ Chạy trong từng schema tenant, mẫu như `003-orders` (drop rồi add lại
 - `accounts`: cột `frozen_at datetime2(3) null`, `frozen_by nvarchar(100) null`, `frozen_reason nvarchar(500) null`; CHECK loại tài khoản thêm `'ADJUSTMENT'`. Tài khoản đang đóng băng khi `frozen_at is not null`. Chỉ ví (`WALLET`) được đóng băng.
 - `ledger_transactions`: CHECK `kind` thêm `'ADJUSTMENT'`, `'REVERSAL'`; cột `reverses_transaction_id nvarchar(64) null` tham chiếu `ledger_transactions(id)`; **chỉ mục unique có lọc** `where reverses_transaction_id is not null` để một giao dịch chỉ bị đảo một lần.
 - `order_payments`: cột `paid_event_id nvarchar(64) null` = `eventId` của `OrderPaidV1` ban đầu. Backfill: với mỗi dòng, tìm dòng `outbox` còn lại có `event_type = 'OrderPaidV1'` và payload JSON khớp `orderId`, lấy `eventId` từ payload; không tìm thấy thì để null. Cần cột này vì dòng outbox gốc bị retention dọn sau `RETENTION_OUTBOX_SENT_DAYS` ngày.
-- Bảng `ops_actions` (chỉ thêm): `id`, `action` (`FREEZE` | `UNFREEZE` | `ADJUST` | `REVERSE` | `REPLAY_PAID`), `actor`, `reason`, `target` (ví/giao dịch/order), `idempotency_key` **unique**, `fingerprint` (băm yêu cầu), `result` (JSON kết quả đã trả), `created_at`. Chỉ mục theo `created_at` cho danh sách.
+- Bảng `ops_actions` (chỉ thêm): `id`, `action` (`FREEZE` | `UNFREEZE` | `ADJUST` | `REVERSE` | `REPLAY_PAID`), `actor`, `reason`, `target` (ví/giao dịch/order), `idempotency_key` **unique**, `fingerprint` (băm yêu cầu), `result` (JSON kết quả đã trả), `created_at`. Cột `seq bigint identity` làm khóa chính để sắp xếp và phân trang (không có chỉ mục theo `created_at`); trigger `instead of update, delete` chặn sửa/xóa.
 - Tài khoản `system:ADJUSTMENT:<cur>` được tạo khi cần (cùng cách tạo tài khoản hệ thống hiện có); số dư không bị ràng buộc dấu.
 
 Danh sách migration tenant ghim trong các test (provisioning, orders-migration) được cập nhật thêm `007-ops-tools`; thêm `ops-migration.integration.test.ts` kiểm chứng chạy lại không đổi gì và backfill đúng.
 
 ## 3. Hành vi
 
-**Idempotency chung (`OpsActionRecorder`).** Trong transaction: tìm `ops_actions` theo `idempotency_key`; có và cùng `fingerprint` → trả lại `result` cũ (không làm gì thêm); có nhưng khác `fingerprint` → 409 `IDEMPOTENCY_CONFLICT`; chưa có → thực hiện, ghi `ops_actions` cùng transaction. Va chạm unique do chạy song song được thử lại một lần như `PayOrder` xử lý `DuplicateKeyError`. Hai thao tác no-op (freeze ví đã đóng băng, unfreeze ví đang mở) trả 200 `changed:false` và **không** ghi `ops_actions`.
+**Idempotency chung (`OpsActionRecorder`).** Trong transaction: tìm `ops_actions` theo `idempotency_key`; có và cùng `fingerprint` → trả lại `result` cũ (không làm gì thêm); có nhưng khác `fingerprint` → 409 `IDEMPOTENCY_CONFLICT`; chưa có → thực hiện, ghi `ops_actions` cùng transaction. Va chạm unique do chạy song song được thử lại một lần như `PayOrder` xử lý `DuplicateKeyError`. Hai thao tác no-op (freeze ví đã đóng băng, unfreeze ví đang mở) trả 200 `changed:false` và **không** ghi `ops_actions`. Trong metric, `outcome = noop` gộp cả hai trường hợp này lẫn gọi lại cùng khóa cùng nội dung (phát lại kết quả cũ).
 
 **Freeze / unfreeze.** `POST /ops/wallets/{customerId}/freeze` và `/unfreeze`, body `{reason, idempotencyKey}`. Ví không tồn tại → 404 `WALLET_NOT_FOUND`.
 
@@ -48,7 +48,7 @@ Danh sách migration tenant ghim trong các test (provisioning, orders-migration
 
 **Hợp đồng.** `OrderPaymentFailedV1.reason` (JSON Schema trong `packages/contracts/src/events.ts`) thêm giá trị `WALLET_FROZEN`. Đây là thay đổi hợp đồng cần phối hợp với bên Orders: consumer kiểm tra enum chặt sẽ từ chối giá trị mới. Kế hoạch triển khai phải (a) cập nhật contract test/Pact, (b) ghi vào `docs/integration/orders-handoff.vi.md` rằng consumer phải chấp nhận lý do lạ như "thất bại, giữ `Unpaid`", và (c) nêu rõ trong ADR để bên Orders triển khai trước khi bật freeze ở môi trường dùng chung.
 
-**Nhật ký.** `GET /ops/actions?limit&cursor` (chỉ đọc, giảm dần theo `created_at`, `limit` 1..200, mặc định 50) trả các dòng `ops_actions`; không cần role khác ngoài `OPS`.
+**Nhật ký.** `GET /ops/actions?limit&cursor` (chỉ đọc, giảm dần theo `seq`, `limit` 1..200, mặc định 50; `cursor` = `seq` của dòng cuối trang trước, `nextCursor` là `null` khi trang ngắn hơn `limit`) trả các dòng `ops_actions`; không cần role khác ngoài `OPS`.
 
 ## 4. Phân lớp
 
@@ -80,3 +80,14 @@ Counter `billing.ops.actions{tenant, action, outcome}` với `outcome` là `ok` 
 - `paid_event_id` của đơn cũ có thể null nếu outbox đã bị dọn: phát lại các đơn đó bị từ chối rõ ràng (409), không đoán `eventId`.
 - Khóa idempotency ops là trong tenant; cùng khóa ở tenant khác không va chạm.
 - Header actor tin gateway: triển khai thật phải bảo đảm gateway xóa mọi `x-actor-*` do client gửi.
+
+## 9. Khác biệt giữa thiết kế và bản triển khai
+
+- **Phân trang nhật ký theo `seq`, không theo `created_at`**: bảng có cột identity `seq`; `cursor` là `seq`, sắp xếp giảm dần theo `seq`, không có chỉ mục `created_at` (mục 2, 3).
+- **Metric `noop`** bao gồm cả "đã đúng trạng thái" (freeze/unfreeze) lẫn "gọi lại idempotent" (mục 5).
+- **Phát lại và đảo có thể đua nhau**: phát lại không khóa tài khoản của ví nên một phát lại chạy đúng lúc đảo của cùng order vẫn có thể xếp hàng `OrderPaidV1`; không chặn bằng khóa mà ghi thành quy tắc vận hành ([ops-tools](../../ops/ops-tools.vi.md)).
+- **`messageId` AMQP của bản phát lại là id outbox mới**, khác `eventId` (giữ nguyên trong payload); consumer khử trùng theo `eventId` ([orders-handoff](../../integration/orders-handoff.vi.md)).
+- **`INSUFFICIENT_FUNDS` cũng áp dụng khi đảo `ADJUSTMENT CREDIT`** mà ví đã tiêu mất (không chỉ `DEBIT`); `REVERSAL_NOT_POSSIBLE` chỉ nói về tài khoản đối ứng (MERCHANT).
+- `occurredAtUtc` của bản phát lại bằng `paidAtUtc` gốc; `correlationId = ops-replay:<actionId>`.
+
+Tài liệu: [`docs/ops/ops-tools.vi.md`](../../ops/ops-tools.vi.md), [ADR-0013](../../adr/0013-ops-tools-audited-actions.vi.md).

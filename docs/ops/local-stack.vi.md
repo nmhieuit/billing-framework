@@ -101,6 +101,20 @@ Hai điều cần biết khi chạy seed trên stack này:
   bằng đơn mới. Chạy lại nhiều lần thì các đơn sau dần bị từ chối `INSUFFICIENT_FUNDS`. Muốn số dư mới: `down -v` (xem dưới).
 - Seed tạo queue hứng `ecommerce.billing-events` (bền, gắn vào `billing.events` với routing key `#`) để đóng vai consumer của ecommerce, nên outbox của seed được giao đi và `billing-outbox-stuck` không báo. Muốn demo cảnh báo này: xóa queue đó (xem "Tạo queue hứng" dưới) trước khi seed, hoặc xóa rồi seed lại; queue sẽ được tạo lại ở lần seed sau.
 
+## Công cụ vận hành (ops)
+
+Wallet có API `/ops/...` (đóng/mở băng ví, điều chỉnh, đảo giao dịch, phát lại `OrderPaidV1`). Trên stack local không có gateway nên
+bạn tự đặt các header mà gateway thật sẽ đặt (`x-actor-id`, `x-actor-role: OPS`); gateway thật phải xóa `x-actor-*` do client gửi.
+Ví dụ với ví `seed-1` của tenant `acme` (sau `local:seed`):
+
+```bash
+H='-H x-tenant-id:acme -H x-actor-id:dev -H x-actor-role:OPS -H content-type:application/json'
+curl -s -X POST localhost:3001/ops/wallets/seed-1/freeze $H -d '{"reason":"thử nghiệm local","idempotencyKey":"local-freeze-1"}'
+curl -s "localhost:3001/ops/actions?limit=5" $H
+```
+
+Hướng dẫn đầy đủ: [ops-tools](ops-tools.vi.md).
+
 ## Dọn dữ liệu (retention)
 
 Wallet và payment trong stack này chạy job retention ở **chế độ chạy thử**: `deploy/compose.services.yml` đặt
