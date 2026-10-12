@@ -37,6 +37,7 @@ const BASE_ENV_KEYS = [
   'LOCALAPPDATA',
 ];
 const TAIL_CHARS = 8_000;
+const KILL_TIMEOUT_MS = 15_000;
 const SECRET_KEY = /PASSWORD|SECRET|TOKEN/i;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -147,7 +148,12 @@ export async function spawnChildService(input: {
 
   const kill = async (): Promise<void> => {
     if (!hasExited) child.kill('SIGKILL');
-    await exited;
+    // Chặn trên: SIGKILL mà không thoát được là bất thường, báo rõ thay vì treo cả test.
+    const done = await Promise.race([
+      exited.then(() => true),
+      sleep(KILL_TIMEOUT_MS).then(() => false),
+    ]);
+    if (!done) throw describeFailure(`không thoát sau ${KILL_TIMEOUT_MS}ms kể từ SIGKILL`);
   };
 
   return {

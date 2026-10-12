@@ -119,8 +119,10 @@ describe('System mode child', () => {
   });
 
   it('refuses afterOrderHandled because the hook cannot cross a process boundary', async () => {
-    const options = { mode: 'child', afterOrderHandled: async () => {} } as never;
-    await expect(createSystem(options)).rejects.toThrow(/afterOrderHandled.*child/);
+    // Bị chặn ngay ở kiểu (không rơi sang overload inproc) VÀ ở runtime.
+    // @ts-expect-error afterOrderHandled không được phép với mode 'child'
+    const attempt = createSystem({ mode: 'child', afterOrderHandled: async () => {} });
+    await expect(attempt).rejects.toThrow(/afterOrderHandled.*child/);
   });
 
   it('runs the basic flow across real processes: open, top up, order, heal', async () => {

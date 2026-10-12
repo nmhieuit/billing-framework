@@ -129,7 +129,11 @@ export interface ChildSystem extends System {
 
 export type ChildSystemOptions = Omit<SystemOptions, 'mode' | 'afterOrderHandled'> & {
   mode: 'child';
+  /** Không dùng được ở mode 'child' (hàm trong tiến trình test không qua được ranh giới tiến trình). */
+  afterOrderHandled?: never;
 };
+
+export type InprocSystemOptions = Omit<SystemOptions, 'mode'> & { mode?: 'inproc' };
 
 /**
  * Chạy một truy vấn bằng kết nối quản trị, thử lại đúng một lần. killSessions(walletDb) giết luôn các session
@@ -165,7 +169,7 @@ type Handle = { stop(): Promise<void>; readonly pid?: number; kill?(): Promise<v
  * (mode 'inproc'); mode 'child' chạy chúng thành tiến trình con thật để crash bằng SIGKILL (xem SystemOptions.mode).
  */
 export async function createSystem(options: ChildSystemOptions): Promise<ChildSystem>;
-export async function createSystem(options?: SystemOptions): Promise<System>;
+export async function createSystem(options?: InprocSystemOptions): Promise<System>;
 export async function createSystem(options: SystemOptions = {}): Promise<System | ChildSystem> {
   const mode = options.mode ?? 'inproc';
   if (mode === 'child' && options.afterOrderHandled !== undefined) {
@@ -358,15 +362,15 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
     // Crash thật: SIGKILL rồi đợi thoát; để undefined để heal()/restart*() biết dịch vụ đang chết. Không tự bật lại.
     const crash = async (which: 'wallet' | 'payment'): Promise<void> => {
       const running = which === 'wallet' ? wallet : payment;
-      if (which === 'wallet') wallet = undefined;
-      else payment = undefined;
       if (running?.kill === undefined) {
         throw new Error(`crash ${which}: không có tiến trình con đang chạy`);
       }
+      // Chỉ bỏ handle SAU khi kill xong: kill lỗi/quá hạn thì handle vẫn còn, heal() không dựng thêm bản thứ hai đè cổng.
       await running.kill();
+      if (which === 'wallet') wallet = undefined;
+      else payment = undefined;
       log.record('crash', { service: which, pid: running.pid });
     };
-
     const walletHeaders = (tenant: string, customer: string, key?: string) => ({
       'content-type': 'application/json',
       'x-tenant-id': tenant,

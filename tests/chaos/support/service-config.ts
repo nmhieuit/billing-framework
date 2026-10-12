@@ -75,19 +75,34 @@ export function walletConfigFor(input: {
   broker: WalletConfig['broker'];
   workerIntervalMs: number;
   retention: WalletRetentionConfig;
+  /** Ghi đè giá trị cố định của harness (chỉ test cấu hình dùng, để kiểm env bằng giá trị khác mặc định). */
+  tuning?: Partial<
+    Pick<WalletConfig, 'orders' | 'reconciliation' | 'telemetry' | 'topupBackoffSeconds'>
+  > & {
+    paymentTimeoutMs?: number;
+  };
 }): WalletConfig {
   return {
     port: input.port,
     database: input.database,
     tenants: input.tenants,
-    payment: { baseUrl: input.paymentBaseUrl, webhookSecret: SECRET, timeoutMs: 3000 },
+    payment: {
+      baseUrl: input.paymentBaseUrl,
+      webhookSecret: SECRET,
+      timeoutMs: input.tuning?.paymentTimeoutMs ?? 3000,
+    },
     broker: input.broker,
-    orders: { prefetch: 5, retryDelaysSeconds: [1, 2], outboxBatch: 50 },
-    reconciliation: { autofix: true, atUtcHour: 23, maxAttempts: 3, maxItems: 1000 },
+    orders: input.tuning?.orders ?? { prefetch: 5, retryDelaysSeconds: [1, 2], outboxBatch: 50 },
+    reconciliation: input.tuning?.reconciliation ?? {
+      autofix: true,
+      atUtcHour: 23,
+      maxAttempts: 3,
+      maxItems: 1000,
+    },
     retention: input.retention,
-    topupBackoffSeconds: BACKOFF_SECONDS,
+    topupBackoffSeconds: input.tuning?.topupBackoffSeconds ?? BACKOFF_SECONDS,
     workerIntervalMs: input.workerIntervalMs,
-    telemetry: { sampleIntervalSeconds: 15 },
+    telemetry: input.tuning?.telemetry ?? { sampleIntervalSeconds: 15 },
   };
 }
 
@@ -97,15 +112,22 @@ export function paymentConfigFor(input: {
   webhookUrl: string;
   workerIntervalMs: number;
   retention: PaymentRetentionConfig;
+  tuning?: Partial<Pick<PaymentConfig, 'responseTimeoutMs' | 'telemetry'>> & {
+    webhookBackoffSeconds?: number[];
+  };
 }): PaymentConfig {
   return {
     port: input.port,
     database: input.database,
-    webhook: { url: input.webhookUrl, secret: SECRET, backoffSeconds: BACKOFF_SECONDS },
+    webhook: {
+      url: input.webhookUrl,
+      secret: SECRET,
+      backoffSeconds: input.tuning?.webhookBackoffSeconds ?? BACKOFF_SECONDS,
+    },
     workerIntervalMs: input.workerIntervalMs,
-    responseTimeoutMs: 1000,
+    responseTimeoutMs: input.tuning?.responseTimeoutMs ?? 1000,
     retention: input.retention,
-    telemetry: { sampleIntervalSeconds: 15 },
+    telemetry: input.tuning?.telemetry ?? { sampleIntervalSeconds: 15 },
   };
 }
 
