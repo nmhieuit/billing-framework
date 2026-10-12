@@ -108,3 +108,60 @@ describe('LedgerTransaction.orderPayment', () => {
     expect(() => make(1, 'x'.repeat(200))).toThrow(InvalidLedgerTransactionError);
   });
 });
+
+describe('LedgerTransaction.adjustment', () => {
+  const adj = (direction: 'CREDIT' | 'DEBIT', amount = 100) =>
+    LedgerTransaction.adjustment({
+      id: 'tx_a',
+      actionId: 'act1',
+      walletAccountId: 'w',
+      adjustmentAccountId: 'adj',
+      direction,
+      amount: Money.of(amount, 'VND'),
+      now,
+    }).toProps();
+
+  it('CREDIT adds to the wallet and mirrors on the ADJUSTMENT account', () => {
+    const p = adj('CREDIT');
+    expect(p.kind).toBe('ADJUSTMENT');
+    expect(p.businessKey).toBe('adjustment:act1');
+    expect(p.reversesTransactionId).toBeNull();
+    expect(p.entries.map((e) => [e.accountId, e.amount.amount])).toEqual([
+      ['w', 100],
+      ['adj', -100],
+    ]);
+  });
+
+  it('DEBIT flips the signs', () => {
+    expect(adj('DEBIT').entries.map((e) => [e.accountId, e.amount.amount])).toEqual([
+      ['w', -100],
+      ['adj', 100],
+    ]);
+  });
+
+  it('rejects a non-positive amount', () => {
+    expect(() => adj('CREDIT', 0)).toThrow(InvalidLedgerTransactionError);
+    expect(() => adj('CREDIT', -5)).toThrow(InvalidLedgerTransactionError);
+  });
+});
+
+describe('LedgerTransaction.reversal', () => {
+  it('negates every entry of the original and links back to it', () => {
+    const original = LedgerTransaction.orderPayment({
+      id: 'tx_o',
+      orderId: 'o1',
+      walletAccountId: 'w',
+      merchantAccountId: 'm',
+      amount: Money.of(70, 'VND'),
+      now,
+    }).toProps();
+    const rev = LedgerTransaction.reversal({ id: 'tx_r', original, now }).toProps();
+    expect(rev.kind).toBe('REVERSAL');
+    expect(rev.businessKey).toBe('reversal:tx_o');
+    expect(rev.reversesTransactionId).toBe('tx_o');
+    expect(rev.entries.map((e) => [e.accountId, e.amount.amount])).toEqual([
+      ['w', 70],
+      ['m', -70],
+    ]);
+  });
+});

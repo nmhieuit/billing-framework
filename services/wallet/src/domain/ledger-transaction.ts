@@ -6,13 +6,14 @@ export interface LedgerEntry {
   readonly amount: Money;
 }
 
-export type LedgerTransactionKind = 'TOPUP' | 'ORDER_PAYMENT';
+export type LedgerTransactionKind = 'TOPUP' | 'ORDER_PAYMENT' | 'ADJUSTMENT' | 'REVERSAL';
 
 export interface LedgerTransactionProps {
   readonly id: string;
   readonly businessKey: string;
   readonly kind: LedgerTransactionKind;
   readonly entries: readonly LedgerEntry[];
+  readonly reversesTransactionId: string | null;
   readonly createdAt: Date;
 }
 
@@ -26,6 +27,7 @@ export class LedgerTransaction {
     businessKey: string;
     kind: LedgerTransactionKind;
     entries: readonly LedgerEntry[];
+    reverses?: string;
     now: Date;
   }): LedgerTransaction {
     if (input.businessKey.length === 0 || input.businessKey.length > MAX_BUSINESS_KEY_LENGTH) {
@@ -63,6 +65,7 @@ export class LedgerTransaction {
       businessKey: input.businessKey,
       kind: input.kind,
       entries: [...input.entries],
+      reversesTransactionId: input.reverses ?? null,
       createdAt: input.now,
     });
   }
@@ -111,6 +114,51 @@ export class LedgerTransaction {
         { accountId: input.walletAccountId, amount: input.amount.negate() },
         { accountId: input.merchantAccountId, amount: input.amount },
       ],
+      now: input.now,
+    });
+  }
+
+  /** Điều chỉnh có đối ứng: CREDIT cộng ví, DEBIT trừ ví; đối ứng là tài khoản ADJUSTMENT cùng đồng tiền. */
+  static adjustment(input: {
+    id: string;
+    actionId: string;
+    walletAccountId: string;
+    adjustmentAccountId: string;
+    direction: 'CREDIT' | 'DEBIT';
+    amount: Money;
+    now: Date;
+  }): LedgerTransaction {
+    if (!input.amount.isPositive()) {
+      throw new InvalidLedgerTransactionError('an adjustment amount must be positive');
+    }
+    const walletDelta = input.direction === 'CREDIT' ? input.amount : input.amount.negate();
+    return LedgerTransaction.create({
+      id: input.id,
+      businessKey: `adjustment:${input.actionId}`,
+      kind: 'ADJUSTMENT',
+      entries: [
+        { accountId: input.walletAccountId, amount: walletDelta },
+        { accountId: input.adjustmentAccountId, amount: walletDelta.negate() },
+      ],
+      now: input.now,
+    });
+  }
+
+  /** Đảo một giao dịch: mỗi dòng đổi dấu; chỉ thêm giao dịch mới, không sửa giao dịch gốc. */
+  static reversal(input: {
+    id: string;
+    original: { id: string; entries: readonly LedgerEntry[] };
+    now: Date;
+  }): LedgerTransaction {
+    return LedgerTransaction.create({
+      id: input.id,
+      businessKey: `reversal:${input.original.id}`,
+      kind: 'REVERSAL',
+      entries: input.original.entries.map((e) => ({
+        accountId: e.accountId,
+        amount: e.amount.negate(),
+      })),
+      reverses: input.original.id,
       now: input.now,
     });
   }

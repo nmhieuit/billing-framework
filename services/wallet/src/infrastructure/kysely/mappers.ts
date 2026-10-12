@@ -32,6 +32,7 @@ export function rowToAccount(row: Selectable<AccountsTable>): Account {
     currency,
     balance: Money.of(toSafeInteger(row.balance), currency),
     createdAt: row.created_at,
+    frozen: null, // Task 4 sẽ đọc từ cột DB
   });
 }
 

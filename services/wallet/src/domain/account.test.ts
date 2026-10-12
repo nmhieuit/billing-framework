@@ -24,6 +24,7 @@ describe('Account.openWallet', () => {
       currency: 'VND',
       balance: Money.zero('VND'),
       createdAt: now,
+      frozen: null,
     });
   });
 });
@@ -36,6 +37,7 @@ const rehydrate = (kind: AccountProps['kind'], balance: number, currency: 'VND' 
     currency,
     balance: Money.of(balance, currency),
     createdAt: now,
+    frozen: null,
   });
 
 describe('Account.apply', () => {
@@ -67,5 +69,35 @@ describe('Account.apply', () => {
     const wallet = rehydrate('WALLET', 100);
     wallet.apply(Money.of(50, 'VND'));
     expect(wallet.toProps().balance.amount).toBe(100);
+  });
+});
+
+describe('Account freeze', () => {
+  it('a new wallet is not frozen', () => {
+    expect(rehydrate('WALLET', 0).isFrozen()).toBe(false);
+  });
+
+  it('freezes with actor, reason and time, then unfreezes', () => {
+    const frozen = rehydrate('WALLET', 0).freeze('ops1', 'fraud', now);
+    expect(frozen.isFrozen()).toBe(true);
+    expect(frozen.toProps().frozen).toEqual({ at: now, by: 'ops1', reason: 'fraud' });
+    const thawed = frozen.unfreeze();
+    expect(thawed.isFrozen()).toBe(false);
+    expect(thawed.toProps().frozen).toBeNull();
+  });
+
+  it.each(['GATEWAY', 'MERCHANT', 'ADJUSTMENT'] as const)('cannot freeze a %s account', (kind) => {
+    expect(() => rehydrate(kind, 0).freeze('ops1', 'x', now)).toThrow(LedgerInvariantError);
+  });
+
+  it('ADJUSTMENT accepts positive and negative deltas', () => {
+    const adj = rehydrate('ADJUSTMENT', 0);
+    expect(adj.apply(Money.of(50, 'VND')).toProps().balance.amount).toBe(50);
+    expect(adj.apply(Money.of(-50, 'VND')).toProps().balance.amount).toBe(-50);
+  });
+
+  it('a frozen wallet still accepts credits (blocking debits is a use-case concern)', () => {
+    const frozen = rehydrate('WALLET', 10).freeze('ops1', 'fraud', now);
+    expect(frozen.apply(Money.of(5, 'VND')).toProps().balance.amount).toBe(15);
   });
 });

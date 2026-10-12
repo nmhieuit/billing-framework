@@ -32,3 +32,8 @@ export class StateTransitionError extends Error {
 export class InvalidReconciliationError extends Error {
   override name = 'InvalidReconciliationError';
 }
+
+/** Ví đang bị đóng băng: chặn mọi giao dịch ghi nợ. */
+export class WalletFrozenError extends Error {
+  override name = 'WalletFrozenError';
+}
