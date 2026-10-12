@@ -9,17 +9,9 @@ import {
   type TestDatabase,
 } from '@billing/testing';
 import { sql, type Kysely, type RawBuilder } from 'kysely';
-import type { PaymentRetentionConfig } from '../../../services/payment/src/config.js';
-import type { WalletRetentionConfig } from '../../../services/wallet/src/config.js';
 import { paymentMigrations } from '../../../db/payment/migrations.js';
-import {
-  startService as startPayment,
-  type RunningService as RunningPayment,
-} from '../../../services/payment/src/bootstrap.js';
-import {
-  startService as startWallet,
-  type RunningService as RunningWallet,
-} from '../../../services/wallet/src/bootstrap.js';
+import { startService as startPayment } from '../../../services/payment/src/bootstrap.js';
+import { startService as startWallet } from '../../../services/wallet/src/bootstrap.js';
 import { TenantId } from '../../../services/wallet/src/domain/tenant-id.js';
 import { ORDER_PAYMENTS_QUEUE } from '../../../services/wallet/src/interface/messaging/order-payments.topology.js';
 import { provisionTenants } from '../../../services/wallet/src/infrastructure/kysely/provisioning.js';
@@ -34,33 +26,29 @@ import { HttpFaultProxy } from './http-fault-proxy.js';
 import { OpLog } from './op-log.js';
 import { createPrng, resolveSeed } from './prng.js';
 import { quiesce, type QuiesceCondition } from './quiesce.js';
+import {
+  paymentConfigFor,
+  paymentEnv,
+  retentionFor,
+  walletConfigFor,
+  walletEnv,
+  type RetentionOption,
+} from './service-config.js';
 import { faultyDialect } from './sql-faults.js';
+import { isProcessAlive, spawnChildService, type ChildService } from './crash.js';
 
-const SECRET = 'whsec_chaos';
-const BACKOFF_SECONDS = [1, 2, 3];
+export type { RetentionOption } from './service-config.js';
+
 const HEAL_TIMEOUT_MS = 90_000;
 
-/** Cấu hình dọn dữ liệu cũ cho kịch bản retention; mặc định 'off' (worker retention không chạy). */
-export type RetentionOption =
-  | 'off'
-  | {
-      dryRun: boolean;
-      batchSize?: number;
-      /** Chu kỳ chạy (phút); cho phép số lẻ để kịch bản không phải chờ cả giờ. */
-      intervalMinutes?: number;
-      days?: {
-        wallet?: Partial<{
-          outboxSent: number;
-          processedMessages: number;
-          idempotencyKeys: number;
-          reconciliation: number;
-        }>;
-        payment?: Partial<{ webhook: number; idempotencyKeys: number }>;
-      };
-    };
-
 export interface SystemOptions {
-  mode?: 'inproc'; // mode 'child' thêm ở Task 6
+  /**
+   * 'inproc' (mặc định): wallet/payment chạy trong tiến trình test, có faultyDialect/faultyPublisher.
+   * 'child': mỗi dịch vụ là một tiến trình Node thật (crashWallet/crashPayment = SIGKILL). Khác tiến trình nên KHÔNG có
+   * faultyDialect/faultyPublisher: rule ở điểm 'sql.*' / 'broker.publish.*' không bao giờ bắn; còn proxy HTTP,
+   * killSessions, dropWalletBrokerConnections và crash/restart vẫn dùng được. `afterOrderHandled` bị từ chối.
+   */
+  mode?: 'inproc' | 'child';
   seed?: number;
   tenants?: string[];
   workerIntervalMs?: number;
@@ -124,42 +112,24 @@ export interface System {
    * Plan giữ trạng thái tắt sau heal (gọi plan.enable() nếu muốn tiêm lỗi tiếp).
    */
   heal(options?: { timeoutMs?: number }): Promise<void>;
-  /** Idempotent; luôn cố dọn hết rồi mới ném lỗi gộp (nếu có). */
+  /** Idempotent; luôn cố dọn hết (kể cả giết mọi tiến trình con) rồi mới ném lỗi gộp (nếu có). */
   stop(): Promise<void>;
 }
 
-function retentionFor(option: RetentionOption): {
-  wallet: WalletRetentionConfig;
-  payment: PaymentRetentionConfig;
-} {
-  const wallet: WalletRetentionConfig = {
-    enabled: false,
-    dryRun: true,
-    intervalMinutes: 60,
-    maxSecondsPerRun: 60,
-    batchSize: 1000,
-    days: { outboxSent: 14, processedMessages: 30, idempotencyKeys: 90, reconciliation: 365 },
-  };
-  const payment: PaymentRetentionConfig = {
-    enabled: false,
-    dryRun: true,
-    intervalMinutes: 60,
-    maxSecondsPerRun: 60,
-    batchSize: 1000,
-    days: { webhook: 30, idempotencyKeys: 90 },
-  };
-  if (option === 'off') return { wallet, payment };
-  const shared = {
-    enabled: true,
-    dryRun: option.dryRun,
-    ...(option.batchSize === undefined ? {} : { batchSize: option.batchSize }),
-    ...(option.intervalMinutes === undefined ? {} : { intervalMinutes: option.intervalMinutes }),
-  };
-  return {
-    wallet: { ...wallet, ...shared, days: { ...wallet.days, ...option.days?.wallet } },
-    payment: { ...payment, ...shared, days: { ...payment.days, ...option.days?.payment } },
-  };
+/** System ở chế độ 'child': thêm crash thật bằng SIGKILL. Không có faultyDialect/faultyPublisher (khác tiến trình). */
+export interface ChildSystem extends System {
+  readonly mode: 'child';
+  /** SIGKILL wallet ngay, đợi tiến trình thoát; KHÔNG tự bật lại (dùng restartWallet() hoặc heal()). */
+  crashWallet(): Promise<void>;
+  /** SIGKILL payment ngay, đợi tiến trình thoát; KHÔNG tự bật lại (dùng restartPayment() hoặc heal()). */
+  crashPayment(): Promise<void>;
+  /** pid của tiến trình con đang chạy; undefined khi đang bị crash/dừng. */
+  pids(): { wallet?: number; payment?: number };
 }
+
+export type ChildSystemOptions = Omit<SystemOptions, 'mode' | 'afterOrderHandled'> & {
+  mode: 'child';
+};
 
 /**
  * Chạy một truy vấn bằng kết nối quản trị, thử lại đúng một lần. killSessions(walletDb) giết luôn các session
@@ -187,8 +157,22 @@ const count = async (db: Kysely<unknown>, query: RawBuilder<{ n: number }>): Pro
   return Number(result.rows[0]?.n ?? 0);
 };
 
-/** Dựng hệ thống wallet + payment + broker + hai proxy lỗi trong cùng tiến trình test. */
-export async function createSystem(options: SystemOptions = {}): Promise<System> {
+/** Dịch vụ đang chạy: chỉ cần dừng được (inproc: RunningService; child: ChildService, có thêm pid/kill). */
+type Handle = { stop(): Promise<void>; readonly pid?: number; kill?(): Promise<void> };
+
+/**
+ * Dựng hệ thống wallet + payment + broker + hai proxy lỗi. Mặc định cả hai dịch vụ chạy trong tiến trình test
+ * (mode 'inproc'); mode 'child' chạy chúng thành tiến trình con thật để crash bằng SIGKILL (xem SystemOptions.mode).
+ */
+export async function createSystem(options: ChildSystemOptions): Promise<ChildSystem>;
+export async function createSystem(options?: SystemOptions): Promise<System>;
+export async function createSystem(options: SystemOptions = {}): Promise<System | ChildSystem> {
+  const mode = options.mode ?? 'inproc';
+  if (mode === 'child' && options.afterOrderHandled !== undefined) {
+    throw new Error(
+      "createSystem: afterOrderHandled không dùng được với mode 'child' (móc là hàm trong tiến trình test, không đi qua ranh giới tiến trình)",
+    );
+  }
   const seed = options.seed ?? resolveSeed(process.env);
   const log = new OpLog();
   const plan = new FaultPlan({ log, prng: createPrng(seed).fork('plan') });
@@ -206,8 +190,10 @@ export async function createSystem(options: SystemOptions = {}): Promise<System>
   let orders: OrdersSimulator | undefined;
   let walletToPayment: HttpFaultProxy | undefined;
   let paymentToWallet: HttpFaultProxy | undefined;
-  let wallet: RunningWallet | undefined;
-  let payment: RunningPayment | undefined;
+  let wallet: Handle | undefined;
+  let payment: Handle | undefined;
+  // Mọi tiến trình con từng sinh (kể cả đã bị crash): stop() giết và xác nhận từng pid không còn tồn tại.
+  const allChildren: ChildService[] = [];
   let stopPromise: Promise<void> | undefined;
   // Mọi message đơn hàng đã gửi qua sendOrder/sendRaw; tenant undefined = message thô không thuộc tenant nào.
   const sentEvents: Array<{ tenant: string | undefined; eventId: string; orderId?: string }> = [];
@@ -227,6 +213,15 @@ export async function createSystem(options: SystemOptions = {}): Promise<System>
       await step(() => orders?.close() ?? Promise.resolve());
       await step(() => payment?.stop() ?? Promise.resolve());
       await step(() => wallet?.stop() ?? Promise.resolve());
+      // Tiến trình con: giết cứng từng cái (idempotent) rồi xác nhận pid đã biến mất, để không bao giờ để mồ côi.
+      for (const child of allChildren) {
+        await step(() => child.kill());
+        if (isProcessAlive(child.pid)) {
+          errors.push(
+            new Error(`tiến trình con ${child.name} (pid ${child.pid}) vẫn còn sau stop()`),
+          );
+        }
+      }
       await step(() => walletToPayment?.stop() ?? Promise.resolve());
       await step(() => paymentToWallet?.stop() ?? Promise.resolve());
       await step(() => walletAdmin?.destroy() ?? Promise.resolve());
@@ -272,29 +267,50 @@ export async function createSystem(options: SystemOptions = {}): Promise<System>
     const walletProxyUrl = walletToPayment.baseUrl;
     const webhookUrl = `${paymentToWallet.baseUrl}/webhooks/payment`;
 
-    const launchWallet = async (): Promise<RunningWallet> => {
-      const running = await startWallet(
-        {
-          port: walletPort,
-          database: walletDbConfig,
-          tenants,
-          payment: { baseUrl: walletProxyUrl, webhookSecret: SECRET, timeoutMs: 3000 },
-          broker: brokerAccess.wallet,
-          orders: { prefetch: 5, retryDelaysSeconds: [1, 2], outboxBatch: 50 },
-          reconciliation: { autofix: true, atUtcHour: 23, maxAttempts: 3, maxItems: 1000 },
-          topupBackoffSeconds: BACKOFF_SECONDS,
-          workerIntervalMs,
-          retention: retention.wallet,
-          telemetry: { sampleIntervalSeconds: 15 },
-        },
-        {
-          wrapDialect: faultyDialect(plan, { name: 'wallet' }),
-          wrapPublisher: faultyPublisher(plan),
-          ...(options.afterOrderHandled === undefined
-            ? {}
-            : { afterOrderHandled: options.afterOrderHandled }),
-        },
-      );
+    // Một cấu hình duy nhất cho cả hai chế độ: inproc truyền thẳng, child đổi sang biến môi trường (service-config.ts).
+    const walletConfig = walletConfigFor({
+      port: walletPort,
+      database: walletDbConfig,
+      tenants,
+      paymentBaseUrl: walletProxyUrl,
+      broker: brokerAccess.wallet,
+      workerIntervalMs,
+      retention: retention.wallet,
+    });
+    const paymentConfig = paymentConfigFor({
+      port: paymentPort,
+      database: paymentDbConfig,
+      webhookUrl,
+      workerIntervalMs,
+      retention: retention.payment,
+    });
+
+    // Sinh tiến trình con rồi chờ /health; chờ hỏng thì giết ngay để không để lại mồ côi.
+    const launchChild = async (
+      name: 'wallet' | 'payment',
+      env: Record<string, string>,
+      port: number,
+    ): Promise<ChildService> => {
+      const child = await spawnChildService({ name, env, port });
+      allChildren.push(child);
+      try {
+        await child.waitReady();
+      } catch (error) {
+        await child.kill().catch(() => undefined);
+        throw error;
+      }
+      return child;
+    };
+
+    const launchWallet = async (): Promise<Handle> => {
+      if (mode === 'child') return launchChild('wallet', walletEnv(walletConfig), walletPort);
+      const running = await startWallet(walletConfig, {
+        wrapDialect: faultyDialect(plan, { name: 'wallet' }),
+        wrapPublisher: faultyPublisher(plan),
+        ...(options.afterOrderHandled === undefined
+          ? {}
+          : { afterOrderHandled: options.afterOrderHandled }),
+      });
       try {
         await running.app.listen(walletPort, '127.0.0.1');
       } catch (error) {
@@ -304,19 +320,11 @@ export async function createSystem(options: SystemOptions = {}): Promise<System>
       return running;
     };
 
-    const launchPayment = async (): Promise<RunningPayment> => {
-      const running = await startPayment(
-        {
-          port: paymentPort,
-          database: paymentDbConfig,
-          webhook: { url: webhookUrl, secret: SECRET, backoffSeconds: BACKOFF_SECONDS },
-          workerIntervalMs,
-          responseTimeoutMs: 1000,
-          retention: retention.payment,
-          telemetry: { sampleIntervalSeconds: 15 },
-        },
-        { wrapDialect: faultyDialect(plan, { name: 'payment' }) },
-      );
+    const launchPayment = async (): Promise<Handle> => {
+      if (mode === 'child') return launchChild('payment', paymentEnv(paymentConfig), paymentPort);
+      const running = await startPayment(paymentConfig, {
+        wrapDialect: faultyDialect(plan, { name: 'payment' }),
+      });
       try {
         await running.app.listen({ port: paymentPort, host: '127.0.0.1' });
       } catch (error) {
@@ -345,6 +353,18 @@ export async function createSystem(options: SystemOptions = {}): Promise<System>
       payment = undefined;
       await running?.stop();
       payment = await launchPayment();
+    };
+
+    // Crash thật: SIGKILL rồi đợi thoát; để undefined để heal()/restart*() biết dịch vụ đang chết. Không tự bật lại.
+    const crash = async (which: 'wallet' | 'payment'): Promise<void> => {
+      const running = which === 'wallet' ? wallet : payment;
+      if (which === 'wallet') wallet = undefined;
+      else payment = undefined;
+      if (running?.kill === undefined) {
+        throw new Error(`crash ${which}: không có tiến trình con đang chạy`);
+      }
+      await running.kill();
+      log.record('crash', { service: which, pid: running.pid });
     };
 
     const walletHeaders = (tenant: string, customer: string, key?: string) => ({
@@ -494,8 +514,8 @@ export async function createSystem(options: SystemOptions = {}): Promise<System>
       headers: walletHeaders(tenant, customer, key),
     });
 
-    return {
-      mode: 'inproc',
+    const system: System = {
+      mode,
       seed,
       plan,
       log,
@@ -585,6 +605,18 @@ export async function createSystem(options: SystemOptions = {}): Promise<System>
       heal,
       stop,
     };
+    if (mode !== 'child') return system;
+    const childSystem: ChildSystem = {
+      ...system,
+      mode: 'child',
+      crashWallet: () => crash('wallet'),
+      crashPayment: () => crash('payment'),
+      pids: () => ({
+        ...(wallet?.pid === undefined ? {} : { wallet: wallet.pid }),
+        ...(payment?.pid === undefined ? {} : { payment: payment.pid }),
+      }),
+    };
+    return childSystem;
   } catch (error) {
     // Dựng dở thì dọn phần đã dựng rồi ném lại lỗi gốc (lỗi dọn không được che lỗi gốc).
     await stop().catch(() => undefined);
