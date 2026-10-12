@@ -9,6 +9,8 @@ import {
   type TestDatabase,
 } from '@billing/testing';
 import { sql, type Kysely, type RawBuilder } from 'kysely';
+import type { PaymentRetentionConfig } from '../../../services/payment/src/config.js';
+import type { WalletRetentionConfig } from '../../../services/wallet/src/config.js';
 import { paymentMigrations } from '../../../db/payment/migrations.js';
 import {
   startService as startPayment,
@@ -19,9 +21,14 @@ import {
   type RunningService as RunningWallet,
 } from '../../../services/wallet/src/bootstrap.js';
 import { TenantId } from '../../../services/wallet/src/domain/tenant-id.js';
+import { ORDER_PAYMENTS_QUEUE } from '../../../services/wallet/src/interface/messaging/order-payments.topology.js';
 import { provisionTenants } from '../../../services/wallet/src/infrastructure/kysely/provisioning.js';
-import { OrdersSimulator, queueDepth } from '../../../services/wallet/src/test-support-orders.js';
-import { faultyPublisher } from './broker-faults.js';
+import {
+  OrdersSimulator,
+  peekQueue,
+  queueDepth,
+} from '../../../services/wallet/src/test-support-orders.js';
+import { dropBrokerConnections, faultyPublisher } from './broker-faults.js';
 import { FaultPlan } from './fault-plan.js';
 import { HttpFaultProxy } from './http-fault-proxy.js';
 import { OpLog } from './op-log.js';
@@ -73,6 +80,7 @@ export interface System {
   readonly walletDb: DatabaseConfig;
   readonly paymentDb: DatabaseConfig;
   /** Kết nối quản trị riêng, KHÔNG bị plan can thiệp. */
+  /** Lưu ý: killSessions(walletDb) cũng giết các session trong pool của walletAdmin; dùng adminQuery() để thử lại một lần. */
   readonly walletAdmin: Kysely<unknown>;
   readonly paymentAdmin: Kysely<unknown>;
   readonly broker: TestBroker;
@@ -94,6 +102,12 @@ export interface System {
     eventId?: string;
     correlationId?: string;
   }): Promise<{ orderId: string; eventId: string }>;
+  /** Gửi message thô (có thể hỏng) vào orders.events; heal() chỉ chờ nó vào DLQ vì không tenant nào xử lý được. */
+  sendRaw(body: string, messageId?: string): Promise<{ messageId: string }>;
+  /** messageId (= eventId) của các message đang nằm trong DLQ của wallet order-payments. */
+  deadLettered(): Promise<string[]>;
+  /** Đóng kết nối AMQP của user billing_wallet (không đụng kết nối của Orders giả); trả số kết nối đã đóng. */
+  dropWalletBrokerConnections(): Promise<number>;
   /** Gọi /ops/...: GET khi không có body, POST khi có; luôn kèm x-actor-id (mặc định 'chaos-ops') và x-actor-role: OPS. */
   ops(
     tenant: string,
@@ -105,7 +119,8 @@ export interface System {
   restartPayment(): Promise<void>;
   /**
    * Tắt plan, dựng lại dịch vụ đã dừng rồi chờ hội tụ: outbox không còn PENDING, queue (trừ DLQ) rỗng,
-   * webhook_events/charges không còn PENDING, topups ở trạng thái cuối, mọi đơn đã gửi qua sendOrder đã được wallet xử lý.
+   * webhook_events/charges không còn PENDING, topups ở trạng thái cuối, mọi đơn đã gửi đã được xử lý hoặc nằm trong DLQ,
+   * và mọi kết quả OrderPaid/OrderPaymentFailed đã SENT đều đã tới Orders giả. heal() cũng đẩy nhanh backoff của outbox.
    * Plan giữ trạng thái tắt sau heal (gọi plan.enable() nếu muốn tiêm lỗi tiếp).
    */
   heal(options?: { timeoutMs?: number }): Promise<void>;
@@ -114,21 +129,25 @@ export interface System {
 }
 
 function retentionFor(option: RetentionOption): {
-  wallet: Record<string, unknown>;
-  payment: Record<string, unknown>;
+  wallet: WalletRetentionConfig;
+  payment: PaymentRetentionConfig;
 } {
-  const base = {
+  const wallet: WalletRetentionConfig = {
     enabled: false,
     dryRun: true,
     intervalMinutes: 60,
     maxSecondsPerRun: 60,
     batchSize: 1000,
-  };
-  const wallet = {
-    ...base,
     days: { outboxSent: 14, processedMessages: 30, idempotencyKeys: 90, reconciliation: 365 },
   };
-  const payment = { ...base, days: { webhook: 30, idempotencyKeys: 90 } };
+  const payment: PaymentRetentionConfig = {
+    enabled: false,
+    dryRun: true,
+    intervalMinutes: 60,
+    maxSecondsPerRun: 60,
+    batchSize: 1000,
+    days: { webhook: 30, idempotencyKeys: 90 },
+  };
   if (option === 'off') return { wallet, payment };
   const shared = {
     enabled: true,
@@ -137,18 +156,31 @@ function retentionFor(option: RetentionOption): {
     ...(option.intervalMinutes === undefined ? {} : { intervalMinutes: option.intervalMinutes }),
   };
   return {
-    wallet: {
-      ...wallet,
-      ...shared,
-      days: { ...wallet.days, ...option.days?.wallet },
-    },
-    payment: {
-      ...payment,
-      ...shared,
-      days: { ...payment.days, ...option.days?.payment },
-    },
+    wallet: { ...wallet, ...shared, days: { ...wallet.days, ...option.days?.wallet } },
+    payment: { ...payment, ...shared, days: { ...payment.days, ...option.days?.payment } },
   };
 }
+
+/**
+ * Chạy một truy vấn bằng kết nối quản trị, thử lại đúng một lần. killSessions(walletDb) giết luôn các session
+ * trong pool của walletAdmin, nên truy vấn quản trị ngay sau đó có thể ném lỗi một lần; oracle nên bọc bằng hàm này.
+ */
+export async function adminQuery<T>(
+  db: Kysely<unknown>,
+  run: (db: Kysely<unknown>) => Promise<T>,
+): Promise<T> {
+  try {
+    return await run(db);
+  } catch {
+    return await run(db);
+  }
+}
+
+const chunks = <T>(items: readonly T[], size = 500): T[][] => {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+};
 
 const count = async (db: Kysely<unknown>, query: RawBuilder<{ n: number }>): Promise<number> => {
   const result = await query.execute(db);
@@ -177,7 +209,9 @@ export async function createSystem(options: SystemOptions = {}): Promise<System>
   let wallet: RunningWallet | undefined;
   let payment: RunningPayment | undefined;
   let stopPromise: Promise<void> | undefined;
-  const sentEvents: Array<{ tenant: string; eventId: string }> = [];
+  // Mọi message đơn hàng đã gửi qua sendOrder/sendRaw; tenant undefined = message thô không thuộc tenant nào.
+  const sentEvents: Array<{ tenant: string | undefined; eventId: string; orderId?: string }> = [];
+  const DLQ = `${ORDER_PAYMENTS_QUEUE}.dlq`;
 
   const stop = (): Promise<void> => {
     stopPromise ??= (async () => {
@@ -250,7 +284,7 @@ export async function createSystem(options: SystemOptions = {}): Promise<System>
           reconciliation: { autofix: true, atUtcHour: 23, maxAttempts: 3, maxItems: 1000 },
           topupBackoffSeconds: BACKOFF_SECONDS,
           workerIntervalMs,
-          retention: retention.wallet as never,
+          retention: retention.wallet,
           telemetry: { sampleIntervalSeconds: 15 },
         },
         {
@@ -278,7 +312,7 @@ export async function createSystem(options: SystemOptions = {}): Promise<System>
           webhook: { url: webhookUrl, secret: SECRET, backoffSeconds: BACKOFF_SECONDS },
           workerIntervalMs,
           responseTimeoutMs: 1000,
-          retention: retention.payment as never,
+          retention: retention.payment,
           telemetry: { sampleIntervalSeconds: 15 },
         },
         { wrapDialect: faultyDialect(plan, { name: 'payment' }) },
@@ -331,8 +365,27 @@ export async function createSystem(options: SystemOptions = {}): Promise<System>
       return ((await response.json()) as Array<{ name: string }>).map((q) => q.name);
     };
 
+    const deadLetteredIds = async (): Promise<string[]> =>
+      (await peekQueue(brokerAccess.admin, DLQ, 10_000))
+        .map((m) => m.messageId)
+        .filter((id): id is string => id !== undefined);
+
     const conditions = (): QuiesceCondition[] => {
       const list: QuiesceCondition[] = [];
+      // Backoff của relay outbox cứng trong sản phẩm (1,5,30,120,600 giây) và có thể vượt timeout của heal:
+      // mỗi vòng chờ ta kéo các dòng PENDING đang chờ backoff/lease về "đến hạn" bằng kết nối quản trị
+      // (không qua dialect bị tiêm lỗi). Lịch backoff tự nó đã có test riêng trong wallet.
+      list.push({
+        name: 'đẩy nhanh backoff của outbox',
+        check: async () => {
+          for (const tenant of tenantNames) {
+            await sql`
+              update ${sql.id(`t_${tenant}`)}.outbox set next_attempt_at = sysutcdatetime()
+              where status = 'PENDING' and next_attempt_at > sysutcdatetime()`.execute(adminWallet);
+          }
+          return true;
+        },
+      });
       for (const tenant of tenantNames) {
         const schema = sql.id(`t_${tenant}`);
         list.push({
@@ -355,16 +408,44 @@ export async function createSystem(options: SystemOptions = {}): Promise<System>
         });
       }
       list.push({
-        name: 'đơn đã gửi chưa được wallet xử lý',
+        name: 'đơn đã gửi chưa được xử lý hoặc vào DLQ',
         check: async () => {
-          for (const { tenant, eventId } of sentEvents) {
-            const n = await count(
-              adminWallet,
-              sql<{
-                n: number;
-              }>`select count(*) as n from ${sql.id(`t_${tenant}`)}.processed_messages where message_id = ${eventId}`,
-            );
-            if (n === 0) return false;
+          // Một đơn coi là xong khi wallet đã ghi inbox (processed_messages) HOẶC nó nằm trong DLQ
+          // (tenant không được host, message hỏng, hết lượt retry). Gom theo tenant: một truy vấn mỗi tenant.
+          let unsettled = new Set(sentEvents.map((e) => e.eventId));
+          for (const tenant of tenantNames) {
+            const ids = sentEvents.filter((e) => e.tenant === tenant).map((e) => e.eventId);
+            for (const chunk of chunks(ids)) {
+              const done = await sql<{ message_id: string }>`
+                select message_id from ${sql.id(`t_${tenant}`)}.processed_messages
+                where message_id in (${sql.join(chunk)})`.execute(adminWallet);
+              for (const row of done.rows) unsettled.delete(row.message_id);
+            }
+          }
+          if (unsettled.size === 0) return true;
+          const dead = new Set(await deadLetteredIds());
+          unsettled = new Set([...unsettled].filter((id) => !dead.has(id)));
+          return unsettled.size === 0;
+        },
+      });
+      list.push({
+        name: 'kết quả đơn hàng chưa tới Orders giả',
+        check: async () => {
+          // Outbox đã SENT nhưng simulator chưa kịp ghi nhận: tránh đua giữa giao nhận và mảng results.
+          const have = new Set(simulator.received().map((r) => r.messageId));
+          for (const tenant of tenantNames) {
+            const orderIds = sentEvents
+              .filter((e) => e.tenant === tenant && e.orderId !== undefined)
+              .map((e) => e.orderId as string);
+            for (const chunk of chunks(orderIds)) {
+              const sent = await sql<{ id: string }>`
+                select id from ${sql.id(`t_${tenant}`)}.outbox
+                where status = 'SENT' and event_type in ('OrderPaidV1', 'OrderPaymentFailedV1')
+                  and json_value(payload, '$.orderId') in (${sql.join(chunk)})`.execute(
+                adminWallet,
+              );
+              if (sent.rows.some((row) => !have.has(row.id))) return false;
+            }
           }
           return true;
         },
@@ -462,10 +543,22 @@ export async function createSystem(options: SystemOptions = {}): Promise<System>
           ...(input.correlationId === undefined ? {} : { correlationId: input.correlationId }),
         });
         await simulator.publish(event);
-        sentEvents.push({ tenant: input.tenant, eventId: event.eventId });
+        sentEvents.push({
+          tenant: input.tenant,
+          eventId: event.eventId,
+          orderId: event.orderId,
+        });
         log.record('sendOrder', { tenant: input.tenant, orderId: event.orderId });
         return { orderId: event.orderId, eventId: event.eventId };
       },
+      async sendRaw(body, messageId = randomUUID()) {
+        await simulator.publishRaw(body, messageId);
+        sentEvents.push({ tenant: undefined, eventId: messageId });
+        log.record('sendRaw', { messageId });
+        return { messageId };
+      },
+      deadLettered: deadLetteredIds,
+      dropWalletBrokerConnections: () => dropBrokerConnections(brokerAccess, 'billing_wallet'),
       async ops(tenant, route, body, actor = 'chaos-ops') {
         const response = await fetch(`${walletUrl}${route}`, {
           method: body === undefined ? 'GET' : 'POST',

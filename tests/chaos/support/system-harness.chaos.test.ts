@@ -1,7 +1,7 @@
 import { createDatabase } from '@billing/database';
 import { waitFor } from '@billing/testing';
 import { sql } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createSystem, type System } from './system-harness.js';
 
 let system: System | undefined;
@@ -24,8 +24,20 @@ const balanceOf = async (tenant: string, customer: string): Promise<number> =>
 const topupStatus = async (tenant: string, customer: string, id: string): Promise<string> =>
   (await getJson<{ status: string }>(`/topups/${id}`, tenant, customer)).status;
 
+const pendingOutbox = async (s: System): Promise<number> => {
+  const rows = await sql<{
+    n: number;
+  }>`select count(*) as n from t_acme.outbox where status <> 'SENT'`.execute(s.walletAdmin);
+  return rows.rows[0]?.n ?? 0;
+};
+
 beforeAll(async () => {
   system = await createSystem({ seed: 1, tenants: ['acme'] });
+});
+
+// Mỗi test tự đặt rule của mình: xoá rule và bộ đếm của test trước (trạng thái bật/tắt giữ nguyên).
+beforeEach(() => {
+  system?.plan.clear();
 });
 
 // stop() idempotent: gọi lại trong afterAll dù test đã tự dừng.
@@ -146,9 +158,8 @@ describe('in-process system harness', () => {
     expect(noRole.status).toBe(403);
   });
 
-  it('heal() waits for the system: a pending outbox row keeps it from returning', async () => {
+  it('heal() disables the plan, so a relay blocked by a rule recovers', async () => {
     const s = sys();
-    // Chặn relay: mọi publish bị rớt; một đơn hàng sinh ra outbox PENDING.
     s.plan.enable();
     s.plan.add({
       point: 'broker.publish.before',
@@ -164,20 +175,145 @@ describe('in-process system harness', () => {
       intervalMs: 100,
     });
     await s.sendOrder({ tenant: 'acme', customer: 'h-heal', amount: 10_000 });
-    await waitFor(async () => (await balanceOf('acme', 'h-heal')) === 40_000, {
+    await waitFor(() => s.plan.fired('block-publish') >= 1, { timeoutMs: 20_000, intervalMs: 50 });
+    // Chưa heal: publish bị chặn nên outbox còn PENDING (tất định vì rule không giới hạn lần).
+    expect(await pendingOutbox(s)).toBeGreaterThan(0);
+    await s.heal({ timeoutMs: 30_000 });
+    expect(await pendingOutbox(s)).toBe(0);
+  });
+
+  it('heal() really blocks while the system is unsettled, and returns once it settles', async () => {
+    const s = sys();
+    await s.openWallet('acme', 'h-block');
+    const topup = await s.topup('acme', 'h-block', 10_000, 'k-b');
+    const id = topup.topupId as string;
+    await s.heal();
+    // Kéo topup về PENDING bằng kết nối quản trị (không có gì sẽ tự sửa nó: webhook đã giao xong).
+    const set = (status: string) =>
+      sql`update t_acme.topups set status = ${status} where id = ${id}`.execute(s.walletAdmin);
+    await set('PENDING');
+    await expect(s.heal({ timeoutMs: 1_500 })).rejects.toThrow(/quiesce hết hạn.*topups acme/);
+    await set('SUCCEEDED');
+    await s.heal({ timeoutMs: 15_000 });
+  });
+
+  it('heal() accelerates the outbox backoff: a row due in 10 minutes is delivered within seconds', async () => {
+    const s = sys();
+    s.plan.enable();
+    s.plan.add({
+      point: 'broker.publish.before',
+      label: 'fail-publish',
+      action: () => {
+        throw new Error('publish bị chặn');
+      },
+    });
+    await s.openWallet('acme', 'h-nudge');
+    await s.topup('acme', 'h-nudge', 30_000, 'k-n');
+    await waitFor(async () => (await balanceOf('acme', 'h-nudge')) === 30_000, {
       timeoutMs: 20_000,
       intervalMs: 100,
     });
-    // Chưa heal: outbox còn PENDING nên quiesce phải hết hạn khi plan vẫn bật.
-    const rows = await sql<{
-      n: number;
-    }>`select count(*) as n from t_acme.outbox where status = 'PENDING'`.execute(s.walletAdmin);
-    expect(rows.rows[0]?.n).toBeGreaterThan(0);
-    await s.heal(); // heal tắt plan => relay chạy lại => hội tụ
-    const after = await sql<{
-      n: number;
-    }>`select count(*) as n from t_acme.outbox where status <> 'SENT'`.execute(s.walletAdmin);
-    expect(after.rows[0]?.n).toBe(0);
+    const { orderId } = await s.sendOrder({ tenant: 'acme', customer: 'h-nudge', amount: 1_000 });
+    await waitFor(() => s.plan.fired('fail-publish') >= 1, { timeoutMs: 20_000, intervalMs: 50 });
+    // Đẩy hạn gửi lại của dòng outbox ra +10 phút và xác nhận relay không ghi đè (nó không đến hạn).
+    await waitFor(
+      async () => {
+        await sql`update t_acme.outbox set next_attempt_at = dateadd(minute, 10, sysutcdatetime())
+          where status = 'PENDING'`.execute(s.walletAdmin);
+        const far = await sql<{ n: number }>`select count(*) as n from t_acme.outbox
+          where status = 'PENDING' and next_attempt_at > dateadd(minute, 5, sysutcdatetime())`.execute(
+          s.walletAdmin,
+        );
+        return (far.rows[0]?.n ?? 0) > 0;
+      },
+      { timeoutMs: 10_000, intervalMs: 50 },
+    );
+    const started = Date.now();
+    await s.heal({ timeoutMs: 20_000 });
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(s.orders.received().filter((r) => r.payload.orderId === orderId)).toHaveLength(1);
+  });
+
+  it('settles orders that end in the DLQ: unhosted tenant and unreadable message', async () => {
+    const s = sys();
+    const ghost = await s.sendOrder({ tenant: 'ghost', customer: 'nobody', amount: 1_000 });
+    const poison = await s.sendRaw('đây không phải JSON {');
+    const started = Date.now();
+    await s.heal({ timeoutMs: 20_000 });
+    expect(Date.now() - started).toBeLessThan(15_000);
+    const dead = await s.deadLettered();
+    expect(dead).toContain(ghost.eventId);
+    expect(dead).toContain(poison.messageId);
+  });
+
+  it('settles an order whose retries are exhausted into the DLQ', async () => {
+    const s = sys();
+    s.plan.enable();
+    await s.openWallet('acme', 'h-retry');
+    await s.topup('acme', 'h-retry', 20_000, 'k-rt');
+    await s.heal();
+    s.plan.enable();
+    // retryDelaysSeconds [1, 2] => 3 lần thử; phá ghi inbox của đúng 3 lần đó để handler ném lỗi.
+    s.plan.add({
+      point: 'sql.query.before',
+      times: 3,
+      label: 'break-inbox',
+      when: (i) =>
+        i.name === 'wallet' &&
+        typeof i.sql === 'string' &&
+        i.sql.startsWith('insert') &&
+        i.sql.includes('processed_messages'),
+      action: () => {
+        throw new Error('ghi inbox bị phá');
+      },
+    });
+    const { eventId } = await s.sendOrder({ tenant: 'acme', customer: 'h-retry', amount: 1_000 });
+    // heal() tắt plan ngay nên phải chờ message vào DLQ khi lỗi còn hiệu lực.
+    await waitFor(async () => (await s.deadLettered()).includes(eventId), {
+      timeoutMs: 30_000,
+      intervalMs: 200,
+    });
+    expect(s.plan.fired('break-inbox')).toBe(3);
+    const started = Date.now();
+    await s.heal({ timeoutMs: 20_000 });
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(await balanceOf('acme', 'h-retry')).toBe(20_000);
+  });
+
+  it('sees payment SQL traffic through the payment dialect wrapper', async () => {
+    const s = sys();
+    s.plan.enable();
+    let seen = 0;
+    s.plan.add({
+      point: 'sql.query.before',
+      when: (i) => i.name === 'payment',
+      action: () => {
+        seen += 1;
+      },
+    });
+    await s.openWallet('acme', 'h-pay');
+    await s.topup('acme', 'h-pay', 7_000, 'k-p');
+    await waitFor(async () => (await balanceOf('acme', 'h-pay')) === 7_000, {
+      timeoutMs: 20_000,
+      intervalMs: 100,
+    });
+    expect(seen).toBeGreaterThan(0);
+    await s.heal();
+  });
+
+  it('dropWalletBrokerConnections() leaves the Orders simulator connected', async () => {
+    const s = sys();
+    await s.openWallet('acme', 'h-conn');
+    await s.topup('acme', 'h-conn', 9_000, 'k-c');
+    await s.heal();
+    expect(await s.dropWalletBrokerConnections()).toBeGreaterThan(0);
+    const { orderId } = await s.sendOrder({ tenant: 'acme', customer: 'h-conn', amount: 1_000 });
+    await waitFor(() => s.orders.received().some((r) => r.payload.orderId === orderId), {
+      timeoutMs: 30_000,
+      intervalMs: 100,
+    });
+    await s.heal();
+    expect(await balanceOf('acme', 'h-conn')).toBe(8_000);
   });
 
   it('stop() drops databases and vhost, and is idempotent', async () => {
