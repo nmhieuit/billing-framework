@@ -346,6 +346,14 @@ describe('in-process system harness', () => {
     await s.heal({ timeoutMs: 15_000 });
   });
 
+  it('refuses real retention that would purge reconciliation runs the oracle is about to read', async () => {
+    await expect(
+      createSystem({
+        retention: { dryRun: false, days: { wallet: { reconciliation: 0 } } },
+      }),
+    ).rejects.toThrow(/days\.wallet\.reconciliation/);
+  });
+
   it('records only client-acknowledged successes in expectations', async () => {
     const s = sys();
     const e = s.expectations;

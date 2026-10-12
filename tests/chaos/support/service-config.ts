@@ -20,7 +20,8 @@ export const DEFAULT_RECONCILIATION: WalletConfig['reconciliation'] = {
   autofix: true,
   atUtcHour: 23,
   maxAttempts: 3,
-  maxItems: 1000,
+  // Đủ lớn để soak nhiều nghìn charge không chạm trần sao kê/sai lệch (vượt trần thì lượt FAILED, oracle báo RECONCILIATION_TOO_LARGE).
+  maxItems: 100_000,
 };
 
 /** Cấu hình dọn dữ liệu cũ cho kịch bản retention; mặc định 'off' (worker retention không chạy). */

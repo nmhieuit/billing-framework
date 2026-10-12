@@ -33,11 +33,11 @@ import { adminQuery, type System } from './system-harness.js';
  *  INV-4  OUTBOX_NOT_SENT | SENT_NOT_RECEIVED | PAID_NOT_RECEIVED | OUTBOX_PAID_UNKNOWN_ORDER | RECEIVED_PAID_UNKNOWN_ORDER
  *         | PAID_WITHOUT_OUTBOX (chỉ khi retention không xóa thật: dòng outbox SENT có thể đã bị dọn)
  *  INV-5  RECONCILIATION_RUN_FAILED | LEDGER_UNBALANCED_OPEN | BALANCE_MISMATCH_OPEN | MISSING_AT_WALLET_UNFIXED
- *         | RECONCILIATION_ITEM_OPEN (loại khác còn OPEN) | AUTOFIX_UNEXPECTED | AUTOFIX_MISSING
+ *         | RECONCILIATION_TOO_LARGE | RECONCILIATION_ITEM_OPEN (loại khác còn OPEN) | AUTOFIX_UNEXPECTED | AUTOFIX_MISSING
  *         | RECONCILIATION_NOT_CONVERGED (lượt thứ hai vẫn thấy sai lệch)
  *  INV-6  OPS_DUPLICATE_KEY | OPS_DUPLICATE_ID | ADJUST_TX_MISSING | ADJUST_TX_WRONG_WALLET | ADJUST_TX_RESULT_MISMATCH
  *         | REVERSE_TX_MISSING | REVERSE_TX_RESULT_MISMATCH | REVERSE_ACTION_DUPLICATE | FREEZE_STATE_MISMATCH
- *         | ADJUSTMENT_TX_ORPHAN | REVERSAL_TX_ORPHAN
+ *         | ADJUSTMENT_TX_ORPHAN | REVERSAL_TX_ORPHAN | REPLAY_OUTBOX_MISSING | REPLAY_OUTBOX_MISMATCH | REPLAY_OUTBOX_ORPHAN
  *  INV-7  ACKED_ORDER_MISSING | ACKED_TOPUP_MISSING | ACKED_OPS_ACTION_MISSING
  *  INV-8  HEALTH_FAILED | READ_FAILED | SERVICE_DOWN
  *  Vi phạm tìm thấy lúc kiểm lại SAU đối soát mang thêm `detail.phase = 'after-reconciliation'`.
@@ -882,54 +882,59 @@ async function walletJson<T>(
  * Đối soát THỦ CÔNG qua API của wallet: `POST /reconciliations` {date} → chờ `GET /reconciliations/:id` rời RUNNING →
  * đọc hết `GET /reconciliations/:id/items` (theo cursor). Mọi phản hồi lạ đều ném lỗi.
  */
-export const runReconciliationViaHttp: ReconcileRunner = async (system, tenant, day) => {
-  const { runId } = await walletJson<{ runId: string }>(system, tenant, '/reconciliations', {
-    method: 'POST',
-    body: { date: day },
-    expect: 202,
-  });
-  let run:
-    | {
-        status: string;
-        failureReason: string | null;
-        gatewayTotals: Record<string, number>;
-        walletTotals: Record<string, number>;
-      }
-    | undefined;
-  await waitFor(
-    async () => {
-      run = await walletJson(system, tenant, `/reconciliations/${runId}`, {
-        method: 'GET',
-        expect: 200,
-      });
-      return run?.status !== 'RUNNING';
-    },
-    { timeoutMs: RECONCILE_TIMEOUT_MS, intervalMs: 100 },
-  );
-  const finished = run as NonNullable<typeof run>;
-  const items: ReconcileItem[] = [];
-  let cursor: string | null = null;
-  do {
-    const page: { items: ReconcileItem[]; nextCursor: string | null } = await walletJson(
-      system,
-      tenant,
-      `/reconciliations/${runId}/items?limit=500${cursor === null ? '' : `&cursor=${cursor}`}`,
-      { method: 'GET', expect: 200 },
+export const reconciliationRunner =
+  (pageSize = 500): ReconcileRunner =>
+  async (system, tenant, day) => {
+    const { runId } = await walletJson<{ runId: string }>(system, tenant, '/reconciliations', {
+      method: 'POST',
+      body: { date: day },
+      expect: 202,
+    });
+    let run:
+      | {
+          status: string;
+          failureReason: string | null;
+          gatewayTotals: Record<string, number>;
+          walletTotals: Record<string, number>;
+        }
+      | undefined;
+    await waitFor(
+      async () => {
+        run = await walletJson(system, tenant, `/reconciliations/${runId}`, {
+          method: 'GET',
+          expect: 200,
+        });
+        return run?.status !== 'RUNNING';
+      },
+      { timeoutMs: RECONCILE_TIMEOUT_MS, intervalMs: 100 },
     );
-    items.push(...page.items);
-    cursor = page.nextCursor;
-  } while (cursor !== null);
-  return {
-    tenant,
-    day,
-    runId,
-    status: finished.status,
-    failureReason: finished.failureReason,
-    gatewayTotals: finished.gatewayTotals,
-    walletTotals: finished.walletTotals,
-    items,
+    const finished = run as NonNullable<typeof run>;
+    const items: ReconcileItem[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: { items: ReconcileItem[]; nextCursor: string | null } = await walletJson(
+        system,
+        tenant,
+        `/reconciliations/${runId}/items?limit=${pageSize}${cursor === null ? '' : `&cursor=${cursor}`}`,
+        { method: 'GET', expect: 200 },
+      );
+      items.push(...page.items);
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+    return {
+      tenant,
+      day,
+      runId,
+      status: finished.status,
+      failureReason: finished.failureReason,
+      gatewayTotals: finished.gatewayTotals,
+      walletTotals: finished.walletTotals,
+      items,
+    };
   };
-};
+
+/** Runner mặc định: cỡ trang 500 (tối đa của API). */
+export const runReconciliationViaHttp: ReconcileRunner = reconciliationRunner();
 
 const addDays = (day: string, delta: number): string =>
   new Date(Date.parse(`${day}T00:00:00.000Z`) + delta * 86_400_000).toISOString().slice(0, 10);
@@ -1000,7 +1005,10 @@ function judgeFirstPass(runs: readonly ReconcileRun[]): Reconciled {
     if (run.status !== 'COMPLETED') {
       violations.push({
         invariant: 'INV-5',
-        code: 'RECONCILIATION_RUN_FAILED',
+        // Vượt trần maxItems của cấu hình đối soát là lỗi cấu hình harness, khác với đối soát hỏng thật.
+        code: /more than/i.test(run.failureReason ?? '')
+          ? 'RECONCILIATION_TOO_LARGE'
+          : 'RECONCILIATION_RUN_FAILED',
         message: `tenant ${run.tenant}: lượt đối soát ngày ${run.day} (${run.runId}) kết thúc ${run.status}: ${run.failureReason ?? 'không rõ lý do'}`,
         detail: { ...where, status: run.status, failureReason: run.failureReason },
       });
@@ -1294,6 +1302,61 @@ async function checkInv6(system: System, tenants: Tenant[]): Promise<Violation[]
       });
     }
 
+    // (c') REPLAY_PAID: mỗi thao tác phải để lại đúng một dòng outbox OrderPaidV1 (correlation_id `ops-replay:<actionId>`)
+    // cho đơn mục tiêu; ngược lại mọi dòng outbox `ops-replay:*` phải thuộc một thao tác REPLAY_PAID. Retention thật có thể
+    // đã dọn dòng SENT nên khi đó bỏ qua chiều "thao tác ⇒ dòng outbox" (chiều ngược chỉ xét dòng còn lại).
+    const replayRows = await rows(
+      system.walletAdmin,
+      sql<{ id: string; event_type: string; correlation_id: string; order_id: string | null }>`
+        select id, event_type, correlation_id, json_value(payload, '$.orderId') as order_id
+        from ${table(tenant, 'outbox')} where correlation_id like 'ops-replay:%'`,
+    );
+    const replayActions = new Map(
+      actions.filter((a) => a.action === 'REPLAY_PAID').map((a) => [a.id, a]),
+    );
+    if (!system.retentionDeletes) {
+      const missingReplay: string[] = [];
+      const wrongReplay: string[] = [];
+      for (const [id, action] of replayActions) {
+        const row = replayRows.filter((r) => r.correlation_id === `ops-replay:${id}`);
+        if (row.length === 0) missingReplay.push(`${id} (${action.target})`);
+        else if (
+          row.length > 1 ||
+          row.some((r) => r.event_type !== 'OrderPaidV1' || `order:${r.order_id}` !== action.target)
+        ) {
+          wrongReplay.push(
+            `${id} (${action.target} ↔ ${row.map((r) => `${r.event_type}/${r.order_id}`).join(', ')})`,
+          );
+        }
+      }
+      if (missingReplay.length > 0) {
+        out.push({
+          invariant: 'INV-6',
+          code: 'REPLAY_OUTBOX_MISSING',
+          message: `tenant ${tenant.name}: ops REPLAY_PAID không để lại dòng outbox OrderPaidV1 ops-replay:<id>: ${listIds(missingReplay)}`,
+          detail: { ...base, actionIds: missingReplay },
+        });
+      }
+      if (wrongReplay.length > 0) {
+        out.push({
+          invariant: 'INV-6',
+          code: 'REPLAY_OUTBOX_MISMATCH',
+          message: `tenant ${tenant.name}: dòng outbox của REPLAY_PAID sai loại/đơn hoặc trùng: ${listIds(wrongReplay)}`,
+          detail: { ...base, actionIds: wrongReplay },
+        });
+      }
+    }
+    const orphanReplay = replayRows.filter(
+      (r) => !replayActions.has(r.correlation_id.slice('ops-replay:'.length)),
+    );
+    if (orphanReplay.length > 0) {
+      out.push({
+        invariant: 'INV-6',
+        code: 'REPLAY_OUTBOX_ORPHAN',
+        message: `tenant ${tenant.name}: dòng outbox ops-replay không có thao tác REPLAY_PAID: ${listIds(orphanReplay.map((r) => `${r.id} (${r.correlation_id})`))}`,
+        detail: { ...base, outboxIds: orphanReplay.map((r) => r.id) },
+      });
+    }
     // (d) hiệu ứng mồ côi: ADJUSTMENT/REVERSAL không thuộc thao tác ops nào.
     const orphanAdjust = txs.filter(
       (x) => x.kind === 'ADJUSTMENT' && !adjustKeys.has(x.business_key),
@@ -1589,6 +1652,11 @@ export async function runInvariants(
         `INV-5 (đối soát có ghi bù) đòi kiểm cả INV-1..INV-4 trước và sau đối soát; thiếu ${lacking.join(', ')}`,
       );
     }
+  }
+  if (options.expectMissingAtWallet === true && !has('INV-5')) {
+    throw new Error(
+      'expectMissingAtWallet chỉ có nghĩa khi INV-5 chạy trong cùng lần gọi (nếu không INV-3 sẽ được miễn mà không ai ghi bù); thêm INV-5 vào only hoặc bỏ cờ',
+    );
   }
   const tenants = await discoverTenants(system);
   const strict: Violation[] = [];

@@ -9,6 +9,7 @@ import {
   isMissingAtWallet,
   reconcileDaysOf,
   runInvariants,
+  reconciliationRunner,
   runReconciliationViaHttp,
   type InvariantId,
   type ReconcileRun,
@@ -1445,6 +1446,13 @@ describe('assertSystemInvariants: đối soát thật trên hệ sạch', () => 
     );
     await expect(collectViolations(s, { only: ['INV-5'] })).rejects.toThrow(/INV-5/);
     await expect(runInvariants(s, { only: ['INV-9' as InvariantId] })).rejects.toThrow(/INV-9/);
+    // Cờ S7 mà không có INV-5 sẽ miễn INV-3 mà không ai ghi bù: phải bị từ chối, không được lặng lẽ đạt.
+    await expect(
+      runInvariants(s, {
+        only: ['INV-1', 'INV-2', 'INV-3', 'INV-4'],
+        expectMissingAtWallet: true,
+      }),
+    ).rejects.toThrow(/expectMissingAtWallet/);
 
     // Không INV-5 thì không đối soát; thứ tự liệt kê không ảnh hưởng (luôn theo thứ tự chuẩn).
     const spy = spyRunner();
@@ -1489,6 +1497,30 @@ describe('oracle INV-5: đối soát (làm hỏng giữa lúc đối soát, có 
     await assertSystemInvariants(s);
   });
 
+  it('reads every page of reconciliation items (cursor), not just the first', async () => {
+    const s = sys();
+    const ids = ['ch_chaos_pg1', 'ch_chaos_pg2', 'ch_chaos_pg3'];
+    for (const [index, id] of ids.entries()) {
+      await run(
+        s.paymentAdmin,
+        sql`insert into charges (id, reference, amount, currency, status, scenario, due_at, created_at, completed_at, metadata)
+            values (${id}, ${`chaos-pg-ref-${index}`}, 1000, 'VND', 'SUCCEEDED', '{}', ${now}, ${now}, ${now}, '{"tenantId":"acme"}')`,
+      );
+    }
+    try {
+      // Ba charge không có topup ⇒ ba item UNKNOWN_CHARGE; cỡ trang 1 buộc phải đi qua nhiều trang.
+      const paged = await reconciliationRunner(1)(s, 'acme', today(), 1);
+      const unknown = paged.items.filter((i) => i.kind === 'UNKNOWN_CHARGE');
+      expect(unknown.map((i) => i.chargeId).sort()).toEqual(ids);
+      expect(new Set(paged.items.map((i) => i.id)).size).toBe(paged.items.length);
+    } finally {
+      await run(
+        s.paymentAdmin,
+        sql`delete from charges where id in ('ch_chaos_pg1', 'ch_chaos_pg2', 'ch_chaos_pg3')`,
+      );
+    }
+    await assertSystemInvariants(s);
+  });
   it('fails when the second reconciliation pass still finds discrepancies (convergence)', async () => {
     const s = sys();
     const spy = spyRunner(async (sys2, tenant, day, pass) => {
@@ -1528,6 +1560,17 @@ describe('oracle INV-5: đối soát (làm hỏng giữa lúc đối soát, có 
       }).runner,
     });
     expect(new Set(codesOf(second))).toEqual(new Set(['RECONCILIATION_NOT_CONVERGED']));
+
+    // Vượt trần maxItems có mã riêng (lỗi cấu hình harness, không phải đối soát hỏng).
+    const large = await runInvariants(s, {
+      reconcileRunner: spyRunner(async (sys2, tenant, day, pass) => {
+        const real = await runReconciliationViaHttp(sys2, tenant, day, pass);
+        return pass === 1 && tenant === 'acme'
+          ? { ...failed(real), failureReason: 'found 7 discrepancies, more than the limit of 5' }
+          : real;
+      }).runner,
+    });
+    expect(new Set(codesOf(large))).toEqual(new Set(['RECONCILIATION_TOO_LARGE']));
   });
 
   it('reports OPEN items of other kinds and an AUTO_APPLIED charge that INV-3 never flagged', async () => {
@@ -1669,6 +1712,9 @@ const topupState = async (s: System, tenant: string, id: string) => {
   return { ...result.rows[0], txCount: Number(tx.rows[0]?.n ?? 0) };
 };
 
+// LƯU Ý: ba test trong describe này PHỤ THUỘC THỨ TỰ (dùng chung một hệ; test 3 ghi bù nên phải chạy sau test 1 và 2).
+// Ghi chú cho kịch bản S11 (Task 10): "thử lại cùng idempotency key sau lỗi cho cùng kết quả" được kiểm TRONG kịch bản,
+// không phải trong oracle (oracle chỉ nhìn trạng thái cuối).
 describe('S7: mất webhook có chủ ý (expectMissingAtWallet) và đối soát ghi bù', () => {
   let lost: System | undefined;
   let lostTopupId = '';
@@ -1951,6 +1997,82 @@ describe('oracle INV-6: ops nguyên tử (làm hỏng có hoàn tác)', () => {
       ['INV-6'],
       [reversed, 'code:REVERSE_ACTION_DUPLICATE'],
     );
+  });
+
+  it('detects REPLAY_PAID without its outbox row, with a wrong row, and an ops-replay outbox row without an action', async () => {
+    const s = sys();
+    const row = (
+      await sql<{ id: string }>`
+        select id from t_acme.outbox where correlation_id like 'ops-replay:%'`.execute(
+        s.walletAdmin,
+      )
+    ).rows;
+    expect(row).toHaveLength(1);
+    const outboxId = row[0]?.id as string;
+    const replayId = (
+      await sql<{
+        id: string;
+      }>`select id from t_acme.ops_actions where action = 'REPLAY_PAID'`.execute(s.walletAdmin)
+    ).rows[0]?.id as string;
+    const setCorrelation = (value: string) =>
+      run(
+        s.walletAdmin,
+        sql`update t_acme.outbox set correlation_id = ${value} where id = ${outboxId}`,
+      );
+    const setType = (value: string) =>
+      run(
+        s.walletAdmin,
+        sql`update t_acme.outbox set event_type = ${value} where id = ${outboxId}`,
+      );
+    // Chiều "thao tác ⇒ dòng outbox": dòng không còn thuộc thao tác.
+    await corrupted(
+      s,
+      () => setCorrelation('chaos-x'),
+      () => setCorrelation(`ops-replay:${replayId}`),
+      ['INV-6'],
+      [replayId, 'code:REPLAY_OUTBOX_MISSING'],
+    );
+    // Retention thật có thể đã dọn dòng: cùng dữ liệu không được báo oan.
+    await setCorrelation('chaos-x');
+    try {
+      expect(
+        await collectViolations({ ...s, retentionDeletes: true }, { only: ['INV-6'] }),
+      ).toEqual([]);
+    } finally {
+      await setCorrelation(`ops-replay:${replayId}`);
+    }
+    // Dòng của thao tác có nhưng sai loại sự kiện.
+    await corrupted(
+      s,
+      () => setType('ChaosHidden'),
+      () => setType('OrderPaidV1'),
+      ['INV-6'],
+      [replayId, 'code:REPLAY_OUTBOX_MISMATCH'],
+    );
+    // Chiều ngược lại: dòng outbox ops-replay không có thao tác REPLAY_PAID (kể cả khi retention thật bật).
+    const insertOrphan = () =>
+      run(
+        s.walletAdmin,
+        sql`insert into t_acme.outbox (id, event_type, routing_key, payload, correlation_id, status, attempts, next_attempt_at, created_at, sent_at)
+            values ('chaos-replay-orphan', 'ChaosX', 'x', '{}', 'ops-replay:chaos-ghost', 'SENT', 1, ${now}, ${now}, ${now})`,
+      );
+    const removeOrphan = () =>
+      run(s.walletAdmin, sql`delete from t_acme.outbox where id = 'chaos-replay-orphan'`);
+    await corrupted(
+      s,
+      insertOrphan,
+      removeOrphan,
+      ['INV-6'],
+      ['chaos-replay-orphan', 'code:REPLAY_OUTBOX_ORPHAN'],
+    );
+    await insertOrphan();
+    try {
+      expect(
+        codesOf(await collectViolations({ ...s, retentionDeletes: true }, { only: ['INV-6'] })),
+      ).toEqual(['REPLAY_OUTBOX_ORPHAN']);
+    } finally {
+      await removeOrphan();
+    }
   });
 });
 
@@ -2271,6 +2393,16 @@ describe('oracle với retention thật (retentionDeletes)', () => {
         { timeoutMs: 60_000, intervalMs: 300 },
       );
       expect(await count(s.walletAdmin, 't_acme.order_payments')).toBe(1);
+      // Inbox cũng bị dọn: heal() sau đó không được treo vì dòng processed_messages đã mất, và không được đua với retention
+      // (đơn mới có thể bị dọn trước khi heal kịp thấy; bằng chứng còn lại là order_payments + kết quả đã tới Orders giả).
+      await waitFor(async () => (await count(s.walletAdmin, 't_acme.processed_messages')) === 0, {
+        timeoutMs: 60_000,
+        intervalMs: 300,
+      });
+      await s.heal({ timeoutMs: 20_000 });
+      await s.sendOrder({ tenant: 'acme', customer: 'hana', amount: 5_000 });
+      await s.heal({ timeoutMs: 30_000 });
+      expect(s.expectations.ordersPaid.size).toBe(2);
 
       expect(await runInvariants(s)).toEqual([]);
       // Cùng dữ liệu nhưng nếu oracle tin retention không xóa: dòng OrderPaidV1 đã mất bị báo (kiểm tra có điều kiện thật sự có tác dụng).
@@ -2279,7 +2411,6 @@ describe('oracle với retention thật (retentionDeletes)', () => {
       ).toEqual(['PAID_WITHOUT_OUTBOX']);
       // Nhưng thứ client đã được xác nhận thì retention không được đụng tới.
       expect(s.expectations.topupsCreated.size).toBe(1);
-      expect(s.expectations.ordersPaid.size).toBe(1);
       expect(await collectViolations(s, { only: ['INV-7'] })).toEqual([]);
     } finally {
       await s.stop();

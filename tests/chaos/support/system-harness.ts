@@ -212,6 +212,12 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
   const workerIntervalMs = options.workerIntervalMs ?? 50;
   const retention = retentionFor(options.retention ?? 'off');
   const retentionDeletes = retention.wallet.enabled && !retention.wallet.dryRun;
+  // INV-5 đọc lượt đối soát ngay sau khi chạy: nếu retention thật dọn bảng đối soát gần như tức thì thì lượt có thể biến mất giữa chừng.
+  if (retentionDeletes && retention.wallet.days.reconciliation < 1) {
+    throw new Error(
+      'createSystem: retention thật đòi days.wallet.reconciliation >= 1 (oracle INV-5 đọc lượt đối soát sau khi chạy)',
+    );
+  }
   // Xác nhận thành công phía client (xem Expectations); chỉ ghi khi nhận phản hồi 2xx.
   const ordersPaid = new Set<string>();
   const topupsCreated = new Set<string>();
@@ -259,6 +265,8 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
   const allChildren: ChildService[] = [];
   let stopPromise: Promise<void> | undefined;
   // Mọi message đơn hàng đã gửi qua sendOrder/sendRaw; tenant undefined = message thô không thuộc tenant nào.
+  // eventId đã được coi là xong (không bao giờ bỏ): xem điều kiện 'đơn đã gửi chưa được xử lý' trong heal().
+  const settledEventIds = new Set<string>();
   const sentEvents: Array<{ tenant: string | undefined; eventId: string; orderId?: string }> = [];
   const DLQ = `${ORDER_PAYMENTS_QUEUE}.dlq`;
 
@@ -502,19 +510,45 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
         check: async () => {
           // Một đơn coi là xong khi wallet đã ghi inbox (processed_messages) HOẶC nó nằm trong DLQ
           // (tenant không được host, message hỏng, hết lượt retry). Gom theo tenant: một truy vấn mỗi tenant.
-          let unsettled = new Set(sentEvents.map((e) => e.eventId));
+          // Đã xong thì nhớ mãi (settledEventIds sống qua mọi lần thăm dò và mọi lần heal): retention thật có thể dọn
+          // processed_messages, và một dòng đã dọn không được làm heal() sau đó treo tới hết hạn.
+          let unsettled = new Set(
+            sentEvents.map((e) => e.eventId).filter((id) => !settledEventIds.has(id)),
+          );
           for (const tenant of tenantNames) {
-            const ids = sentEvents.filter((e) => e.tenant === tenant).map((e) => e.eventId);
+            const mine = sentEvents.filter((e) => e.tenant === tenant);
+            const ids = mine.map((e) => e.eventId).filter((id) => unsettled.has(id));
             for (const chunk of chunks(ids)) {
               const done = await sql<{ message_id: string }>`
                 select message_id from ${sql.id(`t_${tenant}`)}.processed_messages
                 where message_id in (${sql.join(chunk)})`.execute(adminWallet);
               for (const row of done.rows) unsettled.delete(row.message_id);
             }
+            if (!retentionDeletes) continue;
+            // Retention thật: nếu inbox đã bị dọn thì bằng chứng còn lại là order_payments hoặc kết quả đã tới Orders giả.
+            // (Chỉ khi retention xóa thật; nếu không, đơn giao lại cùng orderId với eventId mới sẽ bị coi là xong quá sớm.)
+            const orderIds = mine
+              .filter((e) => unsettled.has(e.eventId) && e.orderId !== undefined)
+              .map((e) => e.orderId as string);
+            const received = new Set(simulator.received().map((r) => r.payload.orderId));
+            const paid = new Set<string>();
+            for (const chunk of chunks(orderIds)) {
+              const found = await sql<{ order_id: string }>`
+                select order_id from ${sql.id(`t_${tenant}`)}.order_payments
+                where order_id in (${sql.join(chunk)})`.execute(adminWallet);
+              for (const row of found.rows) paid.add(row.order_id);
+            }
+            for (const e of mine) {
+              if (e.orderId !== undefined && (paid.has(e.orderId) || received.has(e.orderId))) {
+                unsettled.delete(e.eventId);
+              }
+            }
           }
-          if (unsettled.size === 0) return true;
-          const dead = new Set(await deadLetteredIds());
-          unsettled = new Set([...unsettled].filter((id) => !dead.has(id)));
+          if (unsettled.size > 0) {
+            const dead = new Set(await deadLetteredIds());
+            unsettled = new Set([...unsettled].filter((id) => !dead.has(id)));
+          }
+          for (const e of sentEvents) if (!unsettled.has(e.eventId)) settledEventIds.add(e.eventId);
           return unsettled.size === 0;
         },
       });
@@ -523,6 +557,7 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
         check: async () => {
           // Outbox đã SENT nhưng simulator chưa kịp ghi nhận: tránh đua giữa giao nhận và mảng results.
           const have = new Set(simulator.received().map((r) => r.messageId));
+          const haveOrders = new Set(simulator.received().map((r) => r.payload.orderId));
           for (const tenant of tenantNames) {
             const orderIds = sentEvents
               .filter((e) => e.tenant === tenant && e.orderId !== undefined)
@@ -535,6 +570,13 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
                 adminWallet,
               );
               if (sent.rows.some((row) => !have.has(row.id))) return false;
+              if (!retentionDeletes) continue;
+              // Dòng outbox SENT có thể đã bị dọn (không còn gì để đối chiếu): dựa vào order_payments ↔ kết quả đã nhận,
+              // để không "đạt" suông rồi sau đó oracle báo PAID_NOT_RECEIVED.
+              const paid = await sql<{ order_id: string }>`
+                select order_id from ${sql.id(`t_${tenant}`)}.order_payments
+                where order_id in (${sql.join(chunk)})`.execute(adminWallet);
+              if (paid.rows.some((row) => !haveOrders.has(row.order_id))) return false;
             }
           }
           return true;
