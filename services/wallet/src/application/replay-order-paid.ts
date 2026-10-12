@@ -1,3 +1,5 @@
+import { Account } from '../domain/account.js';
+import { CustomerId } from '../domain/customer-id.js';
 import type { TenantId } from '../domain/tenant-id.js';
 import { EventIdUnknownError, OrderNotFoundError, OrderReversedError } from './errors.js';
 import { orderPaidMessage } from './order-events.js';
@@ -32,6 +34,9 @@ export class ReplayOrderPaid {
         const { orderPayments, ledger, outbox } = repositories;
         const paid = await orderPayments.find(input.orderId);
         if (!paid) throw new OrderNotFoundError('order not found');
+        // Khóa hàng ví của khách (đúng hàng ReverseTransaction giữ cho ORDER_PAYMENT) TRƯỚC khi kiểm tra đã-đảo:
+        // nếu có lần đảo đang chạy, ta chờ nó commit rồi mới thấy giao dịch đảo, nên không phát lại OrderPaidV1 cho đơn vừa bị đảo.
+        await repositories.accounts.lockMany([Account.walletId(CustomerId.parse(paid.customerId))]);
         if ((await ledger.findReversalOf(paid.walletTransactionId)) !== null) {
           throw new OrderReversedError('order payment has been reversed');
         }

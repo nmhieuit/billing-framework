@@ -85,7 +85,7 @@ Counter `billing.ops.actions{tenant, action, outcome}` với `outcome` là `ok` 
 
 - **Phân trang nhật ký theo `seq`, không theo `created_at`**: bảng có cột identity `seq`; `cursor` là `seq`, sắp xếp giảm dần theo `seq`, không có chỉ mục `created_at` (mục 2, 3).
 - **Metric `noop`** bao gồm cả "đã đúng trạng thái" (freeze/unfreeze) lẫn "gọi lại idempotent" (mục 5).
-- **Phát lại và đảo có thể đua nhau**: phát lại không khóa tài khoản của ví nên một phát lại chạy đúng lúc đảo của cùng order vẫn có thể xếp hàng `OrderPaidV1`; không chặn bằng khóa mà ghi thành quy tắc vận hành ([ops-tools](../../ops/ops-tools.vi.md)).
+- **Phát lại khóa hàng ví của khách** (cùng hàng `ReverseTransaction` giữ cho `ORDER_PAYMENT`) trước khi kiểm tra đã-đảo, nên phát lại và đảo của cùng order được tuần tự hóa: phát lại chờ đảo commit rồi bị từ chối `ORDER_REVERSED`.
 - **`messageId` AMQP của bản phát lại là id outbox mới**, khác `eventId` (giữ nguyên trong payload); consumer khử trùng theo `eventId` ([orders-handoff](../../integration/orders-handoff.vi.md)).
 - **`INSUFFICIENT_FUNDS` cũng áp dụng khi đảo `ADJUSTMENT CREDIT`** mà ví đã tiêu mất (không chỉ `DEBIT`); `REVERSAL_NOT_POSSIBLE` chỉ nói về tài khoản đối ứng (MERCHANT).
 - `occurredAtUtc` của bản phát lại bằng `paidAtUtc` gốc; `correlationId = ops-replay:<actionId>`.

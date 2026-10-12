@@ -54,8 +54,8 @@ tiền bạc đã có.
 - **Không có sự kiện hoàn tiền:** đảo thanh toán order không báo cho Orders; ops phải tự báo cho tới khi có hợp đồng mới (kiểu
   `OrderRefundedV1`).
 - **Tin gateway cho header actor:** `ops_actions.actor` chỉ đáng tin bằng gateway; triển khai thật phải xóa `x-actor-*` của client.
-- **Phát lại không khóa ví nên có thể đua với đảo:** một phát lại chạy đúng lúc đảo của cùng order vẫn có thể xếp hàng `OrderPaidV1`.
-  Cách xử lý là quy trình (không chạy đồng thời), không phải khóa; xem [ops-tools](../ops/ops-tools.vi.md).
+- **Phát lại và đảo được tuần tự hóa bằng khóa hàng ví:** `replay-paid` khóa ví của khách (cùng hàng mà `ReverseTransaction` giữ cho
+  `ORDER_PAYMENT`) trước khi kiểm tra đã-đảo, nên phát lại chạy đúng lúc đảo sẽ chờ rồi bị từ chối `ORDER_REVERSED`.
 - **`ops_actions` không bị retention dọn** và bảng lớn dần theo số thao tác (rất ít so với giao dịch); đổi lại bằng chứng kiểm toán
   được giữ nguyên.
 - **`noop` của metric gộp hai nghĩa** (đã đúng trạng thái và phát lại theo idempotency), nên không dùng để phát hiện lỗi.

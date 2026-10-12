@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { validateEvent } from '@billing/contracts';
+import { sql } from 'kysely';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { TenantId } from '../domain/tenant-id.js';
 import { RecordingMetrics } from '../test-support-metrics.js';
@@ -168,6 +169,71 @@ describe('ReplayOrderPaid', () => {
     });
     const before = (await outboxFor(orderId)).length;
     await expect(replay.execute(request(orderId))).rejects.toBeInstanceOf(OrderReversedError);
+    expect(await outboxFor(orderId)).toHaveLength(before);
+  });
+
+  it('waits for a concurrent reversal (wallet row lock) and then rejects, without a new OrderPaidV1', async () => {
+    const { orderId, transactionId } = await paidOrder();
+    const customer = (
+      await h.db
+        .withSchema(schema(h.acme))
+        .selectFrom('order_payments')
+        .select('customer_id')
+        .where('order_id', '=', orderId)
+        .executeTakeFirstOrThrow()
+    ).customer_id;
+    const before = (await outboxFor(orderId)).length;
+    const accounts = `${schema(h.acme)}.accounts`;
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let held!: () => void;
+    const holding = new Promise<void>((resolve) => (held = resolve));
+    // Giữ khóa hàng ví từ một transaction thô: giả lập ReverseTransaction đang giữ ví (ORDER_PAYMENT).
+    const hold = h.db.transaction().execute(async (trx) => {
+      await sql`select id from ${sql.raw(accounts)} with (updlock) where id = ${`wallet:${customer}`}`.execute(
+        trx,
+      );
+      held();
+      await released;
+    });
+    await holding;
+
+    const reversal = reverse.execute({
+      tenant: h.acme,
+      transactionId,
+      actor: 'op@x',
+      reason: 'refund',
+      idempotencyKey: `rp-race-${++counter}`,
+    });
+    let replaySettled = false;
+    const replaying = replay
+      .execute(request(orderId))
+      .then(
+        () => 'resolved' as const,
+        (error: unknown) => error,
+      )
+      .finally(() => {
+        replaySettled = true;
+      });
+
+    // Chờ (có hạn) cho tới khi cả hai yêu cầu cùng bị chặn trong DB, hoặc replay đã xong sớm (tức là không bị khóa).
+    const blockedCount = async (): Promise<number> => {
+      const rows = await sql<{ n: number }>`
+        select count(*) as n from sys.dm_exec_requests r
+        cross apply sys.dm_exec_sql_text(r.sql_handle) t
+        where r.blocking_session_id <> 0 and t.text like ${`%${schema(h.acme)}%`}`.execute(h.db);
+      return Number(rows.rows[0]?.n ?? 0);
+    };
+    const deadline = Date.now() + 15000;
+    while (!replaySettled && Date.now() < deadline && (await blockedCount()) < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const stillPending = !replaySettled;
+    release();
+    await hold;
+    expect(stillPending).toBe(true);
+    await reversal;
+    expect(await replaying).toBeInstanceOf(OrderReversedError);
     expect(await outboxFor(orderId)).toHaveLength(before);
   });
 });

@@ -233,9 +233,9 @@ FROM t_acme.accounts WHERE frozen_at IS NOT NULL;
 - **Phát lại cần `paid_event_id`.** Cột này chỉ có từ migration `007-ops-tools`. Migration backfill từ dòng outbox `OrderPaidV1` còn
   lại; order trả **trước** migration mà dòng outbox đã bị retention dọn (sau `RETENTION_OUTBOX_SENT_DAYS` ngày) thì không còn
   `eventId` gốc, và `replay-paid` trả `409 EVENT_ID_UNKNOWN`. Wallet không đoán `eventId` mới vì làm vậy consumer sẽ không khử trùng được.
-- **Phát lại không khóa ví, nên có thể đua với đảo.** `replay-paid` chỉ đọc `order_payments` và kiểm tra khoản trả đã bị đảo chưa,
-  không khóa tài khoản. Nếu một `reversals` của chính order đó chạy cùng lúc, `replay-paid` vẫn có thể xếp hàng một `OrderPaidV1`
-  cho một khoản vừa bị đảo. **Đừng chạy phát lại và đảo đồng thời trên cùng một order**; nếu lỡ, kiểm tra lại với Orders.
+- **Phát lại và đảo được tuần tự hóa bằng khóa ví.** `replay-paid` khóa hàng ví của khách (đúng hàng mà `reversals` giữ cho
+  `ORDER_PAYMENT`) trước khi kiểm tra khoản trả đã bị đảo chưa. Nếu một `reversals` của chính order đó đang chạy, phát lại chờ nó
+  commit rồi bị từ chối `ORDER_REVERSED`, nên không có chuyện `OrderPaidV1` được xếp hàng cho một khoản vừa bị đảo.
 - **Đóng băng chỉ chặn ghi nợ do trả order.** Nạp tiền, điều chỉnh và đảo vẫn chạy trên ví đóng băng.
 - **Cần Orders triển khai trước khi bật freeze ở môi trường dùng chung:** `WALLET_FROZEN` là lý do mới của `OrderPaymentFailedV1`
   (xem [orders-handoff](../integration/orders-handoff.vi.md)).
