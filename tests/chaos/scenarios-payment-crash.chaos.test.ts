@@ -214,14 +214,16 @@ describe('S6-S8: payment and webhook faults (in-process)', () => {
 
     expect(s.plan.fired('s6a-503')).toBe(1);
     const topup = await expectSingleCreditedCharge(s, 's6a', 50_000);
-    // Hai lần thử đầu đều bị tính là PAYMENT_UNAVAILABLE (503, rồi timeout) — chứng minh timeout xảy ra thật chứ không phải
-    // yêu cầu bị trễ mà vẫn kịp trả lời.
-    expect(topup.attempts).toBe(2);
-    const decisions = s.proxies.walletToPayment.log
-      .filter((e) => e.url.includes('/charges'))
-      .map((e) => e.decision);
-    expect(decisions).toContain('status');
-    expect(decisions).toContain('delay');
+    // Hai lần thử đầu đều bị tính là PAYMENT_UNAVAILABLE (503, rồi timeout) nên attempts >= 2. Không đòi attempts == 2 chính
+    // xác vì lần thứ ba (nếu có) phụ thuộc vào việc webhook chốt topup trước hay sau lịch retry.
+    expect(topup.attempts).toBeGreaterThanOrEqual(2);
+    // Chứng minh trực tiếp: đúng hai yêu cầu tạo charge tới payment, yêu cầu trễ (bị wallet bỏ cuộc) CHÍNH LÀ yêu cầu đã tạo
+    // charge (payment trả 202), và wallet không gửi thêm yêu cầu thứ ba.
+    const chargeLog = s.proxies.walletToPayment.log.filter((e) => e.url.includes('/charges'));
+    expect(chargeLog.map((e) => e.decision)).toEqual(['status', 'delay']);
+    expect(chargeLog[0]?.status).toBe(503);
+    expect(chargeLog[1]?.status).toBe(202);
+    expect(s.plan.hits('wallet-to-payment.request')).toBe(2);
     await assertSystemInvariants(s);
   });
 
@@ -440,7 +442,8 @@ describe('S6-S8: payment and webhook faults (in-process)', () => {
     expect(applied).toEqual(['AUTO_APPLIED']);
     expect((await topupOf(s, 's8b')).status).toBe('SUCCEEDED');
     expect(await balanceOf(s, 's8b')).toBe(25_000);
-    // Tiền điều kiện của kịch bản: webhook vẫn chưa tới (nếu đối soát chậm hơn thời gian giữ thì test này không còn ý nghĩa).
+    // Log proxy chỉ ghi SAU khi lần chuyển tiếp hoàn tất, nên danh sách rỗng chứng minh webhook chưa được chuyển tới wallet
+    // (nếu đối soát chậm hơn thời gian giữ thì test này không còn ý nghĩa và sẽ thất bại ở đây).
     expect(
       s.proxies.paymentToWallet.log.filter((e) => e.url.includes('/webhooks/payment')),
     ).toEqual([]);
@@ -484,6 +487,13 @@ describe('S9-S10: real SIGKILL of wallet and payment (child processes)', () => {
     resetProxyLogs(system);
   });
   dumpOnFailure(() => system);
+  // Test thất bại giữa lúc một dịch vụ đang chết thì dựng lại, để test sau không đổ lỗi dây chuyền.
+  afterEach(async () => {
+    const s = system;
+    if (s === undefined) return;
+    if (s.pids().payment === undefined) await s.restartPayment();
+    if (s.pids().wallet === undefined) await s.restartWallet();
+  });
   // stop() giết mọi tiến trình con (kể cả đã bị crash) và xác nhận không còn pid nào, kể cả khi test thất bại giữa chừng.
   afterAll(async () => {
     await system?.stop();
@@ -531,8 +541,21 @@ describe('S9-S10: real SIGKILL of wallet and payment (child processes)', () => {
     expect(s.plan.hits('wallet-to-payment.request')).toBe(1); // mới có đúng yêu cầu tạo charge đầu tiên
 
     await s.restartWallet();
-    // Wallet chỉ thử lại sau khi lease 60s của lần chiếm trước hết hạn (thiết kế); mô phỏng thời gian trôi qua bằng cách đưa
-    // lịch về hiện tại thay vì chờ cả phút.
+    // Wallet chỉ thử lại sau khi lease 60s của lần chiếm trước hết hạn (thiết kế). Trước khi tua nhanh phải chứng minh lease
+    // THỰC SỰ đang giữ topup (tính trên đồng hồ SQL Server, UTC): hạn thử lại nằm trong tương lai nhưng không quá ~65s, và
+    // wallet mới chưa tự gửi lại. Nếu claim() không còn đặt lại next_attempt_at thì bước UPDATE bên dưới sẽ che lỗi.
+    const lease = await rowsOf(
+      s.walletAdmin,
+      sql<{ secs: number | null }>`
+        select datediff(second, sysutcdatetime(), next_attempt_at) as secs
+        from t_acme.topups where id = ${stuck.id}`,
+    );
+    expect(lease).toHaveLength(1);
+    expect(lease[0]?.secs).not.toBeNull();
+    expect(Number(lease[0]?.secs)).toBeGreaterThan(0);
+    expect(Number(lease[0]?.secs)).toBeLessThanOrEqual(65);
+    expect(s.plan.hits('wallet-to-payment.request')).toBe(1); // chưa có lần gửi lại nào trước khi tua nhanh
+    // Mô phỏng thời gian trôi qua bằng cách đưa lịch về hiện tại thay vì chờ cả phút.
     await rowsOf(
       s.walletAdmin,
       sql`update t_acme.topups set next_attempt_at = sysutcdatetime() where status = 'REQUESTED'`,
@@ -567,7 +590,6 @@ describe('S9-S10: real SIGKILL of wallet and payment (child processes)', () => {
   it('S10: payment SIGKILLed after the charge succeeded but before any webhook was delivered: webhook delivered after restart, credited once', async () => {
     const s = sys();
     expect((await s.openWallet(TENANT, 's10')).status).toBe(201);
-    const logStart = s.proxies.paymentToWallet.log.length; // bỏ qua log của kịch bản trước trong cùng hệ
     // Mọi webhook rớt kết nối cho tới khi payment bị giết: wallet không hề nhận được gì.
     s.plan.add({
       point: 'payment-to-wallet.request',
@@ -578,7 +600,8 @@ describe('S9-S10: real SIGKILL of wallet and payment (child processes)', () => {
 
     expect((await s.topup(TENANT, 's10', 35_000, 'k-s10')).status).toBe(202);
     const { id: topupId } = await topupOf(s, 's10');
-    // Charge đã SUCCEEDED và lần gửi đầu đã bị rớt VÀ đã được ghi nhận (attempts >= 1: lịch retry đã đặt, hết lease).
+    // Charge đã SUCCEEDED và lần gửi đầu đã bị rớt VÀ kết quả đã được ghi vào DB (attempts >= 1: lịch retry +2s đã đặt thay cho
+    // lease 60s của lần chiếm). Lần gửi thứ hai (cũng sẽ bị rớt) có thể đã bắt đầu; không sao vì mọi lần gửi đều bị rớt.
     await waitFor(
       async () => {
         const charge = (await chargesOf(s, topupId))[0];
@@ -596,9 +619,10 @@ describe('S9-S10: real SIGKILL of wallet and payment (child processes)', () => {
     expect((await chargesOf(s, topupId))[0]?.status).toBe('SUCCEEDED');
     const pending = await webhookOf(s, topupId);
     expect(pending?.status).toBe('PENDING');
-    const sinceStart = s.proxies.paymentToWallet.log.slice(logStart);
-    expect(sinceStart.length).toBeGreaterThanOrEqual(1);
-    expect(sinceStart.every((e) => e.decision === 'drop')).toBe(true);
+    // Log proxy đã được reset ở beforeEach nên chỉ chứa webhook của kịch bản này: tất cả đều bị rớt.
+    const sent = s.proxies.paymentToWallet.log;
+    expect(sent.length).toBeGreaterThanOrEqual(1);
+    expect(sent.every((e) => e.decision === 'drop')).toBe(true);
     expect((await topupOf(s, 's10')).status).toBe('PENDING');
     expect(await balanceOf(s, 's10')).toBe(0);
 
