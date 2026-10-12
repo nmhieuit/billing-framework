@@ -357,6 +357,8 @@ export interface Metrics {
   publishState(state: WalletState): void;
   /** Kết quả một lượt dọn dữ liệu cũ (số dòng đã xóa hoặc sẽ xóa, số lỗi). */
   retentionRun(report: RetentionReport): void;
+  /** Một thao tác vận hành (freeze, adjust...) theo kết quả: đã ghi, không đổi gì, hoặc bị từ chối. */
+  opsAction(tenant: string, action: string, outcome: 'ok' | 'noop' | 'rejected'): void;
 }
 
 export const noopMetrics: Metrics = {
@@ -367,4 +369,5 @@ export const noopMetrics: Metrics = {
   reconciliationRun: () => undefined,
   publishState: () => undefined,
   retentionRun: () => undefined,
+  opsAction: () => undefined,
 };

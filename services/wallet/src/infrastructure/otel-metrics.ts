@@ -26,6 +26,7 @@ export class OtelWalletMetrics implements Metrics {
   readonly #openItems: Gauge;
   readonly #oldestOpenItem: Gauge;
   readonly #lastSuccess: Gauge;
+  readonly #opsActions: Counter;
   readonly #retentionRows: Counter;
   readonly #retentionLastSuccess: Gauge;
   readonly #now: () => Date;
@@ -82,6 +83,10 @@ export class OtelWalletMetrics implements Metrics {
       'Seconds since the last completed reconciliation run',
       's',
     );
+    this.#opsActions = telemetry.counter(
+      'billing.ops.actions',
+      'Operator actions by action and outcome',
+    );
     this.#retentionRows = telemetry.counter(
       'billing.retention.rows',
       'Rows deleted (or that would be deleted in dry-run) by retention',
@@ -119,6 +124,10 @@ export class OtelWalletMetrics implements Metrics {
 
   reconciliationRun(tenant: string, status: string): void {
     this.#reconciliationRuns.add(1, { tenant, status });
+  }
+
+  opsAction(tenant: string, action: string, outcome: string): void {
+    this.#opsActions.add(1, { tenant, action, outcome });
   }
 
   retentionRun(report: RetentionReport): void {
