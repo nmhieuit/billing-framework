@@ -40,7 +40,7 @@ describe('order events', () => {
     });
   });
 
-  it.each(['INSUFFICIENT_FUNDS', 'WALLET_NOT_FOUND', 'CURRENCY_MISMATCH', 'CONFLICT'] as const)(
+  it.each(['INSUFFICIENT_FUNDS', 'WALLET_NOT_FOUND', 'CURRENCY_MISMATCH', 'CONFLICT', 'WALLET_FROZEN'] as const)(
     'builds a valid OrderPaymentFailedV1 for %s',
     (reason) => {
       const message = orderPaymentFailedMessage(ctx, { orderId, reason });

@@ -39,7 +39,7 @@ describe('validateEvent', () => {
     expect(validateEvent('OrderPaymentFailedV1', failed).ok).toBe(true);
   });
 
-  it.each(['INSUFFICIENT_FUNDS', 'WALLET_NOT_FOUND', 'CURRENCY_MISMATCH', 'CONFLICT'])(
+  it.each(['INSUFFICIENT_FUNDS', 'WALLET_NOT_FOUND', 'CURRENCY_MISMATCH', 'CONFLICT', 'WALLET_FROZEN'])(
     'accepts the failure reason %s',
     (reason) => {
       expect(validateEvent('OrderPaymentFailedV1', { ...failed, reason }).ok).toBe(true);

@@ -35,7 +35,9 @@ của billing; lấy bản file bằng `corepack pnpm --filter @billing/contract
 
 Trường chung bắt buộc của cả ba: `eventId` (UUID), `occurredAtUtc` (RFC 3339 date-time; chấp nhận phần giây thập phân như
 `2026-10-10T10:00:00.1234567Z` và offset như `+07:00`), `tenantId`, `correlationId`.
-`reason` ∈ `INSUFFICIENT_FUNDS`, `WALLET_NOT_FOUND`, `CURRENCY_MISMATCH`, `CONFLICT`.
+`reason` ∈ `INSUFFICIENT_FUNDS`, `WALLET_NOT_FOUND`, `CURRENCY_MISMATCH`, `CONFLICT`, `WALLET_FROZEN`.
+
+> Cảnh báo: consumer (Orders) phải coi lý do lạ là "thất bại, giữ `Unpaid`" và phải triển khai trước khi bật freeze ở môi trường dùng chung.
 
 Giới hạn giá trị (schema từ chối nếu vượt, vì wallet không lưu được): `tenantId` và `customerId` 1..64 ký tự,
 `correlationId` 1..100 ký tự, `amount` là số nguyên từ 1 đến 9007199254740991 (`Number.MAX_SAFE_INTEGER`).
