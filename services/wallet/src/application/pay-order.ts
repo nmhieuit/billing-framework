@@ -97,6 +97,15 @@ export class PayOrder {
         );
         return reject('CONFLICT');
       }
+      // Khoản trả đã bị vận hành đảo: không phát lại OrderPaidV1 (Orders sẽ coi đơn là đã trả) và cũng không ghi nợ lại.
+      // Từ chối bằng CONFLICT; Orders đã bỏ qua thất bại với đơn ở trạng thái Paid.
+      if ((await ledger.findReversalOf(paid.walletTransactionId)) !== null) {
+        this.deps.log.warn(
+          { tenantId: input.tenant.value, orderId: input.orderId, eventId: input.eventId },
+          'order payment was reversed; refusing re-delivered order',
+        );
+        return reject('CONFLICT');
+      }
       await outbox.add(
         orderPaidMessage(context(), {
           orderId: input.orderId,
@@ -123,6 +132,9 @@ export class PayOrder {
     const merchant = byId.get(merchantId);
     if (!lockedWallet || !merchant) throw new Error(`missing account for order ${input.orderId}`);
 
+    // Ví đóng băng không được trả order. Kiểm tra sau nhánh đã-trả (order đã trả vẫn phát lại) và trên ví đã khóa.
+    if (lockedWallet.isFrozen()) return reject('WALLET_FROZEN');
+
     let debited: Account;
     try {
       debited = lockedWallet.apply(money.negate());
@@ -144,15 +156,18 @@ export class PayOrder {
         now,
       }),
     );
+    // Tạo ngữ cảnh một lần để cùng một eventId vừa nằm ở order_payments.paid_event_id vừa ở payload OrderPaidV1.
+    const paidContext = context();
     await orderPayments.insert({
       orderId: input.orderId,
       customerId: customerId.value,
       walletTransactionId: transactionId,
       amount: money,
       paidAt: now,
+      paidEventId: paidContext.eventId,
     });
     await outbox.add(
-      orderPaidMessage(context(), {
+      orderPaidMessage(paidContext, {
         orderId: input.orderId,
         walletTransactionId: transactionId,
         amount: money,

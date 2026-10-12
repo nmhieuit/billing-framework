@@ -52,6 +52,16 @@ describe('OtelWalletMetrics — counters', () => {
     await telemetry.shutdown();
   });
 
+  it('counts ops actions with tenant, action and outcome', async () => {
+    const { metrics, collect, telemetry } = setup();
+    metrics.opsAction('acme', 'ADJUST', 'ok');
+    const all = await collect();
+    expect(
+      all.get('billing.ops.actions')?.get(key({ tenant: 'acme', action: 'ADJUST', outcome: 'ok' })),
+    ).toBe(1);
+    await telemetry.shutdown();
+  });
+
   it('prime creates the series at zero so the first increment is a visible increase', async () => {
     const { metrics, collect, telemetry } = setup();
     metrics.prime(['acme']);

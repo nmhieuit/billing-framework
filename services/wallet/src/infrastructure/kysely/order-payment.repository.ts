@@ -28,6 +28,7 @@ export class KyselyOrderPaymentRepository implements OrderPaymentRepository {
           amount: order.amount.amount,
           currency: order.amount.currency,
           paid_at: sqlDate(order.paidAt),
+          paid_event_id: order.paidEventId,
         })
         .execute();
     } catch (error) {

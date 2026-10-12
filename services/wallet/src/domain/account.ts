@@ -2,7 +2,14 @@ import { Money, type Currency } from '@billing/money';
 import type { CustomerId } from './customer-id.js';
 import { InsufficientFundsError, LedgerInvariantError } from './errors.js';
 
-export type AccountKind = 'WALLET' | 'GATEWAY' | 'MERCHANT';
+export type AccountKind = 'WALLET' | 'GATEWAY' | 'MERCHANT' | 'ADJUSTMENT';
+
+/** Trạng thái đóng băng ví: ai, lúc nào, vì sao. */
+export interface FrozenState {
+  readonly at: Date;
+  readonly by: string;
+  readonly reason: string;
+}
 
 export interface AccountProps {
   readonly id: string;
@@ -11,6 +18,7 @@ export interface AccountProps {
   readonly currency: Currency;
   readonly balance: Money;
   readonly createdAt: Date;
+  readonly frozen: FrozenState | null;
 }
 
 export class Account {
@@ -20,7 +28,7 @@ export class Account {
     return `wallet:${customerId.value}`;
   }
 
-  static systemId(kind: 'GATEWAY' | 'MERCHANT', currency: Currency): string {
+  static systemId(kind: 'GATEWAY' | 'MERCHANT' | 'ADJUSTMENT', currency: Currency): string {
     return `system:${kind}:${currency}`;
   }
 
@@ -32,6 +40,7 @@ export class Account {
       currency: input.currency,
       balance: Money.zero(input.currency),
       createdAt: input.now,
+      frozen: null,
     });
   }
 
@@ -63,8 +72,27 @@ export class Account {
           throw new LedgerInvariantError(`merchant account ${this.props.id} cannot be negative`);
         }
         break;
+      case 'ADJUSTMENT':
+        // Tài khoản đối ứng điều chỉnh: không ràng buộc dấu.
+        break;
     }
     return new Account({ ...this.props, balance: next });
+  }
+
+  isFrozen(): boolean {
+    return this.props.frozen !== null;
+  }
+
+  /** Đóng băng ví (chỉ loại WALLET). Việc chặn ghi nợ do use case đảm nhiệm, không phải `apply`. */
+  freeze(by: string, reason: string, at: Date): Account {
+    if (this.props.kind !== 'WALLET') {
+      throw new LedgerInvariantError(`only wallet accounts can be frozen: ${this.props.id}`);
+    }
+    return new Account({ ...this.props, frozen: { at, by, reason } });
+  }
+
+  unfreeze(): Account {
+    return new Account({ ...this.props, frozen: null });
   }
 
   toProps(): AccountProps {

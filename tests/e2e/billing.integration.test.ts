@@ -19,6 +19,7 @@ import {
   type RunningService as RunningWallet,
 } from '../../services/wallet/src/bootstrap.js';
 import { TenantId } from '../../services/wallet/src/domain/tenant-id.js';
+import { OrdersSimulator } from '../../services/wallet/src/test-support-orders.js';
 import { provisionTenants } from '../../services/wallet/src/infrastructure/kysely/provisioning.js';
 
 const SECRET = 'whsec_cross_service';
@@ -33,6 +34,7 @@ let wallet: RunningWallet;
 let walletUrl: string;
 let paymentUrl: string;
 let broker: TestBroker;
+let orders: OrdersSimulator;
 
 beforeAll(async () => {
   paymentDb = await createTestDatabase('e2e_payment');
@@ -45,6 +47,7 @@ beforeAll(async () => {
   const paymentPort = await getFreePort();
   paymentUrl = `http://127.0.0.1:${paymentPort}`;
   broker = await createTestBroker('e2e');
+  orders = await OrdersSimulator.connect(broker.ecommerce);
   wallet = await startWallet({
     port: 0,
     database: walletDb.config,
@@ -88,6 +91,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await orders?.close();
   await payment?.stop();
   await wallet?.stop();
   await paymentAdmin?.destroy();
@@ -261,6 +265,39 @@ describe('wallet and payment together', () => {
       customer: 'e2e-shared',
     });
     expect(crossTenant.status).toBe(404);
+  });
+
+  it('refuses an order from a wallet frozen by ops over HTTP, reporting WALLET_FROZEN to orders', async () => {
+    const topupId = await openWalletAndTopup('acme', 'e2e-frozen', 100000);
+    await waitForStatus('acme', 'e2e-frozen', topupId, 'SUCCEEDED');
+
+    const freeze = await fetch(`${walletUrl}/ops/wallets/e2e-frozen/freeze`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-tenant-id': 'acme',
+        'x-actor-id': 'ops1',
+        'x-actor-role': 'OPS',
+      },
+      body: JSON.stringify({ reason: 'e2e check', idempotencyKey: 'e2e-freeze-1' }),
+    });
+    expect(freeze.status).toBe(200);
+
+    const event = orders.ready({ customerId: 'e2e-frozen', amount: 20000 });
+    await orders.publish(event);
+    await waitFor(() => orders.resultsFor(event.orderId).length === 1, {
+      timeoutMs: 20_000,
+      intervalMs: 100,
+    });
+    expect(orders.resultsFor(event.orderId)[0]).toMatchObject({
+      type: 'OrderPaymentFailedV1',
+      body: { orderId: event.orderId, reason: 'WALLET_FROZEN' },
+    });
+    const wallet = await call<{ balance: number }>('GET', '/wallet', {
+      tenant: 'acme',
+      customer: 'e2e-frozen',
+    });
+    expect(wallet.body.balance).toBe(100000);
   });
 
   it('leaves the ledger balanced and equal to what payment settled, per tenant', async () => {

@@ -180,3 +180,33 @@ export async function fundWallet(
   });
   if (outcome !== 'APPLIED') throw new Error(`could not fund wallet: ${outcome}`);
 }
+
+/** Số yêu cầu đang bị chặn (đợi khóa) trong database test, đọc từ DMV; dùng để chờ có điều kiện thay vì ngủ cố định. */
+export async function blockedRequestCount(h: Harness): Promise<number> {
+  const rows = await sql<{ n: number }>`
+    select count(*) as n from sys.dm_exec_requests where blocking_session_id <> 0`.execute(h.db);
+  return Number(rows.rows[0]?.n ?? 0);
+}
+
+/**
+ * Giữ khóa hàng của ví `wallet:<customer>` (UPDLOCK) trong một transaction thô cho tới khi gọi `release()`; giả lập một
+ * thao tác đang giữ ví. Trả về sau khi đã giữ được khóa; `done` resolve khi transaction đã kết thúc.
+ */
+export async function holdWalletLock(
+  h: Harness,
+  tenant: TenantId,
+  customer: string,
+): Promise<{ release: () => void; done: Promise<void> }> {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  let held!: () => void;
+  const holding = new Promise<void>((resolve) => (held = resolve));
+  const done = h.db.transaction().execute(async (trx) => {
+    await sql`select id from ${sql.id(`t_${tenant.value}`, 'accounts')} with (updlock)
+      where id = ${`wallet:${customer}`}`.execute(trx);
+    held();
+    await released;
+  });
+  await holding;
+  return { release, done };
+}

@@ -26,4 +26,7 @@ export class RecordingMetrics implements Metrics {
   retentionRun(report: RetentionReport): void {
     this.calls.push(['retentionRun', report]);
   }
+  opsAction(tenant: string, action: string, outcome: string): void {
+    this.calls.push(['opsAction', tenant, action, outcome]);
+  }
 }

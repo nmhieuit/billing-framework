@@ -33,6 +33,11 @@ curl -s -X POST localhost:3001/reconciliation-items/<itemId>/resolve $H \
   -d '{"status":"RESOLVED","note":"đã điều chỉnh ngoài hệ thống, ticket 123","resolvedBy":"an.nguyen"}'
 ```
 
+Khi một ca lệch cần sửa số dư của ví, dùng công cụ vận hành thay vì sửa database: điều chỉnh `CREDIT`/`DEBIT` hoặc đảo một giao dịch
+(`POST /ops/wallets/{customerId}/adjustments`, `POST /ops/transactions/{id}/reversals`; hướng dẫn, header actor và mã lỗi ở
+[ops-tools](../ops/ops-tools.vi.md)). Sau đó đóng ca bằng `resolve` và ghi `actionId`/`transactionId` của thao tác vào `note` để đối chiếu
+với `ops_actions`. Các giao dịch `ADJUSTMENT`/`REVERSAL` là một phần của sổ cái nên vẫn qua kiểm tra toàn vẹn nội bộ của lượt đối soát.
+
 Lỗi thường gặp: `422 INVALID_RECONCILIATION` (ngày sai/tương lai, thiếu `note`/`resolvedBy`, `status` sai),
 `404 RECONCILIATION_NOT_FOUND` / `RECONCILIATION_ITEM_NOT_FOUND`, `409 RECONCILIATION_CONFLICT` (ca đã đóng với giá trị khác;
 đóng lại cùng giá trị thì trả cùng kết quả), `400 INVALID_QUERY` (limit, cursor hoặc caseStatus sai).

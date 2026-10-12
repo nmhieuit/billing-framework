@@ -3,7 +3,7 @@ import { sql, type Kysely, type Selectable } from 'kysely';
 import { DuplicateKeyError } from '../../application/errors.js';
 import type { AccountRepository } from '../../application/ports.js';
 import type { Account } from '../../domain/account.js';
-import { accountToRow, rowToAccount } from './mappers.js';
+import { accountToRow, rowToAccount, sqlDate } from './mappers.js';
 import type { AccountsTable, WalletDatabase } from './schema.js';
 
 export class KyselyAccountRepository implements AccountRepository {
@@ -39,7 +39,8 @@ export class KyselyAccountRepository implements AccountRepository {
     const locked: Account[] = [];
     for (const id of sorted) {
       const result = await sql<Selectable<AccountsTable>>`
-        select id, kind, customer_id, currency, balance, created_at
+        select id, kind, customer_id, currency, balance, created_at,
+          frozen_at, frozen_by, frozen_reason
         from ${sql.id(this.schema, 'accounts')} with (updlock, rowlock)
         where id = ${id}`.execute(this.db);
       const row = result.rows[0];
@@ -55,6 +56,19 @@ export class KyselyAccountRepository implements AccountRepository {
       .updateTable('accounts')
       .set({ balance: row.balance })
       .where('id', '=', row.id)
+      .execute();
+  }
+
+  async saveFrozen(account: Account): Promise<void> {
+    const p = account.toProps();
+    await this.db
+      .updateTable('accounts')
+      .set({
+        frozen_at: p.frozen ? sqlDate(p.frozen.at) : null,
+        frozen_by: p.frozen?.by ?? null,
+        frozen_reason: p.frozen?.reason ?? null,
+      })
+      .where('id', '=', p.id)
       .execute();
   }
 }

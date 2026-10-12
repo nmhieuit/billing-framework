@@ -32,6 +32,11 @@ export function rowToAccount(row: Selectable<AccountsTable>): Account {
     currency,
     balance: Money.of(toSafeInteger(row.balance), currency),
     createdAt: row.created_at,
+    // Các cột đóng băng cùng null nghĩa là ví không bị đóng băng.
+    frozen:
+      row.frozen_at === null
+        ? null
+        : { at: row.frozen_at, by: row.frozen_by ?? '', reason: row.frozen_reason ?? '' },
   });
 }
 
@@ -76,6 +81,7 @@ export function rowToPaidOrder(row: Selectable<OrderPaymentsTable>): PaidOrder {
     walletTransactionId: row.wallet_transaction_id,
     amount: Money.of(toSafeInteger(row.amount), row.currency as Currency),
     paidAt: row.paid_at,
+    paidEventId: row.paid_event_id,
   };
 }
 

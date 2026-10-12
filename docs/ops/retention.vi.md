@@ -33,6 +33,7 @@ Wallet chạy mọi chính sách cho **từng tenant** (mỗi tenant là một s
 1. **Không bao giờ chạm vào dữ liệu tài chính**: `ledger_transactions`, `ledger_entries`, `accounts`, `topups`,
    `order_payments` (wallet) và `charges` (payment). Danh sách bảng mà mỗi chính sách đọc/ghi là dữ liệu có kiểm tra bằng test
    (không chứa các bảng này), và test tích hợp chứng minh số dòng của chúng không đổi sau một lượt dọn đầy đủ.
+   Nhật ký kiểm toán `ops_actions` của công cụ vận hành ([ops-tools](ops-tools.vi.md)) cũng **không bao giờ bị retention xóa** (bảng chỉ thêm, có trigger chặn `DELETE`).
 2. **Dòng chưa xong luôn được giữ**: mục đối soát `OPEN`; lượt đối soát `RUNNING` hoặc còn dù chỉ một item; dòng outbox
    `PENDING` (chưa gửi); webhook `PENDING` và `FAILED` (hết lượt thử, giữ để điều tra). Chỉ webhook `DELIVERED` mới bị xóa.
 3. **Khử trùng vẫn đúng sau khi dọn.** Xóa `processed_messages` quá hạn chỉ làm một message giao lại rất muộn (sau hơn

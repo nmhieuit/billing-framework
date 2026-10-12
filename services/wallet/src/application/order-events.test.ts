@@ -40,17 +40,51 @@ describe('order events', () => {
     });
   });
 
-  it.each(['INSUFFICIENT_FUNDS', 'WALLET_NOT_FOUND', 'CURRENCY_MISMATCH', 'CONFLICT'] as const)(
-    'builds a valid OrderPaymentFailedV1 for %s',
-    (reason) => {
-      const message = orderPaymentFailedMessage(ctx, { orderId, reason });
-      expect(message).toMatchObject({
-        eventType: 'OrderPaymentFailedV1',
-        routingKey: 'order-payment-failed.v1',
-      });
-      const result = validateEvent('OrderPaymentFailedV1', JSON.parse(message.payload));
-      expect(result.ok).toBe(true);
-      if (result.ok) expect(result.event.reason).toBe(reason);
-    },
-  );
+  it('uses the supplied outbox id and occurredAt but keeps createdAt = now (replay)', () => {
+    const message = orderPaidMessage(
+      ctx,
+      {
+        orderId,
+        walletTransactionId: 'tx_1',
+        amount: Money.of(150000, 'VND'),
+        paidAt: new Date('2026-10-10T09:59:59.000Z'),
+      },
+      { outboxId: 'outbox-replay-1', occurredAt: new Date('2026-10-10T09:59:59.000Z') },
+    );
+    expect(message.id).toBe('outbox-replay-1');
+    expect(message.createdAt).toBe(ctx.now);
+    const payload = JSON.parse(message.payload) as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      eventId: ctx.eventId,
+      occurredAtUtc: '2026-10-10T09:59:59.000Z',
+    });
+    expect(validateEvent('OrderPaidV1', payload).ok).toBe(true);
+  });
+
+  it('defaults the outbox id to the event id', () => {
+    const message = orderPaidMessage(ctx, {
+      orderId,
+      walletTransactionId: 'tx_1',
+      amount: Money.of(1, 'VND'),
+      paidAt: ctx.now,
+    });
+    expect(message.id).toBe(ctx.eventId);
+  });
+
+  it.each([
+    'INSUFFICIENT_FUNDS',
+    'WALLET_NOT_FOUND',
+    'CURRENCY_MISMATCH',
+    'CONFLICT',
+    'WALLET_FROZEN',
+  ] as const)('builds a valid OrderPaymentFailedV1 for %s', (reason) => {
+    const message = orderPaymentFailedMessage(ctx, { orderId, reason });
+    expect(message).toMatchObject({
+      eventType: 'OrderPaymentFailedV1',
+      routingKey: 'order-payment-failed.v1',
+    });
+    const result = validateEvent('OrderPaymentFailedV1', JSON.parse(message.payload));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.event.reason).toBe(reason);
+  });
 });

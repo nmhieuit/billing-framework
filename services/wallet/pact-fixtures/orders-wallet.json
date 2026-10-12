@@ -71,7 +71,7 @@
             "matchers": [
               {
                 "match": "regex",
-                "regex": "^(INSUFFICIENT_FUNDS|WALLET_NOT_FOUND|CURRENCY_MISMATCH|CONFLICT)$"
+                "regex": "^(INSUFFICIENT_FUNDS|WALLET_NOT_FOUND|CURRENCY_MISMATCH|CONFLICT|WALLET_FROZEN)$"
               }
             ]
           }

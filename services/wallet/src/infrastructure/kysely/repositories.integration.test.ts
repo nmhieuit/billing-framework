@@ -1,4 +1,5 @@
 import { Money } from '@billing/money';
+import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DuplicateKeyError } from '../../application/errors.js';
 import { Account } from '../../domain/account.js';
@@ -72,6 +73,39 @@ describe('AccountRepository', () => {
   it('fails loudly when asked to lock an account that does not exist', async () => {
     const lock = h.uow.run(h.acme, ({ accounts }) => accounts.lockMany(['wallet:ghost']));
     await expect(lock).rejects.toThrow(/wallet:ghost/);
+  });
+});
+
+describe('AccountRepository freeze state', () => {
+  it('saves frozen state and reads it back through find and lockMany, then unfreezes to null', async () => {
+    await h.uow.run(h.acme, ({ accounts }) => accounts.insert(wallet('fz1')));
+    const at = new Date('2026-10-11T08:30:00.123Z');
+    await h.uow.run(h.acme, async ({ accounts }) => {
+      const [w] = await accounts.lockMany(['wallet:fz1']);
+      if (!w) throw new Error('missing');
+      await accounts.saveFrozen(w.freeze('ops1', 'fraud suspected', at));
+    });
+    const expected = { at, by: 'ops1', reason: 'fraud suspected' };
+    const found = await h.uow.run(h.acme, ({ accounts }) => accounts.find('wallet:fz1'));
+    expect(found?.toProps().frozen).toEqual(expected);
+    const locked = await h.uow.run(h.acme, ({ accounts }) => accounts.lockMany(['wallet:fz1']));
+    expect(locked[0]?.toProps().frozen).toEqual(expected);
+
+    await h.uow.run(h.acme, async ({ accounts }) => {
+      const [w] = await accounts.lockMany(['wallet:fz1']);
+      if (!w) throw new Error('missing');
+      await accounts.saveFrozen(w.unfreeze());
+    });
+    const after = await h.uow.run(h.acme, ({ accounts }) => accounts.find('wallet:fz1'));
+    expect(after?.toProps().frozen).toBeNull();
+    const raw = await sql<{
+      frozen_at: Date | null;
+      frozen_by: string | null;
+      frozen_reason: string | null;
+    }>`
+      select frozen_at, frozen_by, frozen_reason from ${sql.id('t_acme', 'accounts')}
+      where id = ${'wallet:fz1'}`.execute(h.db);
+    expect(raw.rows[0]).toEqual({ frozen_at: null, frozen_by: null, frozen_reason: null });
   });
 });
 
@@ -272,5 +306,80 @@ describe('TenantUnitOfWork', () => {
     });
     await expect(failing).rejects.toThrow('boom');
     expect(await h.uow.run(h.acme, ({ accounts }) => accounts.find('wallet:rollback'))).toBeNull();
+  });
+});
+
+describe('LedgerRepository findTransaction and reversals', () => {
+  const topup = (id: string, topupId: string, amount: number) =>
+    LedgerTransaction.topup({
+      id,
+      topupId,
+      walletAccountId: 'wallet:rv1',
+      gatewayAccountId: 'system:GATEWAY:VND',
+      amount: Money.of(amount, 'VND'),
+      now: t0,
+    });
+
+  it('finds a transaction with its entries and currencies, or null', async () => {
+    await h.uow.run(h.acme, ({ accounts }) => accounts.insert(wallet('rv1')));
+    await h.uow.run(h.acme, ({ ledger }) => ledger.post(topup('tx_rv1', 'tp_rv1', 250)));
+    const found = await h.uow.run(h.acme, ({ ledger }) => ledger.findTransaction('tx_rv1'));
+    expect(found?.id).toBe('tx_rv1');
+    expect(found?.kind).toBe('TOPUP');
+    const byAccount = Object.fromEntries(
+      (found?.entries ?? []).map((e) => [e.accountId, e.amount.amount]),
+    );
+    expect(byAccount).toEqual({ 'wallet:rv1': 250, 'system:GATEWAY:VND': -250 });
+    expect(found?.entries.every((e) => e.amount.currency === 'VND')).toBe(true);
+    expect(await h.uow.run(h.acme, ({ ledger }) => ledger.findTransaction('nope'))).toBeNull();
+  });
+
+  it('reports the reversal of a transaction once posted, and refuses a second reversal', async () => {
+    await h.uow.run(h.acme, ({ ledger }) => ledger.post(topup('tx_rv2', 'tp_rv2', 90)));
+    expect(await h.uow.run(h.acme, ({ ledger }) => ledger.findReversalOf('tx_rv2'))).toBeNull();
+    const reverse = (id: string) =>
+      h.uow.run(h.acme, async ({ ledger }) => {
+        const original = await ledger.findTransaction('tx_rv2');
+        if (!original) throw new Error('missing original');
+        await ledger.post(LedgerTransaction.reversal({ id, original, now: t0 }));
+      });
+    await reverse('tx_rv2_rev');
+    expect(await h.uow.run(h.acme, ({ ledger }) => ledger.findReversalOf('tx_rv2'))).toBe(
+      'tx_rv2_rev',
+    );
+    const stored = await h.uow.run(h.acme, ({ ledger }) => ledger.findTransaction('tx_rv2_rev'));
+    expect(stored?.kind).toBe('REVERSAL');
+    // Khóa nghiệp vụ khác hẳn, nên chỉ unique index trên reverses_transaction_id có thể chặn.
+    const distinctKey = h.uow.run(h.acme, async ({ ledger }) => {
+      const original = await ledger.findTransaction('tx_rv2');
+      if (!original) throw new Error('missing original');
+      await ledger.post(
+        LedgerTransaction.create({
+          id: 'tx_rv2_rev3',
+          businessKey: 'reversal:other-key',
+          kind: 'REVERSAL',
+          entries: original.entries.map((e) => ({
+            accountId: e.accountId,
+            amount: e.amount.negate(),
+          })),
+          reverses: original.id,
+          now: t0,
+        }),
+      );
+    });
+    await expect(distinctKey).rejects.toSatisfy(
+      (error: unknown) => error instanceof DuplicateKeyError && error.source === 'ledger',
+    );
+    await expect(reverse('tx_rv2_rev2')).rejects.toSatisfy(
+      (error: unknown) => error instanceof DuplicateKeyError && error.source === 'ledger',
+    );
+  });
+
+  it('keeps reverses_transaction_id null for ordinary transactions', async () => {
+    await h.uow.run(h.acme, ({ ledger }) => ledger.post(topup('tx_rv3', 'tp_rv3', 10)));
+    const rows = await sql<{ reverses_transaction_id: string | null }>`
+      select reverses_transaction_id from ${sql.id('t_acme', 'ledger_transactions')}
+      where id = ${'tx_rv3'}`.execute(h.db);
+    expect(rows.rows[0]?.reverses_transaction_id).toBeNull();
   });
 });

@@ -37,7 +37,7 @@ export class DuplicateKeyError extends Error {
   /** Nơi phát sinh trùng khóa, để use case phân biệt (vd. inbox: bình thường; sổ cái: bất thường). */
   constructor(
     message: string,
-    readonly source?: 'inbox' | 'ledger' | 'order_payment',
+    readonly source?: 'inbox' | 'ledger' | 'order_payment' | 'ops_action',
   ) {
     super(message);
   }
@@ -64,4 +64,41 @@ export class ReconciliationItemNotFoundError extends Error {
 /** Ca đã được đóng với giá trị khác. */
 export class ReconciliationConflictError extends Error {
   override name = 'ReconciliationConflictError';
+}
+
+/** Khóa idempotency của thao tác vận hành đã dùng cho một yêu cầu khác. */
+export class OpsIdempotencyConflictError extends Error {
+  override name = 'OpsIdempotencyConflictError';
+}
+
+export class TransactionNotFoundError extends Error {
+  override name = 'TransactionNotFoundError';
+}
+
+export class OrderNotFoundError extends Error {
+  override name = 'OrderNotFoundError';
+}
+
+/** Giao dịch đã bị đảo trước đó. */
+export class AlreadyReversedError extends Error {
+  override name = 'AlreadyReversedError';
+}
+
+/** Loại giao dịch này không cho phép đảo. */
+export class ReversalNotSupportedError extends Error {
+  override name = 'ReversalNotSupportedError';
+}
+
+/** Không thể đảo vì số dư các tài khoản hiện tại không cho phép. */
+export class ReversalNotPossibleError extends Error {
+  override name = 'ReversalNotPossibleError';
+}
+
+/** Đơn gắn với giao dịch đã bị đảo. */
+export class OrderReversedError extends Error {
+  override name = 'OrderReversedError';
+}
+
+export class EventIdUnknownError extends Error {
+  override name = 'EventIdUnknownError';
 }

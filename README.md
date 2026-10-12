@@ -40,6 +40,15 @@ Kibana: <http://localhost:15601> (Rules, tag `billing`; Dashboards, "Billing: v�
 [`docs/ops/kibana-alerts-and-dashboard.vi.md`](docs/ops/kibana-alerts-and-dashboard.vi.md) (bảng tham số, quy trình đổi),
 [ADR-0011](docs/adr/0011-otel-metrics-and-generated-kibana-rules.vi.md).
 
+## Công cụ vận hành (ops)
+
+Wallet có nhóm API `/ops/...` cho người vận hành: đóng/mở băng ví, điều chỉnh số dư, đảo một giao dịch (`ORDER_PAYMENT`/`ADJUSTMENT`) và
+phát lại `OrderPaidV1`. Mọi thao tác bắt buộc có `reason` và `idempotencyKey`, chạy trong cùng transaction với một dòng nhật ký
+`ops_actions` chỉ thêm. Danh tính lấy từ header gateway `x-actor-id` và `x-actor-role: OPS` (gateway phải xóa `x-actor-*` do client gửi);
+**chỉ dành cho mạng vận hành**, không đưa vào route hướng khách. Ví đóng băng từ chối trả order bằng `OrderPaymentFailedV1(WALLET_FROZEN)`.
+Hướng dẫn, ví dụ `curl` và mã lỗi: [`docs/ops/ops-tools.vi.md`](docs/ops/ops-tools.vi.md); quyết định:
+[ADR-0013](docs/adr/0013-ops-tools-audited-actions.vi.md).
+
 ## Dọn dữ liệu (retention)
 
 Wallet và payment mỗi service có một job nền xóa định kỳ dữ liệu đã hết giá trị: outbox `SENT` (14 ngày), `processed_messages`
