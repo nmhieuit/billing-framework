@@ -103,7 +103,8 @@ trong payload, không theo `messageId` AMQP**.
 
 - **Idempotency theo `orderId`:** gửi lại cùng `orderId` với cùng khách, số tiền, đồng tiền thì wallet **không trừ thêm** và phát
   lại `OrderPaidV1` với đúng `walletTransactionId` cũ (`eventId` mới, vì đây là một lần xử lý mới; khác với phát lại do vận hành bên dưới). Cùng `orderId` nhưng khác khách/số tiền/đồng tiền →
-  `OrderPaymentFailedV1(CONFLICT)`, không trừ tiền, wallet ghi cảnh báo.
+  `OrderPaymentFailedV1(CONFLICT)`, không trừ tiền, wallet ghi cảnh báo. Cùng `orderId` mà khoản trả **đã bị vận hành đảo** cũng bị
+  từ chối bằng `CONFLICT` (không trừ tiền, không phát lại `OrderPaidV1`); Orders đã bỏ qua thất bại của order đang `Paid`.
 - **Phát lại `OrderPaidV1` do vận hành:** nếu Orders mất sự kiện, người vận hành gọi `POST /ops/orders/{orderId}/replay-paid`. Sự kiện
   phát lại giữ **nguyên `eventId` và `occurredAtUtc` gốc** (nên bỏ qua được nếu đã xử lý) nhưng có `messageId` AMQP mới và
   `correlationId = ops-replay:<id thao tác>`. Chỉ phát lại cho order đã trả và chưa bị đảo.
@@ -132,6 +133,9 @@ exchange này và trỏ endpoint tới `orders.events`/`ecommerce.*` đã khai b
 Hai chiều: `wallet` là consumer của `OrderReadyForPaymentV1` (provider `orders`), `orders` là consumer của `OrderPaidV1` và
 `OrderPaymentFailedV1` (provider `wallet`). Pact message, spec 3.0.0 (PactNet 5 đọc được). Pact mẫu phía `orders` để tham khảo:
 `services/wallet/pact-fixtures/orders-wallet.json`. Cách chạy broker và publish/verify: `docs/integration/pact-broker.vi.md`.
+
+> File mẫu đó do **billing** viết. Việc billing nới regex `reason` để chấp nhận `WALLET_FROZEN` **không chứng minh** pact thật của
+> Orders hay enum C# của họ chấp nhận giá trị này: Orders phải tự nới pact và enum của họ.
 
 ## Đối soát Wallet ↔ Orders
 

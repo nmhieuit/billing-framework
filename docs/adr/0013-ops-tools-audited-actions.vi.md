@@ -17,12 +17,15 @@ tiền bạc đã có.
 - **Nhật ký `ops_actions` chỉ thêm, kiêm bảng idempotency.** Mỗi thao tác đổi trạng thái ghi một dòng trong **cùng transaction** với
   thay đổi; trigger `instead of update, delete` chặn sửa/xóa. `idempotency_key` là unique trong tenant, kèm `fingerprint` (SHA-256 của
   thao tác, đối tượng và tham số): cùng khóa cùng nội dung thì trả lại `result` đã lưu, khác nội dung thì `409 IDEMPOTENCY_CONFLICT`;
-  va chạm unique khi chạy song song được thử lại một lần (như `PayOrder`). Thao tác no-op (đã đúng trạng thái đóng băng) không ghi.
+  các lần gọi song song cùng khóa được tuần tự hóa bằng khóa ứng dụng `sp_getapplock` (mức transaction, lấy trước `find` và trước mọi
+  khóa tài khoản) nên bên đến sau nhận đúng kết quả đã lưu của bên thắng; va chạm unique còn lại được thử lại một lần như chốt chặn
+  phụ. Dấu vân tay không gồm `reason`/`actor`. Thao tác no-op (đã đúng trạng thái đóng băng) không ghi.
   Danh sách phân trang theo `seq` (identity), không theo `created_at`, nên thứ tự ổn định và không cần thêm chỉ mục thời gian.
 - **Điều chỉnh có đối ứng tài khoản hệ thống `ADJUSTMENT`; đảo bằng giao dịch đối nghịch.** `ADJUSTMENT` là giao dịch hai dòng giữa
   ví và `system:ADJUSTMENT:<cur>` (số dư không ràng buộc dấu); `REVERSAL` là giao dịch mới đảo dấu từng dòng của giao dịch gốc và
   trỏ về nó bằng `reverses_transaction_id` (chỉ mục unique có lọc: mỗi giao dịch chỉ bị đảo một lần). Sổ cái vẫn chỉ thêm và vẫn cân.
-  Chỉ `ORDER_PAYMENT` và `ADJUSTMENT` đảo được.
+  Chỉ `ORDER_PAYMENT` và `ADJUSTMENT` đảo được. Dòng `order_payments` của order bị đảo được giữ; `OrderReadyForPaymentV1` giao lại của
+  order đó bị từ chối với lý do `CONFLICT` (không ghi nợ, không phát lại `OrderPaidV1`); Orders đã bỏ qua thất bại của order `Paid`.
 - **Đóng băng chỉ chặn ghi nợ khi trả order.** Sau khi khóa ví, `PayOrder` thấy `frozen_at` thì từ chối bằng
   `OrderPaymentFailedV1(WALLET_FROZEN)` (sau nhánh "đã trả" nên order đã trả vẫn phát lại được). Nạp tiền, điều chỉnh và đảo vẫn chạy.
 - **Phát lại giữ nguyên `eventId` nhờ `order_payments.paid_event_id`.** Cột này lưu `eventId` của `OrderPaidV1` ban đầu (outbox gốc có

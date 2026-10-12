@@ -29,7 +29,7 @@ Danh sách migration tenant ghim trong các test (provisioning, orders-migration
 
 ## 3. Hành vi
 
-**Idempotency chung (`OpsActionRecorder`).** Trong transaction: tìm `ops_actions` theo `idempotency_key`; có và cùng `fingerprint` → trả lại `result` cũ (không làm gì thêm); có nhưng khác `fingerprint` → 409 `IDEMPOTENCY_CONFLICT`; chưa có → thực hiện, ghi `ops_actions` cùng transaction. Va chạm unique do chạy song song được thử lại một lần như `PayOrder` xử lý `DuplicateKeyError`. Hai thao tác no-op (freeze ví đã đóng băng, unfreeze ví đang mở) trả 200 `changed:false` và **không** ghi `ops_actions`. Trong metric, `outcome = noop` gộp cả hai trường hợp này lẫn gọi lại cùng khóa cùng nội dung (phát lại kết quả cũ).
+**Idempotency chung (`OpsActionRecorder`).** Trong transaction: tìm `ops_actions` theo `idempotency_key`; có và cùng `fingerprint` → trả lại `result` cũ (không làm gì thêm); có nhưng khác `fingerprint` → 409 `IDEMPOTENCY_CONFLICT`; chưa có → thực hiện, ghi `ops_actions` cùng transaction. Các lần gọi song song cùng khóa được tuần tự hóa bằng `sp_getapplock` (Exclusive, mức transaction, chờ 10 giây, lấy ngay sau khi kiểm tra đầu vào và trước `find` cũng như trước mọi khóa tài khoản): bên đến sau thấy bản ghi của bên thắng và trả đúng kết quả đã lưu. Va chạm unique còn sót được thử lại một lần như `PayOrder` xử lý `DuplicateKeyError` (chốt chặn phụ). Dấu vân tay không gồm `reason` và `actor`. Hai thao tác no-op (freeze ví đã đóng băng, unfreeze ví đang mở) trả 200 `changed:false` và **không** ghi `ops_actions`. Trong metric, `outcome = noop` gộp cả hai trường hợp này lẫn gọi lại cùng khóa cùng nội dung (phát lại kết quả cũ).
 
 **Freeze / unfreeze.** `POST /ops/wallets/{customerId}/freeze` và `/unfreeze`, body `{reason, idempotencyKey}`. Ví không tồn tại → 404 `WALLET_NOT_FOUND`.
 
@@ -40,7 +40,7 @@ Danh sách migration tenant ghim trong các test (provisioning, orders-migration
 - `ADJUSTMENT`: làm ngược bút toán gốc; ví không đủ tiền → 409 `INSUFFICIENT_FUNDS`.
 - Đã bị đảo → 409 `ALREADY_REVERSED` (chỉ mục unique là chốt chặn cuối khi chạy song song).
 - Không tồn tại → 404 `TRANSACTION_NOT_FOUND`.
-- Dòng `order_payments` của order bị đảo **giữ nguyên**: `OrderReadyForPaymentV1` giao lại vẫn ra "đã trả", không ghi nợ thêm.
+- Dòng `order_payments` của order bị đảo **giữ nguyên**, nhưng `OrderReadyForPaymentV1` của order đó giao lại bị từ chối với lý do `CONFLICT` (nhánh "đã trả" của `PayOrder` thấy giao dịch đảo): không ghi nợ thêm, không phát lại `OrderPaidV1`, có log cảnh báo. Orders đã bỏ qua thất bại của order đang `Paid`.
 
 **Phát lại `OrderPaidV1`.** `POST /ops/orders/{orderId}/replay-paid`, body `{reason, idempotencyKey}`. Đọc `order_payments`; không có → 404 `ORDER_NOT_FOUND`; giao dịch thanh toán đã bị đảo → 409 `ORDER_REVERSED`; `paid_event_id` null → 409 `EVENT_ID_UNKNOWN`. Ngược lại ghi **một dòng outbox mới** với `outbox.id` mới nhưng payload dựng từ `order_payments` (`eventId = paid_event_id`, `orderId`, `walletTransactionId`, `amount`, `currency`, `paidAtUtc = paid_at`, `occurredAtUtc = paid_at`, `correlationId = ops-replay:<ops_action_id>`). Bên nhận khử trùng theo `eventId` nên an toàn; đây là cách đưa lại sự kiện bị mất mà không làm lệch sổ cái. Trả 202 `{eventId}`.
 
@@ -86,6 +86,7 @@ Counter `billing.ops.actions{tenant, action, outcome}` với `outcome` là `ok` 
 - **Phân trang nhật ký theo `seq`, không theo `created_at`**: bảng có cột identity `seq`; `cursor` là `seq`, sắp xếp giảm dần theo `seq`, không có chỉ mục `created_at` (mục 2, 3).
 - **Metric `noop`** bao gồm cả "đã đúng trạng thái" (freeze/unfreeze) lẫn "gọi lại idempotent" (mục 5).
 - **Phát lại khóa hàng ví của khách** (cùng hàng `ReverseTransaction` giữ cho `ORDER_PAYMENT`) trước khi kiểm tra đã-đảo, nên phát lại và đảo của cùng order được tuần tự hóa: phát lại chờ đảo commit rồi bị từ chối `ORDER_REVERSED`.
+- **Lỗi HTTP:** `INSUFFICIENT_FUNDS` và `REVERSAL_NOT_POSSIBLE` trả thông điệp cố định (không lộ id tài khoản nội bộ); `InvalidLedgerTransactionError` không còn ánh xạ sang 422 vì đầu vào ops được kiểm tra trước khi dựng bút toán (nếu xảy ra là lỗi 500 và được log).
 - **`messageId` AMQP của bản phát lại là id outbox mới**, khác `eventId` (giữ nguyên trong payload); consumer khử trùng theo `eventId` ([orders-handoff](../../integration/orders-handoff.vi.md)).
 - **`INSUFFICIENT_FUNDS` cũng áp dụng khi đảo `ADJUSTMENT CREDIT`** mà ví đã tiêu mất (không chỉ `DEBIT`); `REVERSAL_NOT_POSSIBLE` chỉ nói về tài khoản đối ứng (MERCHANT).
 - `occurredAtUtc` của bản phát lại bằng `paidAtUtc` gốc; `correlationId = ops-replay:<actionId>`.

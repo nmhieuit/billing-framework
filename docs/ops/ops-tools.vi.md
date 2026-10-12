@@ -46,10 +46,15 @@ Quy tắc chung cho các `POST`:
 ### Idempotency
 
 - Cùng `idempotencyKey` và **cùng nội dung** (cùng thao tác, đối tượng, tham số) gửi lại thì trả lại **đúng kết quả cũ**, không làm
-  gì thêm. Mã HTTP vẫn là mã thành công của thao tác đó (ví dụ `201` cho điều chỉnh). `reason` không nằm trong dấu vân tay.
+  gì thêm. Mã HTTP vẫn là mã thành công của thao tác đó (ví dụ `201` cho điều chỉnh). Dấu vân tay chỉ gồm thao tác, đối tượng và
+  tham số; **`reason` và `actor` không nằm trong đó**. Vì vậy một người vận hành khác gửi cùng khóa và cùng tham số sẽ nhận kết quả
+  của lần đầu và **không** có dòng kiểm toán mới (dòng cũ vẫn ghi người và lý do của lần đầu).
 - Cùng `idempotencyKey` nhưng **khác** thao tác/đối tượng/tham số: `409 IDEMPOTENCY_CONFLICT`.
 - Thao tác lỗi (4xx) rollback hết và **không giữ khóa**, nên sửa yêu cầu rồi gửi lại với cùng khóa là hợp lệ.
-- Hai yêu cầu cùng khóa đến song song chỉ tạo một kết quả: bên thua được chạy lại một lần và nhận kết quả của bên thắng.
+- Hai yêu cầu cùng khóa đến song song được **tuần tự hóa theo khóa** (khóa ứng dụng `sp_getapplock` mức transaction, chờ tối đa 10 giây,
+  lấy trước mọi khóa tài khoản nên không deadlock): bên đến sau chờ bên đầu commit rồi nhận **đúng kết quả đã lưu của bên thắng**
+  (kể cả `changed: true` của đóng băng và cùng `actionId`), chỉ có một giao dịch/dòng kiểm toán. Chốt chặn cuối là khóa unique của
+  `ops_actions` (bên thua được chạy lại một lần). Hết thời gian chờ khóa là `500`, gửi lại cùng khóa là an toàn.
 - Đóng băng ví đã đóng băng (hoặc mở băng ví đang mở) là **no-op**: trả `200` với `changed: false` và **không ghi `ops_actions`**
   (nên cũng không giữ khóa).
 - Khóa chỉ có nghĩa trong một tenant; cùng khóa ở tenant khác không va chạm.
@@ -107,7 +112,9 @@ curl -s -X POST localhost:3001/ops/transactions/tx_5b1d0c1c8a3f4e6f9a7b2c4d6e8f0
 # 201 {"transactionId":"tx_...","reversesTransactionId":"tx_5b1d...","actionId":"..."}
 ```
 
-Dòng `order_payments` của order bị đảo **được giữ nguyên**: `OrderReadyForPaymentV1` giao lại vẫn ra "đã trả" và không ghi nợ thêm.
+Dòng `order_payments` của order bị đảo **được giữ nguyên**, nhưng `OrderReadyForPaymentV1` của order đó giao lại sẽ bị **từ chối** với
+`OrderPaymentFailedV1(CONFLICT)`: không ghi nợ thêm và không phát lại `OrderPaidV1` (wallet ghi một cảnh báo). Orders đã bỏ qua
+thất bại của order đang ở trạng thái `Paid`.
 
 Lỗi có thể gặp: `404 TRANSACTION_NOT_FOUND`, `409 ALREADY_REVERSED`, `409 REVERSAL_NOT_SUPPORTED` (loại `TOPUP` hoặc `REVERSAL`),
 `409 REVERSAL_NOT_POSSIBLE`, `409 INSUFFICIENT_FUNDS` (xem bảng dưới).
@@ -148,7 +155,7 @@ dấu vân tay hay `result`. Route này cũng đòi `x-actor-id` và role `OPS`.
 | Mã HTTP | Mã lỗi (`error.code`)     | Khi nào                                                                                                   |
 | ------- | ------------------------- | --------------------------------------------------------------------------------------------------------- |
 | 400     | `MISSING_TENANT`          | thiếu `x-tenant-id`                                                                                       |
-| 400     | `INVALID_REQUEST`         | body không phải đối tượng JSON                                                                            |
+| 400     | `INVALID_REQUEST`         | body không phải đối tượng JSON, hoặc `customerId` trên đường dẫn sai định dạng                            |
 | 400     | `INVALID_QUERY`           | `limit`/`cursor` sai hoặc lặp                                                                             |
 | 401     | `MISSING_ACTOR`           | thiếu `x-actor-id`                                                                                        |
 | 403     | `FORBIDDEN_ROLE`          | `x-actor-role` khác `OPS`                                                                                 |
@@ -237,9 +244,19 @@ FROM t_acme.accounts WHERE frozen_at IS NOT NULL;
   `ORDER_PAYMENT`) trước khi kiểm tra khoản trả đã bị đảo chưa. Nếu một `reversals` của chính order đó đang chạy, phát lại chờ nó
   commit rồi bị từ chối `ORDER_REVERSED`, nên không có chuyện `OrderPaidV1` được xếp hàng cho một khoản vừa bị đảo.
 - **Đóng băng chỉ chặn ghi nợ do trả order.** Nạp tiền, điều chỉnh và đảo vẫn chạy trên ví đóng băng.
-- **Cần Orders triển khai trước khi bật freeze ở môi trường dùng chung:** `WALLET_FROZEN` là lý do mới của `OrderPaymentFailedV1`
-  (xem [orders-handoff](../integration/orders-handoff.vi.md)).
+- **Cần Orders triển khai trước khi người vận hành dùng freeze ở môi trường dùng chung:** `WALLET_FROZEN` là lý do mới của
+  `OrderPaymentFailedV1` (xem [orders-handoff](../integration/orders-handoff.vi.md)). **Không có công tắc bật/tắt**: ngay khi image
+  mới chạy, route `/ops/...` dùng được và một lệnh `freeze` là bắt đầu phát `WALLET_FROZEN`.
 - Tin gateway về header actor (xem trên); `ops_actions.actor` chỉ đáng tin bằng gateway.
+
+## Triển khai và rollback
+
+- **Triển khai:** chạy `db:migrate:wallet` (migration `007-ops-tools`) **trước** khi chạy image mới; wallet kiểm tra `assertMigrated`
+  lúc khởi động nên image mới không lên được nếu schema chưa có 007. Migration chưa phát hành nên đã được sửa tại chỗ; môi trường đã
+  chạy bản cũ không cần chạy lại (chỉ khác cách backfill, không khác schema).
+- **Rollback code sau khi đã chạy 007 là an toàn** (code cũ bỏ qua cột và tài khoản mới), nhưng: (1) đóng băng **không còn được áp dụng**
+  (code cũ không biết `frozen_at`, ví đang đóng băng trả order bình thường); (2) order được trả trong thời gian rollback có
+  `paid_event_id` = null nên `replay-paid` cho chúng trả `409 EVENT_ID_UNKNOWN`. Không cần rollback schema.
 
 ## Metric `billing.ops.actions`
 
