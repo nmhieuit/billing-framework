@@ -11,14 +11,18 @@ export interface EventContext {
 
 export type PaymentFailureReason = OrderPaymentFailedV1['reason'];
 
-/** Dựng dòng outbox cho `OrderPaidV1`; payload đúng schema đã phát hành. */
+/**
+ * Dựng dòng outbox cho `OrderPaidV1`; payload đúng schema đã phát hành.
+ * Phát lại (replay) dùng `outboxId` mới nhưng giữ nguyên `eventId` và `occurredAt` của sự kiện gốc.
+ */
 export function orderPaidMessage(
   ctx: EventContext,
   input: { orderId: string; walletTransactionId: string; amount: Money; paidAt: Date },
+  options: { outboxId?: string; occurredAt?: Date } = {},
 ): NewOutboxMessage {
   const payload: OrderPaidV1 = {
     eventId: ctx.eventId,
-    occurredAtUtc: ctx.now.toISOString(),
+    occurredAtUtc: (options.occurredAt ?? ctx.now).toISOString(),
     tenantId: ctx.tenantId,
     correlationId: ctx.correlationId,
     orderId: input.orderId,
@@ -28,7 +32,7 @@ export function orderPaidMessage(
     paidAtUtc: input.paidAt.toISOString(),
   };
   return {
-    id: ctx.eventId,
+    id: options.outboxId ?? ctx.eventId,
     eventType: 'OrderPaidV1',
     routingKey: eventCatalog.OrderPaidV1.routingKey,
     payload: JSON.stringify(payload),
