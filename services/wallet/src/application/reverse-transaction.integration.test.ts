@@ -228,6 +228,8 @@ describe('ReverseTransaction', () => {
     await fundWallet(h, { customer, amount: 100000 });
     const { transactionId } = await payOrder(customer);
     const merchantBefore = await balance('system:MERCHANT:VND');
+    const countBefore = await txCount();
+    const key = `rv-nomerchant-${++counter}`;
     // Mô phỏng MERCHANT đã bị rút bớt; khôi phục ngay sau để bất biến sổ cái còn đúng.
     await h.db
       .withSchema(schema(h.acme))
@@ -236,9 +238,9 @@ describe('ReverseTransaction', () => {
       .where('id', '=', 'system:MERCHANT:VND')
       .execute();
     try {
-      await expect(reverse.execute(request(transactionId))).rejects.toBeInstanceOf(
-        ReversalNotPossibleError,
-      );
+      await expect(
+        reverse.execute(request(transactionId, { idempotencyKey: key })),
+      ).rejects.toBeInstanceOf(ReversalNotPossibleError);
     } finally {
       await h.db
         .withSchema(schema(h.acme))
@@ -248,6 +250,32 @@ describe('ReverseTransaction', () => {
         .execute();
     }
     expect(await balance(`wallet:${customer}`)).toBe(50000);
+    expect(await txCount()).toBe(countBefore);
+    const audit = await h.db
+      .withSchema(schema(h.acme))
+      .selectFrom('ops_actions')
+      .select('id')
+      .where('idempotency_key', '=', key)
+      .execute();
+    expect(audit).toHaveLength(0);
+  });
+
+  it('reverses an adjustment debit: the wallet is credited back', async () => {
+    const customer = newCustomer();
+    await fundWallet(h, { customer, amount: 100000 });
+    const debit = await adjust.execute({
+      tenant: h.acme,
+      customerId: customer,
+      direction: 'DEBIT',
+      amount: 30000,
+      currency: 'VND',
+      actor: 'op@x',
+      reason: 'chargeback',
+      idempotencyKey: `rv-adj-${++counter}`,
+    });
+    expect(await balance(`wallet:${customer}`)).toBe(70000);
+    await reverse.execute(request(debit.transactionId));
+    expect(await balance(`wallet:${customer}`)).toBe(100000);
   });
 
   it('does not support reversing a top-up or a reversal', async () => {
@@ -304,11 +332,23 @@ describe('ReverseTransaction', () => {
     expect(await balance(`wallet:${customer}`)).toBe(100000);
   });
 
-  it('keeps PayOrder idempotent for a reversed order: REPLAYED and no new debit', async () => {
+  it('rejects a re-delivered order of a reversed payment with CONFLICT: no new OrderPaidV1 and no new debit', async () => {
     const customer = newCustomer();
     await fundWallet(h, { customer, amount: 100000 });
     const { orderId, transactionId } = await payOrder(customer);
     await reverse.execute(request(transactionId));
+    const paidEvents = async () =>
+      (
+        await h.db
+          .withSchema(schema(h.acme))
+          .selectFrom('outbox')
+          .select('id')
+          .where('event_type', '=', 'OrderPaidV1')
+          .where('payload', 'like', `%${orderId}%`)
+          .execute()
+      ).length;
+    const paidBefore = await paidEvents();
+    const countBefore = await txCount();
     const outcome = await pay.execute({
       tenant: h.acme,
       eventId: randomUUID(),
@@ -318,7 +358,9 @@ describe('ReverseTransaction', () => {
       amount: 50000,
       currency: 'VND',
     });
-    expect(outcome).toEqual({ kind: 'REPLAYED', walletTransactionId: transactionId });
+    expect(outcome).toEqual({ kind: 'REJECTED', reason: 'CONFLICT' });
     expect(await balance(`wallet:${customer}`)).toBe(100000);
+    expect(await txCount()).toBe(countBefore);
+    expect(await paidEvents()).toBe(paidBefore);
   });
 });

@@ -16,6 +16,7 @@ import { FreezeWallet } from './freeze-wallet.js';
 import { OpsActionRecorder } from './ops-recorder.js';
 import { PayOrder, type PayOrderInput } from './pay-order.js';
 import type { Logger } from './ports.js';
+import { ReverseTransaction } from './reverse-transaction.js';
 
 let h: Harness;
 let pay: PayOrder;
@@ -461,5 +462,44 @@ describe('PayOrder — atomicity', () => {
     expect(await outboxFor(input.orderId)).toHaveLength(0);
     expect((await pay.execute(input)).kind).toBe('PAID');
     expect(await balance(h.acme, `wallet:${customer}`)).toBe(50000);
+  });
+});
+
+describe('PayOrder — reversed order', () => {
+  it('rejects a re-delivered order whose payment was reversed with CONFLICT: warn logged, no debit, no new OrderPaidV1', async () => {
+    const recorder = new OpsActionRecorder({
+      uow: h.uow,
+      clock: h.clock,
+      ids: h.ids,
+      log: silentLogger,
+      metrics: new RecordingMetrics(),
+    });
+    const customer = newCustomer();
+    await fundWallet(h, { customer, amount: 100000 });
+    const first = order(customer);
+    const paid = await pay.execute(first);
+    if (paid.kind !== 'PAID') throw new Error('order not paid');
+    await new ReverseTransaction({ recorder, ids: h.ids }).execute({
+      tenant: h.acme,
+      transactionId: paid.walletTransactionId,
+      actor: 'op@x',
+      reason: 'refund',
+      idempotencyKey: `pr-rev-${++counter}`,
+    });
+    const paidEvents = async () =>
+      (await outboxFor(first.orderId)).filter((row) => row.event_type === 'OrderPaidV1').length;
+    const paidBefore = await paidEvents();
+    const ledgerBefore = (await ledgerFor(first.orderId)).length;
+    warnings.length = 0;
+
+    const redelivered = { ...first, eventId: randomUUID() };
+    expect(await pay.execute(redelivered)).toEqual({ kind: 'REJECTED', reason: 'CONFLICT' });
+
+    expect(await balance(h.acme, `wallet:${customer}`)).toBe(100000);
+    expect((await ledgerFor(first.orderId)).length).toBe(ledgerBefore);
+    expect(await paidEvents()).toBe(paidBefore);
+    expect(warnings).toEqual([
+      { tenantId: 'acme', orderId: first.orderId, eventId: redelivered.eventId },
+    ]);
   });
 });

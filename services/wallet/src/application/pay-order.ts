@@ -97,6 +97,15 @@ export class PayOrder {
         );
         return reject('CONFLICT');
       }
+      // Khoản trả đã bị vận hành đảo: không phát lại OrderPaidV1 (Orders sẽ coi đơn là đã trả) và cũng không ghi nợ lại.
+      // Từ chối bằng CONFLICT; Orders đã bỏ qua thất bại với đơn ở trạng thái Paid.
+      if ((await ledger.findReversalOf(paid.walletTransactionId)) !== null) {
+        this.deps.log.warn(
+          { tenantId: input.tenant.value, orderId: input.orderId, eventId: input.eventId },
+          'order payment was reversed; refusing re-delivered order',
+        );
+        return reject('CONFLICT');
+      }
       await outbox.add(
         orderPaidMessage(context(), {
           orderId: input.orderId,

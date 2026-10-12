@@ -198,6 +198,21 @@ describe('ReplayOrderPaid', () => {
     });
     await holding;
 
+    // Số yêu cầu đang bị chặn trong DB của schema này (đọc từ DMV, không dùng sleep cố định để quyết định đậu/rớt).
+    const blockedCount = async (): Promise<number> => {
+      const rows = await sql<{ n: number }>`
+        select count(*) as n from sys.dm_exec_requests r
+        cross apply sys.dm_exec_sql_text(r.sql_handle) t
+        where r.blocking_session_id <> 0 and t.text like ${`%${schema(h.acme)}%`}`.execute(h.db);
+      return Number(rows.rows[0]?.n ?? 0);
+    };
+    const waitBlocked = async (atLeast: number, stop: () => boolean): Promise<void> => {
+      const deadline = Date.now() + 15000;
+      while (!stop() && Date.now() < deadline && (await blockedCount()) < atLeast) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    };
+
     const reversal = reverse.execute({
       tenant: h.acme,
       transactionId,
@@ -205,6 +220,11 @@ describe('ReplayOrderPaid', () => {
       reason: 'refund',
       idempotencyKey: `rp-race-${++counter}`,
     });
+    // Đảo xếp hàng chờ khóa ví TRƯỚC, rồi mới phát lại: nếu phát lại cũng xếp hàng phía sau thì nó sẽ thấy giao dịch đảo.
+    await waitBlocked(1, () => false);
+    const reversalBlocked = await blockedCount();
+    if (reversalBlocked < 1) release();
+    expect(reversalBlocked).toBeGreaterThanOrEqual(1);
     let replaySettled = false;
     const replaying = replay
       .execute(request(orderId))
@@ -217,17 +237,7 @@ describe('ReplayOrderPaid', () => {
       });
 
     // Chờ (có hạn) cho tới khi cả hai yêu cầu cùng bị chặn trong DB, hoặc replay đã xong sớm (tức là không bị khóa).
-    const blockedCount = async (): Promise<number> => {
-      const rows = await sql<{ n: number }>`
-        select count(*) as n from sys.dm_exec_requests r
-        cross apply sys.dm_exec_sql_text(r.sql_handle) t
-        where r.blocking_session_id <> 0 and t.text like ${`%${schema(h.acme)}%`}`.execute(h.db);
-      return Number(rows.rows[0]?.n ?? 0);
-    };
-    const deadline = Date.now() + 15000;
-    while (!replaySettled && Date.now() < deadline && (await blockedCount()) < 2) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitBlocked(2, () => replaySettled);
     const stillPending = !replaySettled;
     release();
     await hold;
