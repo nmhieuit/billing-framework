@@ -1,4 +1,4 @@
-﻿import { sql, type Kysely, type RawBuilder } from 'kysely';
+import { sql, type Kysely, type RawBuilder } from 'kysely';
 import { adminQuery, type System } from './system-harness.js';
 
 /**
@@ -10,6 +10,23 @@ import { adminQuery, type System } from './system-harness.js';
  *    vừa bị killSessions giết); không có nhánh nào coi lỗi là "đạt".
  *  - Hệ không có tenant nào cũng NÉM (một oracle chạy trên hệ rỗng sẽ "đạt" một cách rỗng tuếch).
  *  - Giả định retention tắt (mặc định của harness): outbox/order_payments/topups không bị dọn nên có thể đối chiếu toàn bộ.
+ *  - Orders giả (system.orders) KHÔNG tự kết nối lại: lỗi broker phải được giới hạn bằng dropWalletBrokerConnections()
+ *    (chỉ đóng kết nối của wallet), không được đóng kết nối của Orders giả, nếu không oracle sẽ báo thiếu sự kiện oan.
+ *
+ * Mã vi phạm (`Violation.code`, ổn định, dùng để phân loại bằng máy thay vì đọc chuỗi):
+ *  INV-1  TOTAL_NONZERO (tổng số dư theo đồng tiền ≠ 0) | BALANCE_DRIFT (số dư ≠ tổng dòng) | TX_UNBALANCED | TX_EMPTY
+ *  INV-2  ORPHAN_ORDER_TX (ORDER_PAYMENT không có order_payments) | ORDER_PAYMENT_MISPLACED (trỏ sai giao dịch)
+ *         | ORDER_PAYMENT_AMOUNT_MISMATCH | RECEIVED_PAID_MISMATCH (OrderPaidV1 đã nhận khác sổ cái)
+ *  INV-3  TOPUP_TX_MISSING (topup SUCCEEDED thiếu giao dịch TOPUP) | TOPUP_TX_AMOUNT_MISMATCH
+ *         | TX_WITHOUT_SUCCEEDED_TOPUP (giao dịch TOPUP không có topup SUCCEEDED)
+ *         | TOPUP_CHARGE_NOT_SUCCEEDED (topup SUCCEEDED nhưng charge không SUCCEEDED/khớp)
+ *         | CHARGE_UNATTRIBUTED (charge SUCCEEDED không gán được tenant) | CHARGE_WITHOUT_TOPUP (không có topup nào)
+ *         | CHARGE_TOPUP_NOT_SUCCEEDED (charge SUCCEEDED, topup chưa SUCCEEDED: detail.topupStatus/failureCode)
+ *         | CHARGE_TOPUP_MISMATCH (topup SUCCEEDED nhưng charge_id/số tiền/đồng tiền lệch)
+ *         | SUM_MISMATCH (tổng TOPUP sổ cái ≠ tổng charge SUCCEEDED theo tenant+đồng tiền)
+ *         | DUPLICATE_CHARGE_ID (một charge_id cho nhiều topup) | DUPLICATE_CHARGE_REF (nhiều charge cho một reference)
+ *         | CHARGE_MULTIPLE_KEYS | KEY_CHARGE_MISMATCH
+ *  INV-4  OUTBOX_NOT_SENT | SENT_NOT_RECEIVED | PAID_NOT_RECEIVED | OUTBOX_PAID_UNKNOWN_ORDER | RECEIVED_PAID_UNKNOWN_ORDER
  */
 
 export type InvariantId =
@@ -17,7 +34,10 @@ export type InvariantId =
 
 export interface Violation {
   invariant: InvariantId;
+  /** Mã ổn định của loại vi phạm (xem bảng trong chú thích đầu tệp). */
+  code: string;
   message: string;
+  /** Id có cấu trúc: tenant, chargeId, topupId, orderId, topupStatus, failureCode, chargeStatus, amount, currency… */
   detail?: Record<string, unknown>;
 }
 
@@ -76,6 +96,13 @@ async function discoverTenants(system: System): Promise<Tenant[]> {
   if (found.length === 0) {
     throw new Error(
       'oracle bất biến: không tìm thấy tenant nào trong DB wallet (schema t_<tenant>)',
+    );
+  }
+  // Tên schema đi vào sql.id (đã được trích dẫn), nhưng vẫn kiểm tra định dạng để không bao giờ truy vấn schema lạ.
+  const bad = found.filter((row) => !/^t_[a-z0-9_-]+$/i.test(row.name));
+  if (bad.length > 0) {
+    throw new Error(
+      `oracle bất biến: tên schema tenant không hợp lệ: ${bad.map((b) => b.name).join(', ')}`,
     );
   }
   return found.map((row) => ({ name: row.name.slice(2), schema: row.name }));
@@ -154,6 +181,7 @@ async function checkInv1(system: System, tenants: Tenant[]): Promise<Violation[]
     for (const row of sums) {
       out.push({
         invariant: 'INV-1',
+        code: 'TOTAL_NONZERO',
         message: `tenant ${tenant.name}: tổng số dư mọi tài khoản ${row.currency} = ${row.total} (phải bằng 0)`,
         detail: { tenant: tenant.name, currency: row.currency, total: String(row.total) },
       });
@@ -172,6 +200,7 @@ async function checkInv1(system: System, tenants: Tenant[]): Promise<Violation[]
     if (drift.length > 0) {
       out.push({
         invariant: 'INV-1',
+        code: 'BALANCE_DRIFT',
         message: `tenant ${tenant.name}: số dư lệch tổng các dòng sổ cái ở tài khoản ${listIds(
           drift.map((d) => `${d.id} (số dư ${d.balance}, sổ cái ${d.ledger_total})`),
         )}`,
@@ -188,6 +217,7 @@ async function checkInv1(system: System, tenants: Tenant[]): Promise<Violation[]
     if (unbalanced.length > 0) {
       out.push({
         invariant: 'INV-1',
+        code: 'TX_UNBALANCED',
         message: `tenant ${tenant.name}: giao dịch có tổng dòng khác 0: ${listIds(
           unbalanced.map((u) => `${u.transaction_id} (tổng ${u.total})`),
         )}`,
@@ -204,6 +234,7 @@ async function checkInv1(system: System, tenants: Tenant[]): Promise<Violation[]
     if (empty.length > 0) {
       out.push({
         invariant: 'INV-1',
+        code: 'TX_EMPTY',
         message: `tenant ${tenant.name}: giao dịch sổ cái không có dòng nào: ${listIds(empty.map((e) => e.id))}`,
         detail: { tenant: tenant.name, transactionIds: empty.map((e) => e.id) },
       });
@@ -231,6 +262,7 @@ async function checkInv2(system: System, tenants: Tenant[]): Promise<Violation[]
     if (orphans.length > 0) {
       out.push({
         invariant: 'INV-2',
+        code: 'ORPHAN_ORDER_TX',
         message: `tenant ${tenant.name}: giao dịch ORDER_PAYMENT không có dòng order_payments (ghi nợ mồ côi / ghi nợ lần hai): ${listIds(
           orphans.map((o) => `${o.id} (${o.business_key})`),
         )}`,
@@ -249,6 +281,7 @@ async function checkInv2(system: System, tenants: Tenant[]): Promise<Violation[]
     if (misplaced.length > 0) {
       out.push({
         invariant: 'INV-2',
+        code: 'ORDER_PAYMENT_MISPLACED',
         message: `tenant ${tenant.name}: order_payments trỏ tới giao dịch không phải ORDER_PAYMENT của chính đơn đó: ${listIds(
           misplaced.map((m) => `order ${m.order_id} → ${m.wallet_transaction_id}`),
         )}`,
@@ -275,6 +308,7 @@ async function checkInv2(system: System, tenants: Tenant[]): Promise<Violation[]
     if (mismatched.length > 0) {
       out.push({
         invariant: 'INV-2',
+        code: 'ORDER_PAYMENT_AMOUNT_MISMATCH',
         message: `tenant ${tenant.name}: order_payments lệch số tiền/đồng tiền so với sổ cái: ${listIds(
           mismatched.map(
             (m) => `order ${m.order_id} (order_payments ${m.amount}, sổ cái ${m.debited})`,
@@ -304,6 +338,7 @@ async function checkInv2(system: System, tenants: Tenant[]): Promise<Violation[]
       if (bad.length === 0) continue;
       out.push({
         invariant: 'INV-2',
+        code: 'RECEIVED_PAID_MISMATCH',
         message: `tenant ${tenant.name}: đơn ${orderId} có OrderPaidV1 (messageId ${listIds(
           bad.map((e) => String(e.messageId)),
         )}) khác khoản trả trong sổ cái ${expected.transactionId}/${expected.amount} ${expected.currency}: ${bad
@@ -327,6 +362,7 @@ interface TopupRow {
   currency: string;
   status: string;
   charge_id: string | null;
+  failure_code: string | null;
 }
 
 interface ChargeRow {
@@ -371,7 +407,7 @@ async function checkInv3(system: System, tenants: Tenant[]): Promise<Violation[]
   for (const tenant of tenants) {
     const topups = await rows(
       system.walletAdmin,
-      sql<TopupRow>`select id, account_id, amount, currency, status, charge_id from ${table(tenant, 'topups')}`,
+      sql<TopupRow>`select id, account_id, amount, currency, status, charge_id, failure_code from ${table(tenant, 'topups')}`,
     );
     topupsOf.set(tenant.name, new Map(topups.map((t) => [t.id, t])));
     for (const topup of topups) {
@@ -431,6 +467,7 @@ async function checkInv3(system: System, tenants: Tenant[]): Promise<Violation[]
     if (missingTxn.length > 0) {
       out.push({
         invariant: 'INV-3',
+        code: 'TOPUP_TX_MISSING',
         message: `tenant ${tenant.name}: topup SUCCEEDED không có giao dịch TOPUP trong sổ cái: ${listIds(missingTxn)}`,
         detail: { tenant: tenant.name, topupIds: missingTxn },
       });
@@ -438,6 +475,7 @@ async function checkInv3(system: System, tenants: Tenant[]): Promise<Violation[]
     if (wrongAmount.length > 0) {
       out.push({
         invariant: 'INV-3',
+        code: 'TOPUP_TX_AMOUNT_MISMATCH',
         message: `tenant ${tenant.name}: số tiền topup lệch giao dịch TOPUP: ${listIds(wrongAmount)}`,
         detail: { tenant: tenant.name, topups: wrongAmount },
       });
@@ -452,13 +490,13 @@ async function checkInv3(system: System, tenants: Tenant[]): Promise<Violation[]
     if (stray.length > 0) {
       out.push({
         invariant: 'INV-3',
+        code: 'TX_WITHOUT_SUCCEEDED_TOPUP',
         message: `tenant ${tenant.name}: giao dịch TOPUP không thuộc topup SUCCEEDED nào: ${listIds(stray)}`,
         detail: { tenant: tenant.name, transactions: stray },
       });
     }
 
     // (c) topup SUCCEEDED phải có charge SUCCEEDED bên payment, đúng số tiền và đồng tiền.
-    const noCharge: string[] = [];
     for (const topup of topups) {
       if (topup.status !== 'SUCCEEDED') continue;
       const charge = topup.charge_id === null ? undefined : chargeById.get(topup.charge_id);
@@ -468,66 +506,88 @@ async function checkInv3(system: System, tenants: Tenant[]): Promise<Violation[]
         num(charge.amount) !== num(topup.amount) ||
         charge.currency !== topup.currency
       ) {
-        noCharge.push(
-          `${topup.id} (charge ${topup.charge_id ?? 'null'}: ${
+        out.push({
+          invariant: 'INV-3',
+          code: 'TOPUP_CHARGE_NOT_SUCCEEDED',
+          message: `tenant ${tenant.name}: topup SUCCEEDED ${topup.id} không có charge SUCCEEDED khớp bên payment (charge ${topup.charge_id ?? 'null'}: ${
             charge === undefined
               ? 'không có'
               : `${charge.status} ${charge.amount} ${charge.currency}`
           })`,
-        );
+          detail: {
+            tenant: tenant.name,
+            topupId: topup.id,
+            topupStatus: topup.status,
+            chargeId: topup.charge_id,
+            chargeStatus: charge?.status ?? null,
+            amount: num(topup.amount),
+            currency: topup.currency,
+          },
+        });
       }
-    }
-    if (noCharge.length > 0) {
-      out.push({
-        invariant: 'INV-3',
-        message: `tenant ${tenant.name}: topup SUCCEEDED không có charge SUCCEEDED khớp bên payment: ${listIds(noCharge)}`,
-        detail: { tenant: tenant.name, topups: noCharge },
-      });
     }
   }
 
   // (d) charge SUCCEEDED bên payment phải thuộc một tenant của hệ và một topup SUCCEEDED khớp (reference = topupId).
   const chargeTotals = new Map<string, number>();
-  const unattributed: string[] = [];
-  const noTopup: string[] = [];
   for (const charge of charges) {
     if (charge.status !== 'SUCCEEDED') continue;
     const tenantName = chargeTenant(charge.metadata);
     const topups = tenantName === undefined ? undefined : topupsOf.get(tenantName);
     if (tenantName === undefined || topups === undefined) {
-      unattributed.push(`${charge.id} (tenant ${tenantName ?? 'không có'})`);
+      out.push({
+        invariant: 'INV-3',
+        code: 'CHARGE_UNATTRIBUTED',
+        message: `charge SUCCEEDED không gán được cho tenant nào của hệ: ${charge.id} (tenant ${tenantName ?? 'không có'})`,
+        detail: {
+          chargeId: charge.id,
+          topupId: charge.reference,
+          tenant: tenantName ?? null,
+          amount: num(charge.amount),
+          currency: charge.currency,
+        },
+      });
       continue;
     }
     const key = `${tenantName}|${charge.currency}`;
     chargeTotals.set(key, (chargeTotals.get(key) ?? 0) + num(charge.amount));
     const topup = topups.get(charge.reference);
-    if (
-      topup === undefined ||
-      topup.status !== 'SUCCEEDED' ||
+    const base = {
+      tenant: tenantName,
+      chargeId: charge.id,
+      topupId: charge.reference,
+      chargeStatus: charge.status,
+      amount: num(charge.amount),
+      currency: charge.currency,
+    };
+    if (topup === undefined) {
+      out.push({
+        invariant: 'INV-3',
+        code: 'CHARGE_WITHOUT_TOPUP',
+        message: `tenant ${tenantName}: charge SUCCEEDED ${charge.id} không có topup SUCCEEDED khớp bên wallet (reference ${charge.reference}, ${charge.amount} ${charge.currency}, không có topup)`,
+        detail: { ...base, topupStatus: null, failureCode: null },
+      });
+    } else if (topup.status !== 'SUCCEEDED') {
+      out.push({
+        invariant: 'INV-3',
+        code: 'CHARGE_TOPUP_NOT_SUCCEEDED',
+        message: `tenant ${tenantName}: charge SUCCEEDED ${charge.id} không có topup SUCCEEDED khớp bên wallet (reference ${charge.reference}, ${charge.amount} ${charge.currency}, topup ${topup.status}${
+          topup.failure_code === null ? '' : ` ${topup.failure_code}`
+        })`,
+        detail: { ...base, topupStatus: topup.status, failureCode: topup.failure_code },
+      });
+    } else if (
       topup.charge_id !== charge.id ||
       num(topup.amount) !== num(charge.amount) ||
       topup.currency !== charge.currency
     ) {
-      noTopup.push(
-        `${charge.id} (tenant ${tenantName}, reference ${charge.reference}, ${charge.amount} ${charge.currency}${
-          topup === undefined ? ', không có topup' : `, topup ${topup.status}`
-        })`,
-      );
+      out.push({
+        invariant: 'INV-3',
+        code: 'CHARGE_TOPUP_MISMATCH',
+        message: `tenant ${tenantName}: charge SUCCEEDED ${charge.id} không có topup SUCCEEDED khớp bên wallet (reference ${charge.reference}: topup charge_id ${topup.charge_id}, ${topup.amount} ${topup.currency} ≠ charge ${charge.amount} ${charge.currency})`,
+        detail: { ...base, topupStatus: topup.status, failureCode: topup.failure_code },
+      });
     }
-  }
-  if (unattributed.length > 0) {
-    out.push({
-      invariant: 'INV-3',
-      message: `charge SUCCEEDED không gán được cho tenant nào của hệ: ${listIds(unattributed)}`,
-      detail: { charges: unattributed },
-    });
-  }
-  if (noTopup.length > 0) {
-    out.push({
-      invariant: 'INV-3',
-      message: `charge SUCCEEDED không có topup SUCCEEDED khớp bên wallet: ${listIds(noTopup)}`,
-      detail: { charges: noTopup },
-    });
   }
 
   // (e) tổng theo tenant + đồng tiền: TOPUP trong sổ cái = charge SUCCEEDED bên payment.
@@ -538,6 +598,7 @@ async function checkInv3(system: System, tenants: Tenant[]): Promise<Violation[]
     const [tenantName, currency] = key.split('|');
     out.push({
       invariant: 'INV-3',
+      code: 'SUM_MISMATCH',
       message: `tenant ${tenantName}: tổng TOPUP trong sổ cái ${ledger} ${currency} ≠ tổng charge SUCCEEDED bên payment ${gateway} ${currency}`,
       detail: { tenant: tenantName, currency, ledger, gateway },
     });
@@ -548,6 +609,7 @@ async function checkInv3(system: System, tenants: Tenant[]): Promise<Violation[]
   if (sharedCharge.length > 0) {
     out.push({
       invariant: 'INV-3',
+      code: 'DUPLICATE_CHARGE_ID',
       message: `charge_id gắn cho nhiều topup: ${listIds(
         sharedCharge.map(([id, refs]) => `${id} ← ${refs.join(' & ')}`),
       )}`,
@@ -562,6 +624,7 @@ async function checkInv3(system: System, tenants: Tenant[]): Promise<Violation[]
   if (doubled.length > 0) {
     out.push({
       invariant: 'INV-3',
+      code: 'DUPLICATE_CHARGE_REF',
       message: `nhiều charge cho cùng một reference (nguy cơ thu tiền hai lần): ${listIds(
         doubled.map(([reference, ids]) => `${reference} → ${ids.join(' & ')}`),
       )}`,
@@ -589,6 +652,7 @@ async function checkInv3(system: System, tenants: Tenant[]): Promise<Violation[]
   if (manyKeys.length > 0) {
     out.push({
       invariant: 'INV-3',
+      code: 'CHARGE_MULTIPLE_KEYS',
       message: `charge có nhiều idempotency key: ${listIds(manyKeys.map(([id, list]) => `${id} ← ${list.join(' & ')}`))}`,
       detail: { charges: manyKeys.map(([id]) => id) },
     });
@@ -596,6 +660,7 @@ async function checkInv3(system: System, tenants: Tenant[]): Promise<Violation[]
   if (wrongKey.length > 0) {
     out.push({
       invariant: 'INV-3',
+      code: 'KEY_CHARGE_MISMATCH',
       message: `idempotency key trỏ tới charge của topup/tenant khác: ${listIds(wrongKey)}`,
       detail: { keys: wrongKey },
     });
@@ -624,6 +689,7 @@ async function checkInv4(system: System, tenants: Tenant[]): Promise<Violation[]
     if (pending.length > 0) {
       out.push({
         invariant: 'INV-4',
+        code: 'OUTBOX_NOT_SENT',
         message: `tenant ${tenant.name}: outbox còn dòng chưa SENT: ${listIds(
           pending.map((p) => `${p.id} (${p.event_type}, ${p.status}, ${p.attempts} lần thử)`),
         )}`,
@@ -645,6 +711,7 @@ async function checkInv4(system: System, tenants: Tenant[]): Promise<Violation[]
     if (lost.length > 0) {
       out.push({
         invariant: 'INV-4',
+        code: 'SENT_NOT_RECEIVED',
         message: `tenant ${tenant.name}: outbox đã SENT nhưng Orders giả chưa nhận: ${listIds(
           lost.map((r) => `${r.id} (${r.event_type}, order ${r.order_id})`),
         )}`,
@@ -663,6 +730,7 @@ async function checkInv4(system: System, tenants: Tenant[]): Promise<Violation[]
     if (silent.length > 0) {
       out.push({
         invariant: 'INV-4',
+        code: 'PAID_NOT_RECEIVED',
         message: `tenant ${tenant.name}: đơn đã trả nhưng Orders giả chưa nhận OrderPaidV1: ${listIds(silent)}`,
         detail: { tenant: tenant.name, orderIds: silent },
       });
@@ -675,6 +743,7 @@ async function checkInv4(system: System, tenants: Tenant[]): Promise<Violation[]
     if (phantom.length > 0) {
       out.push({
         invariant: 'INV-4',
+        code: 'OUTBOX_PAID_UNKNOWN_ORDER',
         message: `tenant ${tenant.name}: outbox có OrderPaidV1 cho đơn không có order_payments: ${listIds(
           phantom.map((r) => `${r.id} (order ${r.order_id})`),
         )}`,
@@ -696,6 +765,7 @@ async function checkInv4(system: System, tenants: Tenant[]): Promise<Violation[]
   if (phantomReceived.length > 0) {
     out.push({
       invariant: 'INV-4',
+      code: 'RECEIVED_PAID_UNKNOWN_ORDER',
       message: `Orders giả đã nhận OrderPaidV1 cho đơn không có order_payments: ${listIds(
         phantomReceived.map((e) => `${e.messageId} (tenant ${e.tenant}, order ${e.orderId})`),
       )}`,
@@ -733,6 +803,50 @@ export async function collectViolations(
     out.push(...(await (CHECKS[id] as Check)(system, tenants)));
   }
   return out;
+}
+
+/**
+ * Vi phạm kiểu "MISSING_AT_WALLET": payment đã chốt charge SUCCEEDED nhưng wallet chưa ghi có
+ * (topup còn REQUESTED/PENDING, hoặc FAILED vì PAYMENT_UNAVAILABLE — trường hợp webhook thành công đến muộn mà đối soát
+ * sẽ ghi bù). Đây là trạng thái đối soát (S7) sửa được, khác với hỏng dữ liệu thật.
+ */
+export function isMissingAtWallet(violation: Violation): boolean {
+  if (violation.invariant !== 'INV-3' || violation.code !== 'CHARGE_TOPUP_NOT_SUCCEEDED') {
+    return false;
+  }
+  const detail = violation.detail ?? {};
+  if (detail.chargeStatus !== 'SUCCEEDED') return false;
+  if (detail.topupStatus === 'REQUESTED' || detail.topupStatus === 'PENDING') return true;
+  return detail.topupStatus === 'FAILED' && detail.failureCode === 'PAYMENT_UNAVAILABLE';
+}
+
+/**
+ * Đúng khi TOÀN BỘ vi phạm đều thuộc INV-3 và được giải thích hết bởi các charge MISSING_AT_WALLET: mọi vi phạm là
+ * MISSING_AT_WALLET hoặc SUM_MISMATCH, và với mỗi tenant+đồng tiền, (tổng charge − tổng sổ cái) của SUM_MISMATCH đúng bằng
+ * tổng số tiền các charge MISSING_AT_WALLET của tenant+đồng tiền đó (không thừa, không thiếu). Rỗng ⇒ false.
+ */
+export function explainedByMissingAtWallet(violations: readonly Violation[]): boolean {
+  if (violations.length === 0) return false;
+  const missing = violations.filter(isMissingAtWallet);
+  const sums = violations.filter((v) => v.invariant === 'INV-3' && v.code === 'SUM_MISMATCH');
+  if (missing.length === 0 || missing.length + sums.length !== violations.length) return false;
+
+  const expected = new Map<string, number>();
+  for (const v of missing) {
+    const key = `${String(v.detail?.tenant)}|${String(v.detail?.currency)}`;
+    expected.set(key, (expected.get(key) ?? 0) + num(v.detail?.amount));
+  }
+  const actual = new Map<string, number>();
+  for (const v of sums) {
+    const key = `${String(v.detail?.tenant)}|${String(v.detail?.currency)}`;
+    if (actual.has(key)) return false;
+    actual.set(key, num(v.detail?.gateway) - num(v.detail?.ledger));
+  }
+  if (actual.size !== expected.size) return false;
+  for (const [key, amount] of expected) {
+    if (actual.get(key) !== amount) return false;
+  }
+  return true;
 }
 
 /** Ném InvariantViolationError nêu từng vi phạm cùng id cụ thể (tenant, orderId, topupId, accountId…). */
