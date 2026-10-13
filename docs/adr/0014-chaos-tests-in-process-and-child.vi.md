@@ -37,7 +37,7 @@ thêm test; việc đó đòi một bộ gây lỗi đủ chính xác để nh�
   của transaction", là các điểm mà cam kết thật sự phụ thuộc vào. Proxy HTTP tự viết đã đủ cho đường wallet↔payment (trả 5xx, trễ, mất, nhân đôi, mất phản hồi).
 - **Pause/stop container SQL Server hoặc RabbitMQ:** mỗi lượt chạy chỉ có một container mỗi loại, dùng chung cho mọi tệp test, nên dừng nó làm hỏng các tệp khác và làm kết quả phụ thuộc thời gian.
   `KILL` đúng session của database test và đóng đúng kết nối AMQP của user wallet cho cùng loại lỗi mà không động tới ai khác.
-- **Gộp vào `test:integration`:** chaos chậm (cỡ vài phút đến mười phút), cố ý làm hỏng và có phần ngẫu nhiên; trộn vào sẽ làm vòng phản hồi hằng ngày chậm và khiến thất bại khó phân loại.
+- **Gộp vào `test:integration`:** chaos chậm (cỡ mười phút trở lên), cố ý làm hỏng và có phần ngẫu nhiên; trộn vào sẽ làm vòng phản hồi hằng ngày chậm và khiến thất bại khó phân loại.
 - **Kysely plugin để chèn lỗi:** `transformQuery` của plugin là hàm **đồng bộ**, không `await` được, nên không chờ được `KILL` hay độ trễ trước khi lệnh chạy; và plugin **không thấy `begin`/`commit`/`rollback`**
   (chúng đi qua driver chứ không qua pipeline truy vấn), nên không đặt được lỗi "ngay sau commit". Bọc `Dialect`/`Driver` thấy từng lần lấy kết nối, `begin`, `commit`, `rollback` và
   chờ được bất đồng bộ. Bản thiết kế đầu (`dbPlugins`) vì vậy đã đổi sang `wrapDialect`.
@@ -50,7 +50,9 @@ thêm test; việc đó đòi một bộ gây lỗi đủ chính xác để nh�
 - **Hai seam production chỉ dùng cho test:** `wrapDialect` (qua `createDatabase`, bootstrap wallet và payment) và `wrapPublisher` (bootstrap wallet), mặc định bỏ trống và không đổi hành vi.
   Seam của `createDatabase` có unit test; bootstrap chỉ truyền `{ wrapDialect }` khi có, và bộ chaos chính là test của chúng ở chế độ trong tiến trình. Thêm seam thứ ba cần lý do
   mạnh, và phải giữ "mặc định không làm gì".
-- **Thời gian CI riêng:** `test:chaos` chạy vài phút đến cỡ mười phút (nhiều kịch bản, hai chế độ, một vòng soak ngắn), `test:chaos:soak` tùy chỉnh được; cần chạy như một bước riêng.
+- **Thời gian CI riêng:** `test:chaos` (147 test: kịch bản, hai chế độ, một vòng soak ngắn) đo được khoảng 11-12 phút trên máy Windows phát triển (690 giây khi máy rảnh, tới ~19 phút khi máy bận), **vượt** mục tiêu < 10 phút
+  ban đầu; thời gian dồn vào các test âm của oracle (`invariants.chaos.test.ts`, gần 40% mỗi lần đo), tiến trình con thật (`crash.chaos.test.ts`, S9, S10) và vòng soak ngắn. `test:chaos:soak` tùy chỉnh được. Cần chạy như một bước CI riêng;
+  nếu cần ngắn hơn thì chia theo tệp ra nhiều job (mỗi job một container). Bảng theo tệp nằm ở [chaos-testing](../ops/chaos-testing.vi.md#thời-gian-điển-hình).
 - **Cần Docker** (testcontainers cho SQL Server và RabbitMQ). Không dùng stack `billing-local`; khởi động container đôi khi chập chờn (chạy lại).
 - **Tái hiện chỉ ở mức kế hoạch.** Cùng seed cho cùng kế hoạch tải/lỗi nhưng thứ tự đan xen thực thi không tất định, nên một lỗi hiếm có thể không tái diễn; bằng chứng chính là nhật ký thao tác
   (`tests/chaos/.out/`). Điều này đã được chấp nhận thay vì cố làm toàn bộ hệ tất định.

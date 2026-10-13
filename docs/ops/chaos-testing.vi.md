@@ -90,7 +90,28 @@ Vitest ẩn console của test đạt, nên để thấy dòng `chaos seed=<n> r
 
 Đo trên máy phát triển Windows có Docker (số thực tế phụ thuộc máy, lần đầu kéo image):
 
-- Khoảng 9m40s-9m50s cho toàn bộ `test:chaos` gồm 143 test, **lúc bài soak còn là 3 vòng x 30 giây trộn `inproc`/`child` nằm trong `test:chaos`**. Sau khi tách bài dài ra `test:chaos:soak`, `test:chaos` chỉ còn một vòng 15 giây nên ngắn hơn (xem số đo cuối mục này).
+- **`test:chaos` hiện tại (147 test, sau khi tách soak dài): khoảng 11-12 phút trên máy Windows này** (690 giây ở lần đo của cổng kiểm cuối khi máy rảnh). Con số này **vượt**
+  mục tiêu < 10 phút của kế hoạch; chưa được tối ưu, và đã không còn là "vài phút". Lần đo trước (khoảng 9m40s-9m50s, 143 test) là lúc bài soak 3 vòng x 30 giây còn nằm trong `test:chaos`, nhưng
+  số 147 test hiện nay (thêm S-test, meta-test, oracle) vẫn chậm hơn nó. Khi máy bận (ví dụ cùng lúc chạy stack `billing-local` hoặc agent khác), cùng bộ test chạy tới **~19 phút** (1130 giây, lần đo ghi bên dưới):
+  đừng dựa vào một con số duy nhất.
+
+  Thời gian theo tệp (lần đo 1130 giây lúc máy bận; chia theo tỉ lệ thì ~61% của số này tương ứng lần đo 690 giây khi rảnh):
+
+  | Tệp | Giây | Test | Ghi chú |
+  | --- | ---: | ---: | ------- |
+  | `invariants.chaos.test.ts` | 438 | 71 | test âm của oracle: mỗi test làm hỏng trạng thái rồi chạy cả đối soát |
+  | `soak.chaos.test.ts` | 171 | 2 | vòng soak ngắn 15 giây cộng dựng hệ, `heal`, oracle; meta-test 3 giây |
+  | `support/crash.chaos.test.ts` | 104 | 7 | tiến trình con thật (`tsx` khởi động chậm, `SIGKILL`/dựng lại) |
+  | `scenarios-payment-crash.chaos.test.ts` | 80 | 8 | S6-S10, hai kịch bản (S9, S10) dùng tiến trình con |
+  | `support/system-harness.chaos.test.ts` | 71 | 20 | harness: `heal()`, restart, hai chế độ |
+  | `scenarios-ops-retention.chaos.test.ts` | 43 | 14 | S11-S13 |
+  | `scenarios-sql-broker.chaos.test.ts` | 40 | 8 | S1-S5 |
+  | `support/broker-faults`, `sql-faults`, `harness.smoke` | 20 | 17 | công cụ lỗi |
+
+  Thời gian đi vào ba nhóm: (1) **oracle** (`invariants.chaos.test.ts` + `soak.chaos.test.ts`, gần 55%): mỗi lần gọi oracle mất 1-2 giây vì có đối soát thật;
+  (2) **tiến trình con** (`crash.chaos.test.ts`, S9, S10, một phần `system-harness`, gần 25%); (3) phần còn lại là kịch bản inproc. Vì các tệp chạy tuần tự
+  (`fileParallelism: false`, mọi tệp dùng chung một SQL Server và một RabbitMQ), người phụ trách CI có thể chia `test:chaos` theo tệp ra nhiều job (mỗi job có container riêng) hoặc cho
+  `invariants.chaos.test.ts` chạy job riêng; chưa làm: SQL Server trong container dễ time-out khi tải dồn (đã gặp khi chạy nhiều bộ nặng cùng lúc), nên không chạy song song nhiều tệp trên cùng một container.
 - Tệp kịch bản payment/crash (S6-S10, có hai kịch bản tiến trình con): 89-99 giây. Tiến trình con chậm hơn trong tiến trình (khởi động `tsx` mất vài giây mỗi lần dựng lại).
 - Soak dài, mỗi vòng 30 giây, `mixed`: 2m40s-3m54s cho 3 vòng (cả dựng hệ, `heal` và oracle); 4 vòng x 60 giây: 7m15s-7m52s.
 - Mỗi lần gọi `assertSystemInvariants` mất khoảng 1-2 giây (đối soát thật nằm trong đó), nên mỗi kịch bản chỉ gọi một lần.
@@ -111,7 +132,7 @@ Không thuộc code production; chỉ test dùng. Production chỉ có hai seam 
 | `HttpFaultProxy` | `http-fault-proxy.ts` | Hai proxy HTTP: `wallet-to-payment` (tạo charge) và `payment-to-wallet` (webhook). Mỗi request gọi `<name>.request`; rule đặt `info.decision` = `forward` \| `drop` \| `duplicate` \| `{ status, body? }` \| `{ delayMs }`. Sau khi mục tiêu xử lý, `<name>.response` được gọi **trước** khi trả cho client: action ném ở đây = mục tiêu đã xử lý nhưng client không thấy phản hồi. Ghi `log` và `duplicateStatuses` (mã của bản gửi thứ hai) |
 | Hệ thống | `system-harness.ts`, `service-config.ts` | `createSystem(options)` dựng: DB wallet và DB payment riêng, vhost riêng, "Orders giả" (`OrdersSimulator`, ghi mọi sự kiện nhận được), hai proxy, wallet và payment. Cấu hình dịch vụ đặt một chỗ (`service-config.ts`): chế độ `inproc` truyền thẳng, chế độ `child` đổi chính cấu hình đó thành biến môi trường |
 | Tiến trình con | `crash.ts`, `child-guard.mjs` | `mode: 'child'`: mỗi dịch vụ là tiến trình Node thật `node --import child-guard.mjs --import tsx services/<tên>/src/main.ts` (pid chính là dịch vụ). `crashWallet()`/`crashPayment()` = `SIGKILL` (Windows: `TerminateProcess`) rồi đợi thoát, **không** tự bật lại; `restartWallet()`/`restartPayment()` hoặc `heal()` dựng lại trên cùng DB và vhost. `child-guard` làm tiến trình con tự thoát khi cha chết (pipe stdin đóng), ngoài ra `stop()` giết và xác nhận mọi pid đã từng sinh |
-| `quiesce` | `quiesce.ts` | Thăm dò (mặc định 200 ms) tới khi mọi điều kiện đạt; điều kiện ném lỗi coi là chưa đạt; hết hạn thì ném lỗi nêu **tên điều kiện chưa đạt** và lỗi cuối. Không có `sleep` cố định trong kịch bản |
+| `quiesce` | `quiesce.ts` | Thăm dò (mặc định 200 ms) tới khi mọi điều kiện đạt; điều kiện ném lỗi coi là chưa đạt; mỗi lần kiểm tra có hạn riêng (`checkTimeoutMs`, mặc định 30 giây, không vượt phần còn lại của cả quiesce) nên kiểm tra treo cho ra lỗi nêu đích danh điều kiện; hết hạn thì ném lỗi nêu **tên điều kiện chưa đạt** và lỗi cuối (lỗi cũ được xóa khi điều kiện sau đó trả `false`). Không có `sleep` cố định trong kịch bản |
 | `prng` | `prng.ts` | mulberry32 theo seed; `fork(label)` sinh dòng con chỉ phụ thuộc (seed gốc, label), không phụ thuộc mức tiêu thụ của cha |
 | `OpLog` | `op-log.ts` | Nhật ký thao tác có mốc thời gian; `writeTo(dir, name)` ghi một tệp JSON (mảng các mục) |
 | Oracle | `invariants.ts` | Như mục trên |
@@ -136,7 +157,11 @@ Không thuộc code production; chỉ test dùng. Production chỉ có hai seam 
    phải rời `PENDING`; `allowUnsettledTopups: true` (S7, soak) cho phép topup treo `PENDING` vì chỉ đối soát sửa được.
 3. Trong lúc chờ, harness **đẩy nhanh** những thứ production cố ý chờ lâu, qua kết nối quản trị (không đi qua dialect có lỗi): kéo dòng
    outbox `PENDING` đang backoff về "đến hạn" (backoff production 1/5/30/120/600 giây dài hơn timeout của heal); kéo retry/lease của topup
-   `REQUESTED` về "đến hạn" (gửi lại luôn an toàn vì khóa idempotency cố định); đánh dấu `FAILED` các lượt đối soát `RUNNING` mồ côi của
+   `REQUESTED` về "đến hạn" (gửi lại luôn an toàn vì khóa idempotency cố định), **chỉ với dòng có `next_attempt_at` cách hạn trong khoảng
+   (5 giây, 55 giây]**: lease mới 60 giây của một lần gửi đang bay phải để yên (kéo nó về hạn khiến worker gửi lần thứ hai song song với
+   lần đang bay, xem S6a), backoff <= 5 giây tự đến hạn, còn lease của tiến trình đã chết (S9) rơi vào cửa sổ ngay khi còn dưới 55 giây
+   và được kéo ở vòng thăm dò kế tiếp. Backoff topup production dài hơn 55 giây (120, 600) không được kéo; harness dùng `[1, 2, 3]` giây nên không gặp.
+   Test nào cần heal() mà topup còn đang bay thì phải chờ nó chốt trước (S6a chờ `SUCCEEDED`). Heal cũng đánh dấu `FAILED` các lượt đối soát `RUNNING` mồ côi của
    tiến trình wallet đã chết (nếu không chúng chỉ bị dọn sau 30 phút).
 4. Cuối cùng ghi các order Orders giả đã nhận `OrderPaidV1` vào `expectations.ordersPaid` (cơ sở của INV-7). `expectations.topupsCreated`
    và `expectations.opsActionIds` được ghi ngay khi client nhận 2xx; kết quả lỗi/không rõ **không** được ghi (oracle không đòi thứ chưa được xác nhận).
@@ -161,7 +186,7 @@ backoff nạp tiền và webhook `[1, 2, 3]` giây; `retryDelaysSeconds = [1, 2]
 | S6c | inproc | `wallet-to-payment.response` ném lỗi **sau khi** payment đã tạo charge (webhook bị giữ) | Wallet gửi lại cùng khóa (replay), `charge_id` được ghi; vẫn một charge; ví cộng một lần sau khi thả webhook | INV-3 |
 | S7 | inproc | `payment-to-wallet.request`: mọi webhook bị `drop` | `webhook_events` `FAILED` sau 4 lần gửi; charge `SUCCEEDED` nhưng topup `PENDING`, ví chưa tăng; oracle với `expectMissingAtWallet` buộc đối soát ghi bù **đúng một lần** (một giao dịch `TOPUP`) | INV-3, 5 |
 | S8a | inproc | Mọi webhook bị `duplicate` | Cả hai bản đều được wallet trả 2xx; ghi có một lần; gửi lại thủ công cùng chữ ký ra `DUPLICATE` | INV-3 |
-| S8b | inproc | Webhook bị giữ ~8 giây trong lúc đối soát thủ công ghi bù trước | Webhook muộn vẫn nhận 2xx, không ghi có lần hai, `DELIVERED` với `attempts = 1` (không vòng retry) | INV-3, 5 |
+| S8b | inproc | Webhook bị giữ 6 giây (nhỏ hơn timeout 10 giây của bên gửi webhook, đối soát phải xong trong 6 giây đó) trong lúc đối soát thủ công ghi bù trước | Webhook muộn vẫn nhận 2xx, không ghi có lần hai, `DELIVERED` với `attempts = 1` (không vòng retry) | INV-3, 5 |
 | S9 | **child** | `SIGKILL` wallet từ `wallet-to-payment.response` sau khi payment tạo charge nhưng trước khi wallet lưu `charge_id` | Sau khi dựng lại, wallet gửi lại **cùng khóa** (lease 60 giây được harness kéo về hạn); payment vẫn một charge/một khóa; topup `PENDING` rồi `SUCCEEDED`; ví cộng một lần | INV-3, 8 |
 | S10 | **child** | Mọi webhook bị `drop`; `SIGKILL` payment sau khi charge `SUCCEEDED`, trước khi webhook giao | Payment dựng lại, webhook `DELIVERED` (số lần thử tăng); ví cộng một lần | INV-3, 8 |
 | S11 | inproc | 11 ca: `adjust`/`reverse` x {lệnh ghi đầu, insert `ledger_entries`, insert `ops_actions`, sau commit} và `freeze` x {lệnh ghi đầu, insert `ops_actions`, sau commit}; `KILL` session wallet | Gửi lại **cùng `idempotencyKey`**: đúng một hiệu ứng thật và một dòng `ops_actions`; phản hồi lần gửi lại khớp kết quả đã lưu; không có audit mồ côi | INV-1, 6, 7 |
@@ -183,7 +208,10 @@ và đã được thử bằng đột biến (cố ý làm kịch bản mất kh
 - **Phán quyết** (`settleAndJudge`): hết giờ thì `heal({ allowUnsettledTopups: true })`, rồi đọc INV-3. Sạch thì oracle chặt hoàn toàn. Còn vi phạm thì
   chỉ được miễn khi có lỗi thuộc nhóm đường HTTP/dịch vụ ngừng **và** vi phạm được `MISSING_AT_WALLET` giải thích trọn vẹn (từng charge và tổng tiền); khi đó oracle
   chạy với `expectMissingAtWallet` (đối soát phải ghi bù đúng tập đó). Mọi trường hợp khác thì oracle chặt và ném đúng vi phạm.
-- Mỗi vòng còn kiểm có lỗi thực sự bắn và (khi `CHAOS_MAX_SECONDS >= 20`) các loại tải chính (nạp tiền, order, điều chỉnh, đọc, đóng băng) mỗi loại thành công ít nhất một lần.
+- Mỗi vòng còn kiểm có lỗi thực sự bắn và **sức sống của tải** (`assertLoadLiveness`): ít nhất một thao tác thành công, và mỗi loại tải chính
+  (nạp tiền, order, điều chỉnh, đọc, đóng băng) đã được thử từ 5 lần trở lên thì phải thành công ít nhất một lần. Tỉ lệ theo số lần **thực sự thử**, không theo
+  giờ: loại hiếm như đóng băng (trọng số 4%) có thể không được bốc trúng trong vòng 20 giây (chỉ ~40 thao tác vì lỗi làm chậm tải), còn đã thử đủ nhiều mà không bao giờ thành công mới là lỗi thật.
+  Dòng tóm tắt từng vòng in `succeeded=` và `attempted=` theo loại.
 - Retention thật được bật cho khoảng 1/3 số vòng `inproc` (chọn theo seed). Vòng `child` không bật được: xem giới hạn.
 
 ### Tái hiện từ seed và nhật ký
@@ -211,7 +239,7 @@ có lý do mạnh (ADR-0014 giới hạn ở hai seam). Kèm test của chính c
 
 **Kịch bản.** Theo khuôn của `scenarios-sql-broker.chaos.test.ts`:
 
-1. `beforeAll` dựng hệ (`createSystem`), `beforeEach` gọi `plan.clear()`, `afterAll` gọi `stop()`; một hook `afterEach` ghi nhật ký (`system.log.writeTo`) ra `tests/chaos/.out/` khi test thất bại.
+1. `beforeAll` dựng hệ (`createSystem`), `beforeEach` gọi `plan.clear()`, `afterAll` gọi `stop()`; một hook `afterEach` gọi `dumpFailedTask(ctx.task, system, OUT_DIR)` (`support/failure-dump.ts`): khi test thất bại nó ghi lý do (`test.failure` kèm thông điệp lỗi) vào `OpLog`, ghi nhật ký ra `tests/chaos/.out/`, rồi `heal()` best-effort để hệ dùng chung không đổ lỗi dây chuyền sang test sau.
 2. Mỗi kịch bản dùng khách/order riêng; nạp ví **trước** khi bật lỗi (`heal()` tắt plan nên bật lại).
 3. Thêm rule có `label`; thực hiện hành động; `waitFor` (từ `@billing/testing`) như `waitFor(() => plan.fired('<label>') >= n)`, **không** `sleep` cố định.
 4. `heal()`, rồi khẳng định **đếm chính xác** trong DB (số `order_payments`, `charges`, dòng outbox...) và `assertSystemInvariants(system)` đúng một lần.
@@ -221,6 +249,29 @@ có lý do mạnh (ADR-0014 giới hạn ở hai seam). Kèm test của chính c
 **Bất biến mới.** Thêm hàm kiểm ở `invariants.ts` với `code` ổn định, đặt vào `CHECKS` và thứ tự chuẩn trong `runInvariants`, rồi viết test âm trong `invariants.chaos.test.ts`
 (làm hỏng trạng thái có hoàn tác và xác nhận oracle bắt đúng mã). **Loại tải/lỗi mới cho soak:** thêm vào `OP_WEIGHTS`/`FAULTS` trong `soak.ts`, giữ **số lần rút prng cố định** cho mỗi bước để kế hoạch vẫn ổn định theo seed.
 
+## Giả định của oracle
+
+Kết quả "xanh" chỉ có nghĩa trong các giả định sau; người đọc kết quả cần biết chúng.
+
+1. **`heal()` tăng tốc thời gian production.** Nó kéo các dòng outbox `PENDING` (backoff, lease) và topup `REQUESTED` (retry, lease; chỉ trong cửa sổ 5-55 giây) về
+   "đến hạn", và đánh dấu `FAILED` các lượt đối soát `RUNNING` bắt đầu trước lần khởi chạy wallet hiện tại. Vì vậy chaos chứng minh **hội tụ cuối cùng**, không chứng
+   minh độ trễ/sức sống dưới thời gian thật (backoff 1/5/30/120/600 giây, lease 60 giây, ngưỡng dọn lượt đối soát cũ 30 phút). Backoff của **webhook** thì *không* được tăng
+   tốc, nhưng harness dùng `[1, 2, 3]` giây (child/soak child: `[2, 5, 10, 20, 30]`) thay vì `1,5,30,120,600` của production, nên webhook hết lượt **sớm hơn** production.
+2. **DB wallet của chaos chạy `ALLOW_SNAPSHOT_ISOLATION ON`**, production thì không; INV-3 dựa vào đó để đọc phía wallet trong một snapshot.
+3. **Thứ tự đọc của INV-3** (snapshot wallet rồi mới tới payment) chỉ đúng khi `heal()` đã làm hệ yên: nếu còn nạp tiền đang bay, wallet-trước-payment có thể thấy charge `SUCCEEDED` mà chưa thấy topup tương ứng.
+4. **Điều kiện miễn `MISSING_AT_WALLET`** (soak): ít nhất một lỗi thuộc nhóm đường HTTP/dịch vụ ngừng trong **vòng đó**, vi phạm được giải thích trọn vẹn (từng charge và tổng tiền), và webhook
+   của charge **không** `DELIVERED`. Giới hạn đã biết: việc miễn theo **vòng**, không theo từng charge. Nếu trong vòng có lỗi webhook, một wallet trả 4xx/5xx thật cho webhook hợp lệ
+   (không phải lỗi gài) vẫn bị coi là "webhook hết lượt do lỗi" và được miễn ở bước INV-3 (đối soát vẫn buộc ghi bù đúng tập đó và sau đối soát mọi thứ chặt lại). Làm tinh theo từng charge cần
+   ghép từng lần gửi trong `webhook_attempts` với dòng log của proxy (log proxy không mang `event_id`) nên chưa làm; xem [chaos-findings](chaos-findings.vi.md).
+5. **INV-4/INV-7 dựa vào Orders giả**, vốn **không tự nối lại**: chỉ kết nối AMQP của wallet được phép cắt; `ordersPaid` chỉ được làm mới ở cuối `heal()`.
+6. **INV-6/INV-7 chỉ đòi các thành công đã được client xác nhận** (2xx): thao tác lỗi/quá hạn mà thực ra đã commit thì không bị đòi, cũng không bị cấm.
+7. **Khi retention thật chạy, một số kiểm tra bị bỏ qua** (ví dụ "order đã trả còn dòng outbox"): oracle chỉ nhìn các dòng còn lại cộng với `expectations`.
+8. **Chế độ `child` không có lỗi SQL/publisher**, và retention thật chỉ có ở `inproc`.
+9. **Seed:** ở `test:chaos`, S1-S13 dùng seed ngẫu nhiên nhưng không có rule xác suất nào nên seed chỉ để đặt tên nhật ký; vòng soak ngắn cố định seed 1 (nhập `CHAOS_SEED` để đổi), 15 giây.
+   Chạy lại theo seed tái hiện **kế hoạch** tải/lỗi, không tái hiện cách đan xen thực thi.
+10. **INV-5 là một lượt đối soát thật có autofix**, chạy sau khi INV-1..4 và INV-8 sạch, rồi theo sau là lượt hội tụ thứ hai và lượt kiểm lại INV-1..4 chặt; nó ghi bù trạng thái nên bất kỳ ai sửa oracle
+    phải giữ thứ tự này (xem "Thứ tự kiểm tra của oracle").
+
 ## Giới hạn
 
 - **Không phải test hạ tầng thật.** Lỗi được mô phỏng ở ranh giới ứng dụng: `KILL` session, đóng kết nối AMQP, proxy HTTP, `SIGKILL` tiến trình. Không thử mất mạng thật,
@@ -228,11 +279,14 @@ có lý do mạnh (ADR-0014 giới hạn ở hai seam). Kèm test của chính c
 - **Không phủ phía Orders (C#).** "Orders" là một mô phỏng trong test (`OrdersSimulator`) chỉ ghi nhận sự kiện nhận được và không tự nối lại; hành vi khử trùng, xử lý lý do lạ
   của Orders thật nằm ngoài bộ này.
 - **Chế độ `child` không có lỗi dialect/publisher**, nên S1-S5, S11, S12 và vòng `child` của soak (chỉ có `KILL` ngay, không có rule `KILL` giữa transaction) hẹp hơn vòng `inproc`.
-- **Child không chạy được retention thật:** `loadConfig` thật của dịch vụ từ chối chu kỳ retention lẻ phút và số ngày < 7 cho khóa idempotency của payment, mà test cần chu kỳ ngắn và
+- **Child không chạy được retention thật:** `loadConfig` thật của dịch vụ từ chối chu kỳ retention không phải số phút nguyên (không có chu kỳ lẻ phút) và số ngày giữ < 7 cho
+  khóa idempotency (wallet và payment) và cho `processed_messages` của wallet (đối soát còn đòi >= 30 ngày), mà test cần chu kỳ ngắn và
   dữ liệu "đủ tuổi" trong vài giây. Retention thật chỉ nằm ở S12 và vòng `inproc` của soak.
 - **Windows:** `SIGTERM` kết thúc ngay như `SIGKILL` (không có tắt êm), nên `stop()` của tiến trình con không thử được tắt êm; `SIGKILL` là `TerminateProcess`. Windows tái dùng pid rất nhanh,
   nên `stop()` không dò theo pid sau khi đã xác nhận tiến trình thoát. Chạy Linux/macOS chưa được đo trong tài liệu này.
-- **Cổng cố định theo lần chạy:** mỗi hệ xin cổng trống lúc dựng và giữ nguyên qua restart; chạy hai lượt `test:chaos` song song trên cùng máy chưa được kiểm tra.
+- **Cổng cố định theo lần chạy:** mỗi hệ xin cổng trống lúc dựng (`getFreePort` chỉ dò rồi nhả cổng, dịch vụ chỉ bind sau đó nên có cửa sổ đua xác suất thấp với tiến trình khác trên máy)
+  và giữ nguyên cổng qua restart; chạy hai lượt `test:chaos` song song trên cùng máy chưa được kiểm tra. Vì restart bind lại đúng cổng cũ nên `waitReady` (gọi `GET /health`) sẽ chấp nhận
+  bất kỳ máy chủ nào trả 200 ở cổng đó, kể cả không phải tiến trình vừa sinh (chỉ nguy hiểm khi có tiến trình lạ chiếm cổng giữa hai lần restart).
 - **Oracle giả định retention tắt** trừ khi `retentionDeletes`: khi retention thật chạy, oracle chỉ nhìn các dòng còn lại và bỏ kiểm "order đã trả còn dòng outbox" (vì dòng `SENT` cũ có thể đã bị dọn).
 - Lỗi mà bộ này tìm thấy được xử lý theo chính sách ở ADR-0014: lỗi nhỏ, rõ thì sửa ngay bằng commit riêng kèm test; lỗi lớn hoặc cần quyết định thiết kế thì ghi vào [chaos-findings](chaos-findings.vi.md).
 
