@@ -8,6 +8,7 @@ import {
   InvariantViolationError,
   isMissingAtWallet,
   reconcileDaysOf,
+  readWalletSnapshot,
   runInvariants,
   reconciliationRunner,
   runReconciliationViaHttp,
@@ -336,11 +337,19 @@ describe('oracle INV-1..INV-4 trên hệ chạy bình thường', () => {
     const s = sys();
     const flaky = (real: Kysely<unknown>): Kysely<unknown> => {
       let calls = 0;
+      const failEveryOther = (): void => {
+        calls += 1;
+        if (calls % 2 === 1) throw new Error('mất kết nối một lần');
+      };
       return {
         getExecutor: () => {
-          calls += 1;
-          if (calls % 2 === 1) throw new Error('mất kết nối một lần');
+          failEveryOther();
           return real.getExecutor();
+        },
+        // Đọc snapshot phía wallet (readWalletSnapshot) mở transaction; cũng hỏng một lần rồi mới chạy.
+        transaction: () => {
+          failEveryOther();
+          return real.transaction();
         },
       } as unknown as Kysely<unknown>;
     };
@@ -1776,6 +1785,61 @@ describe('S7: mất webhook có chủ ý (expectMissingAtWallet) và đối soá
     });
   });
 
+  it('never tolerates a charge whose webhook is DELIVERED: the wallet received it but did not credit', async () => {
+    const s = sysLost();
+    const charge = await sql<{ id: string }>`
+      select id from charges where reference = ${lostTopupId}`.execute(s.paymentAdmin);
+    const chargeId = charge.rows[0]?.id as string;
+    await sql`
+      update webhook_events set status = 'DELIVERED', delivered_at = sysutcdatetime()
+      where charge_id = ${chargeId}`.execute(s.paymentAdmin);
+    try {
+      const spy = spyRunner();
+      const violations = await runInvariants(s, {
+        expectMissingAtWallet: true,
+        reconcileRunner: spy.runner,
+      });
+      expect(codesOf(violations, 'INV-3')).toContain('MISSING_AT_WALLET_WEBHOOK_DELIVERED');
+      expect(
+        violations.find((v) => v.code === 'MISSING_AT_WALLET_WEBHOOK_DELIVERED')?.detail,
+      ).toEqual({ chargeIds: [chargeId] });
+      expect(spy.calls).toEqual([]); // không đối soát, không che lỗi
+      expect(await topupState(s, 'acme', lostTopupId)).toMatchObject({
+        status: 'PENDING',
+        txCount: 0,
+      });
+    } finally {
+      await sql`
+        update webhook_events set status = 'FAILED', delivered_at = null
+        where charge_id = ${chargeId}`.execute(s.paymentAdmin);
+    }
+  });
+
+  it('reads the wallet side in one SNAPSHOT: a topup completing between two reads is invisible to both', async () => {
+    const s = sysLost();
+    const read = (db: Kysely<unknown>) =>
+      sql<{ failure_code: string | null }>`
+        select failure_code from t_acme.topups where id = ${lostTopupId}`.execute(db);
+    const seen = await readWalletSnapshot(s, async (db) => {
+      const first = (await read(db)).rows[0]?.failure_code ?? null;
+      // Một writer khác commit GIỮA hai lần đọc (mô phỏng webhook hoàn tất lần nạp): snapshot không được thấy.
+      await sql`update t_acme.topups set failure_code = 'SNAPSHOT_PROBE' where id = ${lostTopupId}`.execute(
+        s.walletAdmin,
+      );
+      const second = (await read(db)).rows[0]?.failure_code ?? null;
+      return { first, second };
+    });
+    try {
+      expect(seen).toEqual({ first: null, second: null });
+      // Ngoài snapshot thì thấy ngay: đúng là writer đã commit.
+      expect((await read(s.walletAdmin)).rows[0]?.failure_code).toBe('SNAPSHOT_PROBE');
+    } finally {
+      await sql`update t_acme.topups set failure_code = null where id = ${lostTopupId}`.execute(
+        s.walletAdmin,
+      );
+    }
+  });
+
   it('with the flag passes and reconciliation credits the lost topup exactly once (and again is a no-op)', async () => {
     const s = sysLost();
     const spy = spyRunner();
@@ -2323,7 +2387,7 @@ describe('oracle INV-8: dịch vụ sống (chế độ child, dừng hẳn từ
     } finally {
       await s.stop();
     }
-  });
+  }, 240_000); // hai tiến trình con thật, hai lần crash + dựng lại: thời gian dao động mạnh theo tải máy
 
   it('treats a service that answers /health but cannot read through its pool as a READ_FAILED', async () => {
     const s = sys();

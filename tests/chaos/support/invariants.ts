@@ -414,8 +414,55 @@ function chargeTenant(metadata: string | null): string | undefined {
   }
 }
 
+interface TopupLedgerEntry {
+  id: string;
+  business_key: string;
+  account_id: string | null;
+  amount: string | null;
+  currency: string | null;
+}
+
+/**
+ * Đọc phía wallet (hàm `read`) trong MỘT giao dịch SNAPSHOT: mọi truy vấn trong đó thấy cùng một thời điểm nhất quán. Không có
+ * nó, một lần nạp hoàn tất giữa hai truy vấn (topup PENDING đọc trước, giao dịch sổ cái vừa ghi đọc sau) tạo ra vi phạm giả
+ * dù ApplyPaymentResult ghi sổ cái và cập nhật topup trong cùng một transaction. Harness bật ALLOW_SNAPSHOT_ISOLATION cho DB wallet.
+ */
+export function readWalletSnapshot<T>(
+  system: System,
+  read: (db: Kysely<unknown>) => Promise<T>,
+): Promise<T> {
+  return adminQuery(system.walletAdmin, (db) =>
+    db
+      .transaction()
+      .setIsolationLevel('snapshot')
+      .execute((trx) => read(trx)),
+  );
+}
+
 async function checkInv3(system: System, tenants: Tenant[]): Promise<Violation[]> {
   const out: Violation[] = [];
+  // THỨ TỰ NHÂN QUẢ: đọc wallet (một snapshot) TRƯỚC payment. Ghi có ở wallet luôn theo sau charge SUCCEEDED bên payment, nên
+  // phần đọc payment (muộn hơn) chắc chắn thấy mọi charge mà wallet đã ghi có; đọc ngược lại thì charge/topup lệch pha.
+  const walletSide = await readWalletSnapshot(system, async (db) => {
+    const read = new Map<string, { topups: TopupRow[]; entries: TopupLedgerEntry[] }>();
+    for (const tenant of tenants) {
+      const topups = (
+        await sql<TopupRow>`select id, account_id, amount, currency, status, charge_id, failure_code from ${table(tenant, 'topups')}`.execute(
+          db,
+        )
+      ).rows;
+      const entries = (
+        await sql<TopupLedgerEntry>`
+        select x.id, x.business_key, e.account_id, e.amount, a.currency
+        from ${table(tenant, 'ledger_transactions')} x
+        left join ${table(tenant, 'ledger_entries')} e on e.transaction_id = x.id
+        left join ${table(tenant, 'accounts')} a on a.id = e.account_id
+        where x.kind = 'TOPUP'`.execute(db)
+      ).rows;
+      read.set(tenant.name, { topups, entries });
+    }
+    return read;
+  });
   const charges = await rows(
     system.paymentAdmin,
     sql<ChargeRow>`select id, reference, amount, currency, status, metadata from charges`,
@@ -434,10 +481,10 @@ async function checkInv3(system: System, tenants: Tenant[]): Promise<Violation[]
   const ledgerTotals = new Map<string, number>(); // `${tenant}|${currency}` → tổng TOPUP trong sổ cái
   const chargeRefs = new Map<string, string[]>(); // chargeId → ['tenant/topupId']
   for (const tenant of tenants) {
-    const topups = await rows(
-      system.walletAdmin,
-      sql<TopupRow>`select id, account_id, amount, currency, status, charge_id, failure_code from ${table(tenant, 'topups')}`,
-    );
+    const { topups, entries } = walletSide.get(tenant.name) as {
+      topups: TopupRow[];
+      entries: TopupLedgerEntry[];
+    };
     topupsOf.set(tenant.name, new Map(topups.map((t) => [t.id, t])));
     for (const topup of topups) {
       if (topup.charge_id === null) continue;
@@ -447,21 +494,6 @@ async function checkInv3(system: System, tenants: Tenant[]): Promise<Violation[]
       ]);
     }
 
-    const entries = await rows(
-      system.walletAdmin,
-      sql<{
-        id: string;
-        business_key: string;
-        account_id: string | null;
-        amount: string | null;
-        currency: string | null;
-      }>`
-        select x.id, x.business_key, e.account_id, e.amount, a.currency
-        from ${table(tenant, 'ledger_transactions')} x
-        left join ${table(tenant, 'ledger_entries')} e on e.transaction_id = x.id
-        left join ${table(tenant, 'accounts')} a on a.id = e.account_id
-        where x.kind = 'TOPUP'`,
-    );
     const txns = new Map<string, { businessKey: string; credits: Map<string, number> }>();
     for (const entry of entries) {
       const txn = txns.get(entry.id) ?? { businessKey: entry.business_key, credits: new Map() };
@@ -855,7 +887,7 @@ export type ReconcileRunner = (
   pass: 1 | 2,
 ) => Promise<ReconcileRun>;
 
-const RECONCILE_TIMEOUT_MS = 60_000;
+export const RECONCILE_TIMEOUT_MS = 60_000;
 
 async function walletJson<T>(
   system: System,
@@ -1669,8 +1701,24 @@ export async function runInvariants(
   if (has('INV-3')) {
     const inv3 = await checkInv3(system, tenants);
     if (options.expectMissingAtWallet === true && explainedByMissingAtWallet(inv3)) {
-      for (const v of inv3.filter(isMissingAtWallet)) {
-        remembered.add(`${String(v.detail?.tenant)}/${String(v.detail?.chargeId)}`);
+      const missing = inv3.filter(isMissingAtWallet);
+      // Chỉ tha khi webhook của charge đó THỰC SỰ không tới được wallet (FAILED hết lượt, hoặc chưa có sự kiện). Webhook đã
+      // DELIVERED (wallet trả 2xx) mà topup vẫn chưa ghi có nghĩa là wallet nhận mà không xử lý: lỗi thật, không bao giờ được tha.
+      const delivered = await deliveredWebhookCharges(
+        system,
+        missing.map((v) => String(v.detail?.chargeId)),
+      );
+      if (delivered.length > 0) {
+        strict.push(...inv3, {
+          invariant: 'INV-3',
+          code: 'MISSING_AT_WALLET_WEBHOOK_DELIVERED',
+          message: `webhook đã DELIVERED nhưng wallet chưa ghi có (không thể do mất webhook): charge ${listIds(delivered)}`,
+          detail: { chargeIds: delivered },
+        });
+      } else {
+        for (const v of missing) {
+          remembered.add(`${String(v.detail?.tenant)}/${String(v.detail?.chargeId)}`);
+        }
       }
     } else {
       strict.push(...inv3);
@@ -1746,6 +1794,21 @@ export function explainedByMissingAtWallet(violations: readonly Violation[]): bo
     if (actual.get(key) !== amount) return false;
   }
   return true;
+}
+
+/** Các charge trong danh sách mà payment ghi nhận webhook đã DELIVERED (wallet đã trả 2xx). */
+async function deliveredWebhookCharges(
+  system: System,
+  chargeIds: readonly string[],
+): Promise<string[]> {
+  if (chargeIds.length === 0) return [];
+  const found = await rows(
+    system.paymentAdmin,
+    sql<{ charge_id: string }>`
+      select distinct charge_id from webhook_events
+      where status = 'DELIVERED' and charge_id in (${sql.join(chargeIds)})`,
+  );
+  return found.map((r) => r.charge_id);
 }
 
 /** Ném InvariantViolationError nêu từng vi phạm cùng id cụ thể (tenant, orderId, topupId, accountId…). */

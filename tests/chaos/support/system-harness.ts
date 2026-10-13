@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { inject } from 'vitest';
-import { createDatabase, migrate, type DatabaseConfig } from '@billing/database';
+import { createDatabase, dateTime, migrate, type DatabaseConfig } from '@billing/database';
 import {
   createTestBroker,
   createTestDatabase,
@@ -266,6 +266,9 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
   let paymentToWallet: HttpFaultProxy | undefined;
   let wallet: Handle | undefined;
   let payment: Handle | undefined;
+  // Lúc (đồng hồ máy, UTC) tiến trình wallet hiện tại bắt đầu dựng: lượt đối soát RUNNING bắt đầu TRƯỚC mốc này là của tiến
+  // trình đã chết (mồ côi), không bao giờ tự kết thúc (failStaleRuns chỉ sau 30 phút) nên heal() đánh dấu FAILED thay vì chờ.
+  let walletLaunchedAt = new Date(0);
   // Mọi tiến trình con từng sinh (kể cả đã bị crash): stop() giết và xác nhận từng pid không còn tồn tại.
   const allChildren: ChildService[] = [];
   let stopPromise: Promise<void> | undefined;
@@ -321,6 +324,8 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
     paymentDbHandle = await createTestDatabase('chaos_payment');
     walletAdmin = createDatabase<unknown>(walletDbHandle.config);
     paymentAdmin = createDatabase<unknown>(paymentDbHandle.config);
+    // Oracle đọc phía wallet (topups + sổ cái) trong MỘT giao dịch SNAPSHOT để không bao giờ thấy trạng thái lệch pha.
+    await sql`alter database current set allow_snapshot_isolation on`.execute(walletAdmin);
     await migrate(paymentAdmin, paymentMigrations);
     await provisionTenants(walletAdmin, tenants);
 
@@ -394,6 +399,7 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
     };
 
     const launchWallet = async (): Promise<Handle> => {
+      walletLaunchedAt = new Date();
       if (mode === 'child') return launchChild('wallet', walletEnv(walletConfig), walletPort);
       const running = await startWallet(walletConfig, {
         wrapDialect: faultyDialect(plan, { name: 'wallet' }),
@@ -497,6 +503,44 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
           return true;
         },
       });
+      // Tương tự cho topup REQUESTED đang chờ retry theo backoff (hoặc lease 60s): gửi lại luôn an toàn vì khóa idempotency cố định
+      // (S9 cũng dựa vào đó). Nhờ vậy heal() không trả về khi một lần nạp sắp hoàn tất NGAY SAU đó, giữa lúc oracle đang đọc.
+      list.push({
+        name: 'đẩy nhanh retry của topup REQUESTED',
+        check: async () => {
+          for (const tenant of tenantNames) {
+            await sql`
+              update ${sql.id(`t_${tenant}`)}.topups set next_attempt_at = sysutcdatetime()
+              where status = 'REQUESTED' and next_attempt_at > sysutcdatetime()`.execute(
+              adminWallet,
+            );
+          }
+          return true;
+        },
+      });
+      // Lượt đối soát RUNNING của tiến trình wallet đã chết sẽ không bao giờ kết thúc (failStaleRuns chỉ sau 30 phút): đánh dấu
+      // FAILED qua kết nối quản trị rồi ghi vào OpLog; lượt của tiến trình hiện tại thì được chờ (điều kiện bên dưới).
+      list.push({
+        name: 'đóng các lượt đối soát mồ côi',
+        check: async () => {
+          for (const tenant of tenantNames) {
+            const result = await sql`
+              update ${sql.id(`t_${tenant}`)}.reconciliation_runs
+              set status = 'FAILED', finished_at = sysutcdatetime(),
+                  failure_reason = 'chaos: orphaned by a wallet crash/restart'
+              where status = 'RUNNING' and started_at < ${dateTime(walletLaunchedAt)}`.execute(
+              adminWallet,
+            );
+            if (Number(result.numAffectedRows ?? 0) > 0) {
+              log.record('heal.orphaned-reconciliation-runs', {
+                tenant,
+                count: Number(result.numAffectedRows),
+              });
+            }
+          }
+          return true;
+        },
+      });
       for (const tenant of tenantNames) {
         const schema = sql.id(`t_${tenant}`);
         list.push({
@@ -517,6 +561,18 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
               sql<{
                 n: number;
               }>`select count(*) as n from ${schema}.reconciliation_runs where status = 'RUNNING'`,
+            )) === 0,
+        });
+        // Dù cho phép topup treo (PENDING chờ đối soát, FAILED...), KHÔNG được còn topup REQUESTED: nó vẫn đang được gửi/retry
+        // và có thể hoàn tất đúng lúc oracle đọc (webhook + ghi sổ cái xảy ra giữa hai truy vấn của oracle).
+        list.push({
+          name: `topups ${tenant} còn REQUESTED`,
+          check: async () =>
+            (await count(
+              adminWallet,
+              sql<{
+                n: number;
+              }>`select count(*) as n from ${schema}.topups where status = 'REQUESTED'`,
             )) === 0,
         });
         if (allowUnsettledTopups) continue;

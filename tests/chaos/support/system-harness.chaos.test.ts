@@ -214,6 +214,59 @@ describe('in-process system harness', () => {
     await s.heal({ timeoutMs: 15_000 });
   });
 
+  it('heal() marks a RUNNING run left by a previous wallet process as FAILED instead of hanging on it', async () => {
+    const s = sys();
+    await s.heal();
+    const id = `chaos-orphan-${Date.now()}`;
+    await sql`
+      insert into t_acme.reconciliation_runs
+        (id, run_day, status, triggered_by, gateway_totals, wallet_totals, item_count, started_at)
+      values (${id}, '2000-01-02', 'RUNNING', 'MANUAL', '{}', '{}', 0, dateadd(hour, -1, sysutcdatetime()))`.execute(
+      s.walletAdmin,
+    );
+    await s.heal({ timeoutMs: 15_000 });
+    const run = await sql<{ status: string; failure_reason: string | null }>`
+      select status, failure_reason from t_acme.reconciliation_runs where id = ${id}`.execute(
+      s.walletAdmin,
+    );
+    expect(run.rows[0]?.status).toBe('FAILED');
+    expect(run.rows[0]?.failure_reason).toMatch(/chaos: orphaned/);
+    expect(s.log.entries().some((e) => e.kind === 'heal.orphaned-reconciliation-runs')).toBe(true);
+  });
+
+  it('heal({ allowUnsettledTopups }) still waits for a REQUESTED topup whose retry is in the future', async () => {
+    const s = sys();
+    expect((await s.openWallet('acme', 'h-req')).status).toBe(201);
+    s.plan.clear();
+    s.plan.enable();
+    s.plan.add({
+      point: 'wallet-to-payment.request',
+      nth: 1,
+      label: 'req-503',
+      when: (info) => info.method === 'POST' && String(info.url).includes('/charges'),
+      action: (info) => {
+        info.decision = { status: 503 };
+      },
+    });
+    const topup = await s.topup('acme', 'h-req', 10_000, 'k-req');
+    const statusOf = async (): Promise<{ status: string; attempts: number }> => {
+      const r = await sql<{ status: string; attempts: number }>`
+        select status, attempts from t_acme.topups where id = ${topup.topupId as string}`.execute(
+        s.walletAdmin,
+      );
+      return r.rows[0] as { status: string; attempts: number };
+    };
+    // Lần đầu bị 503: topup REQUESTED, retry theo backoff ~1s nằm trong tương lai.
+    await waitFor(async () => s.plan.fired('req-503') === 1 && (await statusOf()).attempts >= 1, {
+      timeoutMs: 20_000,
+      intervalMs: 20,
+    });
+    expect((await statusOf()).status).toBe('REQUESTED');
+    await s.heal({ allowUnsettledTopups: true });
+    // heal() không được trả về khi topup còn đang chờ retry: nó được đẩy nhanh và hoàn tất trước khi heal() xong.
+    expect((await statusOf()).status).not.toBe('REQUESTED');
+  });
+
   it('heal() accelerates the outbox backoff: a row due in 10 minutes is delivered within seconds', async () => {
     const s = sys();
     s.plan.enable();
