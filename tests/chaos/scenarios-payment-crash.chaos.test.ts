@@ -3,6 +3,7 @@ import { signWebhook } from '@billing/contracts';
 import { waitFor } from '@billing/testing';
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { dumpFailedTask } from './support/failure-dump.js';
 import {
   assertSystemInvariants,
   reconcileDaysOf,
@@ -152,14 +153,10 @@ function resetProxyLogs(system: System | undefined): void {
   }
 }
 
-/** Ghi seed và nhật ký thao tác khi test thất bại để dựng lại (tests/chaos/.out/ đã được gitignore). */
+/** Ghi seed, lý do thất bại và nhật ký thao tác khi test thất bại (tests/chaos/.out/ đã được gitignore), rồi heal best-effort. */
 function dumpOnFailure(get: () => System | undefined): void {
   afterEach(async (ctx) => {
-    const system = get();
-    if (ctx.task.result?.state !== 'fail' || system === undefined) return;
-    const name = `${ctx.task.name.replace(/[^a-z0-9]+/gi, '-').slice(0, 60)}-seed${system.seed}`;
-    const path = await system.log.writeTo(OUT_DIR, name);
-    console.error(`[chaos] seed=${system.seed}, nhật ký thao tác: ${path}`);
+    await dumpFailedTask(ctx.task, get(), OUT_DIR);
   });
 }
 
@@ -429,7 +426,9 @@ describe('S6-S8: payment and webhook faults (in-process)', () => {
   it('S8: webhook held back while reconciliation credits first: the late webhook changes nothing and is acknowledged', async () => {
     const s = sys();
     expect((await s.openWallet(TENANT, 's8b')).status).toBe(201);
-    const HOLD_MS = 8_000;
+    // Giữ webhook đủ lâu để đối soát (vài trăm ms tới ~2 s) xong TRƯỚC, nhưng phải còn dư so với timeout 10 s của bên gửi webhook
+    // của payment (nếu giữ quá sát, payment bỏ cuộc và gửi lại, attempts thành 2): 6 s chừa biên ~4 s ở cả hai phía.
+    const HOLD_MS = 6_000;
     s.plan.add({
       point: 'payment-to-wallet.request',
       when: isWebhookPost,

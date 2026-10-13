@@ -36,6 +36,7 @@ export function createPrng(seed: number): Prng {
   return {
     next,
     int(min, max) {
+      if (min > max) throw new Error(`int: min (${min}) lớn hơn max (${max})`);
       return min + Math.floor(next() * (max - min + 1));
     },
     chance(p) {
@@ -52,10 +53,11 @@ export function createPrng(seed: number): Prng {
   };
 }
 
-// CHAOS_SEED hợp lệ là số nguyên thập phân 0..2^32-1; không đặt thì chọn ngẫu nhiên.
-export function resolveSeed(env: NodeJS.ProcessEnv): number {
+// CHAOS_SEED hợp lệ là số nguyên thập phân 0..2^32-1; không đặt thì dùng `defaultSeed` (nếu có) hoặc chọn ngẫu nhiên.
+// Giá trị đặt mà không hợp lệ luôn ném lỗi (không bao giờ lặng lẽ rơi về seed khác).
+export function resolveSeed(env: NodeJS.ProcessEnv, defaultSeed?: number): number {
   const raw = env.CHAOS_SEED;
-  if (raw === undefined || raw === '') return randomInt(0, MAX_SEED);
+  if (raw === undefined || raw === '') return defaultSeed ?? randomInt(0, MAX_SEED);
   if (!/^\d+$/.test(raw) || Number(raw) > MAX_SEED) {
     throw new Error(
       `CHAOS_SEED không hợp lệ: ${JSON.stringify(raw)} (cần số nguyên 0..${MAX_SEED})`,

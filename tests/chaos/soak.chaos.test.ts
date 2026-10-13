@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createPrng } from './support/prng.js';
+import { createPrng, resolveSeed } from './support/prng.js';
 import {
   planFaults,
   planWorkerOps,
@@ -29,8 +29,8 @@ describe('soak: machinery and short fixed-seed round', () => {
   });
 
   it('keeps every invariant in one short fixed-seed round (inproc)', async () => {
-    const raw = process.env.CHAOS_SEED;
-    const seed = raw === undefined || raw === '' ? DEFAULT_SEED : Number(raw);
+    // Cùng cách kiểm tra với resolveSeed: CHAOS_SEED sai ném lỗi, không đặt thì dùng DEFAULT_SEED.
+    const seed = resolveSeed(process.env, DEFAULT_SEED);
     console.info(`chaos seed=${seed} rounds=1 mode=inproc`);
     await runSoakRounds({
       seed,

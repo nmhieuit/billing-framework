@@ -206,6 +206,8 @@ export interface SoakReport {
   opErrors: number;
   /** Số thao tác trả 2xx theo loại: chứng minh từng loại tải thực sự chạy được (không bị bỏ qua lặng lẽ). */
   succeeded: Partial<Record<OpKind, number>>;
+  /** Số thao tác đã BẮT ĐẦU theo loại (kể cả thao tác lỗi/quá hạn): mẫu số của `assertLoadLiveness`. */
+  attempted: Partial<Record<OpKind, number>>;
   /** Có lỗi nào thuộc nhóm làm webhook/charge mất hợp lệ không (quyết định độ chặt của INV-3 ở settleAndJudge). */
   webhookAffecting: boolean;
 }
@@ -468,6 +470,7 @@ export async function runSoakRound(input: {
   const opsStarted = Array.from({ length: SOAK_WORKERS }, () => 0);
   let opErrors = 0;
   const succeeded: Partial<Record<OpKind, number>> = {};
+  const attempted: Partial<Record<OpKind, number>> = {};
   const shared: Shared = { reversible: [], last: new Map() };
   const startedAt = Date.now();
   const deadline = startedAt + durationMs;
@@ -478,6 +481,7 @@ export async function runSoakRound(input: {
     for (let i = 0; Date.now() < deadline; i += 1) {
       const plan = drawOp(stream);
       opsStarted[index] = i + 1;
+      attempted[plan.kind] = (attempted[plan.kind] ?? 0) + 1;
       system.log.record('soak.op', { w: index, i, kind: plan.kind });
       try {
         const status = await withTimeout(runOp(system, plan, index, i, shared), OP_TIMEOUT_MS);
@@ -524,8 +528,33 @@ export async function runSoakRound(input: {
     opsStarted,
     opErrors,
     succeeded,
+    attempted,
     webhookAffecting: executed.some((s) => WEBHOOK_AFFECTING.has(s.kind)),
   };
+}
+
+/** Loại tải chính phải chứng minh được "chạy thật" và số lần thử tối thiểu để đòi chứng minh đó. */
+export const LIVENESS_KINDS = ['topup', 'order', 'adjust', 'read', 'freeze'] as const;
+export const LIVENESS_MIN_ATTEMPTS = 5;
+
+/**
+ * Kiểm tra sức sống của chính tải (không phải oracle): vòng soak phải thực sự chạy được thao tác, không bị bỏ qua lặng lẽ.
+ *  - ít nhất một thao tác thành công (2xx), bất kể độ dài vòng;
+ *  - mỗi loại chính (LIVENESS_KINDS) đã được thử >= LIVENESS_MIN_ATTEMPTS lần thì phải thành công ít nhất một lần.
+ * Tỉ lệ theo số lần THỰC SỰ thử, không theo giờ: loại hiếm (freeze trọng số 4%) có thể không được bốc trúng trong vòng 20 s
+ * (chỉ ~40 thao tác vì lỗi làm chậm tải) mà không có gì hỏng; còn đã thử đủ nhiều mà không bao giờ thành công thì là lỗi thật.
+ */
+export function assertLoadLiveness(
+  report: Pick<SoakReport, 'succeeded' | 'attempted'>,
+  minAttempts: number = LIVENESS_MIN_ATTEMPTS,
+): void {
+  const totalSucceeded = Object.values(report.succeeded).reduce((a, b) => a + (b ?? 0), 0);
+  if (totalSucceeded === 0) throw new Error('không thao tác tải nào thành công');
+  for (const op of LIVENESS_KINDS) {
+    const attempts = report.attempted[op] ?? 0;
+    if (attempts >= minAttempts && (report.succeeded[op] ?? 0) === 0)
+      throw new Error(`loại tải ${op} chưa từng thành công dù đã thử ${attempts} lần`);
+  }
 }
 
 /**
@@ -580,6 +609,7 @@ export async function runSoakRounds(input: {
     const realRetention = prng.fork('retention').chance(1 / 3) && kind === 'inproc';
     const startedAt = Date.now();
     let system: System | undefined;
+    let failed = false;
     try {
       const options = {
         seed,
@@ -621,17 +651,12 @@ export async function runSoakRounds(input: {
       });
       const verdict = await settleAndJudge(system, report);
       console.info(
-        `chaos round=${round}/${rounds} mode=${kind} retention=${realRetention} missingAtWallet=${verdict.missingAtWallet} tolerated=${verdict.tolerated} faults=${report.executed.length}/${report.planned.length} ops=${report.opsStarted.reduce((a, b) => a + b, 0)} clientErrors=${report.opErrors} webhookAffecting=${report.webhookAffecting} ${Math.round((Date.now() - startedAt) / 1000)}s`,
+        `chaos round=${round}/${rounds} mode=${kind} retention=${realRetention} missingAtWallet=${verdict.missingAtWallet} tolerated=${verdict.tolerated} faults=${report.executed.length}/${report.planned.length} ops=${report.opsStarted.reduce((a, b) => a + b, 0)} clientErrors=${report.opErrors} succeeded=${JSON.stringify(report.succeeded)} attempted=${JSON.stringify(report.attempted)} webhookAffecting=${report.webhookAffecting} ${Math.round((Date.now() - startedAt) / 1000)}s`,
       );
       if (report.executed.length === 0) throw new Error('lịch lỗi phải thực sự bắn lỗi');
-      // Từng loại tải chính phải thực sự thành công ít nhất một lần (maxSeconds quá ngắn thì bỏ qua kiểm tra này).
-      if (maxSeconds >= 20) {
-        for (const op of ['topup', 'order', 'adjust', 'read', 'freeze'] as const) {
-          if ((report.succeeded[op] ?? 0) === 0)
-            throw new Error(`loại tải ${op} chưa từng thành công`);
-        }
-      }
+      assertLoadLiveness(report);
     } catch (error) {
+      failed = true;
       if (system !== undefined) {
         system.log.record('soak.failure', {
           seed,
@@ -639,13 +664,28 @@ export async function runSoakRounds(input: {
           mode: kind,
           error: error instanceof Error ? error.message : String(error),
         });
-        const path = await system.log.writeTo(outDir, `soak-${seed}-round${round}`);
-        console.error(`[chaos] soak thất bại (seed=${seed}, vòng ${round}); nhật ký: ${path}`);
+        try {
+          const path = await system.log.writeTo(outDir, `soak-${seed}-round${round}`);
+          console.error(`[chaos] soak thất bại (seed=${seed}, vòng ${round}); nhật ký: ${path}`);
+        } catch (writeError) {
+          console.error(
+            `[chaos] không ghi được nhật ký: ${writeError instanceof Error ? writeError.message : String(writeError)}`,
+          );
+        }
       }
       console.error(`[chaos] chạy lại: ${input.rerun(round)}`);
       throw error;
     } finally {
-      await system?.stop();
+      // stop() ném lỗi không được thay thế lỗi gốc đang bay (lỗi của vòng soak): khi đã có lỗi gốc chỉ ghi nhận rồi nuốt;
+      // vòng đạt mà dừng hệ thất bại thì vẫn là lỗi.
+      try {
+        await system?.stop();
+      } catch (stopError) {
+        if (!failed) throw stopError;
+        console.error(
+          `[chaos] system.stop() thất bại (bỏ qua): ${stopError instanceof Error ? stopError.message : String(stopError)}`,
+        );
+      }
       input.onSystem?.(undefined);
     }
   }

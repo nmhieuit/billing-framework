@@ -79,6 +79,11 @@ describe('createPrng', () => {
     expect(() => createPrng(1).pick([])).toThrow();
   });
 
+  it('int ném lỗi khi min > max và chấp nhận min == max', () => {
+    expect(() => createPrng(1).int(5, 4)).toThrow(/min/);
+    expect(createPrng(1).int(5, 5)).toBe(5);
+  });
+
   it('fork(label) ổn định, độc lập với mức tiêu thụ của cha, và khác nhãn khác dãy', () => {
     const a1 = createPrng(100).fork('a');
     const parent = createPrng(100);
@@ -117,6 +122,13 @@ describe('resolveSeed', () => {
       expect(seed).toBeGreaterThanOrEqual(0);
       expect(seed).toBeLessThanOrEqual(4294967295);
     }
+  });
+
+  it('không đặt hoặc rỗng thì dùng seed mặc định cho trước; đặt sai vẫn ném lỗi (không rơi về mặc định)', () => {
+    expect(resolveSeed({}, 1)).toBe(1);
+    expect(resolveSeed({ CHAOS_SEED: '' }, 1)).toBe(1);
+    expect(resolveSeed({ CHAOS_SEED: '7' }, 1)).toBe(7);
+    expect(() => resolveSeed({ CHAOS_SEED: 'abc' }, 1)).toThrow(/CHAOS_SEED/);
   });
 
   it.each(['abc', '-1', '1.5', '4294967296', '1e3', '0x10', ' 5', '5 '])(

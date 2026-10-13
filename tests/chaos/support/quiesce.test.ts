@@ -68,6 +68,39 @@ describe('quiesce', () => {
     expect(calls).toBe(3);
   });
 
+  it('kiểm tra treo bị cắt bằng hạn riêng và lỗi nêu đích danh điều kiện đó', async () => {
+    const started = Date.now();
+    const promise = quiesce(
+      [
+        { name: 'hung-cond', check: () => new Promise<boolean>(() => undefined) },
+        { name: 'ok-cond', check: async () => true },
+      ],
+      { timeoutMs: 400, intervalMs: 5, checkTimeoutMs: 40 },
+    );
+    await expect(promise).rejects.toThrow(/hung-cond \(lỗi cuối: kiểm tra "hung-cond" treo quá/);
+    await expect(promise).rejects.not.toThrow(/ok-cond/);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it('điều kiện từng ném lỗi rồi trả false thì không còn báo lỗi cũ', async () => {
+    let calls = 0;
+    const promise = quiesce(
+      [
+        {
+          name: 'was-throwing',
+          check: async () => {
+            calls += 1;
+            if (calls === 1) throw new Error('lỗi cũ');
+            return false;
+          },
+        },
+      ],
+      { timeoutMs: 60, intervalMs: 5 },
+    );
+    await expect(promise).rejects.toThrow(/was-throwing/);
+    await expect(promise).rejects.not.toThrow(/lỗi cũ/);
+  });
+
   it('điều kiện luôn ném lỗi thì hết hạn và thông báo kèm lỗi cuối cùng', async () => {
     const promise = quiesce(
       [

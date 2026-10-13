@@ -7,7 +7,7 @@ import type { System } from './support/system-harness.js';
 /**
  * Bài SOAK DÀI, chạy riêng bằng `corepack pnpm test:chaos:soak` (cấu hình vitest.chaos-soak.config.ts, không nằm trong
  * `test:chaos`). Seed ngẫu nhiên trừ khi đặt CHAOS_SEED; dòng `chaos seed=<n> rounds=<m> mode=<mode>` luôn được in
- * (script đã đặt --silent=false vì vitest ẩn console của test đạt).
+ * (cấu hình vitest.chaos-soak.config.ts đặt `silent: false` vì vitest ẩn console của test đạt).
  *
  * Biến môi trường: CHAOS_SEED, CHAOS_ROUNDS (3), CHAOS_MAX_SECONDS (30, mỗi vòng),
  * CHAOS_MODE = inproc | child | mixed (mặc định mixed: vòng lẻ inproc, vòng chẵn child).

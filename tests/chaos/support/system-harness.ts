@@ -96,8 +96,10 @@ export interface System {
   readonly paymentUrl: string;
   readonly walletDb: DatabaseConfig;
   readonly paymentDb: DatabaseConfig;
-  /** Kết nối quản trị riêng, KHÔNG bị plan can thiệp. */
-  /** Lưu ý: killSessions(walletDb) cũng giết các session trong pool của walletAdmin; dùng adminQuery() để thử lại một lần. */
+  /**
+   * Kết nối quản trị riêng, KHÔNG bị plan can thiệp. Lưu ý: killSessions(walletDb) cũng giết các session trong pool của
+   * walletAdmin; dùng adminQuery() để thử lại một lần.
+   */
   readonly walletAdmin: Kysely<unknown>;
   readonly paymentAdmin: Kysely<unknown>;
   readonly broker: TestBroker;
@@ -515,9 +517,7 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
               update ${sql.id(`t_${tenant}`)}.topups set next_attempt_at = sysutcdatetime()
               where status = 'REQUESTED'
                 and next_attempt_at > dateadd(second, 5, sysutcdatetime())
-                and next_attempt_at <= dateadd(second, 55, sysutcdatetime())`.execute(
-              adminWallet,
-            );
+                and next_attempt_at <= dateadd(second, 55, sysutcdatetime())`.execute(adminWallet);
           }
           return true;
         },

@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { waitFor } from '@billing/testing';
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { dumpFailedTask } from './support/failure-dump.js';
 import { assertSystemInvariants, collectViolations } from './support/invariants.js';
 import { killSessions } from './support/sql-faults.js';
 import { adminQuery, createSystem, type System } from './support/system-harness.js';
@@ -33,14 +34,10 @@ const balanceOf = async (s: System, customer: string): Promise<number> =>
     )[0]?.balance,
   );
 
-/** Ghi seed và nhật ký thao tác khi test thất bại để dựng lại (tests/chaos/.out/ đã được gitignore). */
+/** Ghi seed, lý do thất bại và nhật ký thao tác khi test thất bại (tests/chaos/.out/ đã được gitignore), rồi heal best-effort. */
 function dumpOnFailure(get: () => System | undefined): void {
   afterEach(async (ctx) => {
-    const system = get();
-    if (ctx.task.result?.state !== 'fail' || system === undefined) return;
-    const name = `${ctx.task.name.replace(/[^a-z0-9]+/gi, '-').slice(0, 60)}-seed${system.seed}`;
-    const path = await system.log.writeTo(OUT_DIR, name);
-    console.error(`[chaos] seed=${system.seed}, nhật ký thao tác: ${path}`);
+    await dumpFailedTask(ctx.task, get(), OUT_DIR);
   });
 }
 
@@ -305,7 +302,7 @@ describe('S11 and S13: ops actions and pool recovery (in-process)', () => {
     await assertSystemInvariants(s);
   });
 
-  it('S13: all sessions killed while idle: the next request to each service succeeds (after at most one client retry)', async () => {
+  it('S13: all sessions killed while idle: the next request to each service succeeds with exactly one attempt (no client retry needed)', async () => {
     const s = sys();
     const customer = 's13';
     await fundedWallet(s, customer, 100_000);
@@ -550,7 +547,9 @@ describe('S12: real retention cut in the middle of a batch (in-process)', () => 
     await s.restartWallet();
     await waitFor(() => s.plan.fired('s12-kill') === 1, { timeoutMs: 60_000, intervalMs: 50 });
 
-    // Lưu ý: sau khi lô 2 của outbox_sent bị giết, lượt dọn vẫn chạy tiếp các chính sách sau (processed_messages, idempotency_keys)\n    // nên KHÔNG khẳng định gì về inbox/khóa idempotency tại điểm cắt, chỉ về outbox và các dòng trẻ.\n    // Lượt bị cắt: đúng lô 1 của outbox đã xóa (5 dòng), phần còn lại của outbox đủ tuổi còn nguyên; dòng trẻ không mất.
+    // Lưu ý: sau khi lô 2 của outbox_sent bị giết, lượt dọn vẫn chạy tiếp các chính sách sau (processed_messages, idempotency_keys)
+    // nên KHÔNG khẳng định gì về inbox/khóa idempotency tại điểm cắt, chỉ về outbox và các dòng trẻ.
+    // Lượt bị cắt: đúng lô 1 của outbox đã xóa (5 dòng), phần còn lại của outbox đủ tuổi còn nguyên; dòng trẻ không mất.
     const cut = await census(s);
     expect(cut.outboxEligible).toBe(before.outboxEligible - 5);
     expect(cut.outboxYoung).toBe(before.outboxYoung);

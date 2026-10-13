@@ -42,6 +42,19 @@ const SECRET_KEY = /PASSWORD|SECRET|TOKEN/i;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** `work` thắng thì trả kết quả của nó; hết `ms` thì trả false. Timer luôn được hủy để không treo vòng lặp sự kiện. */
+export async function raceTimeout(work: Promise<true>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Tiến trình con còn sống: dùng để kiểm tra "không để lại mồ côi" (signal 0 không gửi gì, chỉ dò tồn tại). */
 export function isProcessAlive(pid: number): boolean {
   try {
@@ -149,10 +162,10 @@ export async function spawnChildService(input: {
   const kill = async (): Promise<void> => {
     if (!hasExited) child.kill('SIGKILL');
     // Chặn trên: SIGKILL mà không thoát được là bất thường, báo rõ thay vì treo cả test.
-    const done = await Promise.race([
+    const done = await raceTimeout(
       exited.then(() => true),
-      sleep(KILL_TIMEOUT_MS).then(() => false),
-    ]);
+      KILL_TIMEOUT_MS,
+    );
     if (!done) throw describeFailure(`không thoát sau ${KILL_TIMEOUT_MS}ms kể từ SIGKILL`);
   };
 
@@ -164,10 +177,10 @@ export async function spawnChildService(input: {
     async stop() {
       if (hasExited) return;
       child.kill('SIGTERM');
-      const gracefully = await Promise.race([
+      const gracefully = await raceTimeout(
         exited.then(() => true),
-        sleep(10_000).then(() => false),
-      ]);
+        10_000,
+      );
       if (!gracefully) await kill();
     },
     async waitReady(timeoutMs = 90_000) {

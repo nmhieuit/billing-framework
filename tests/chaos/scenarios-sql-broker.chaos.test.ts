@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { waitFor } from '@billing/testing';
 import { sql } from 'kysely';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { dumpFailedTask } from './support/failure-dump.js';
 import { assertSystemInvariants } from './support/invariants.js';
 import { killSessions } from './support/sql-faults.js';
 import { adminQuery, createSystem, type System } from './support/system-harness.js';
@@ -42,12 +43,10 @@ beforeEach(() => {
   afterHandled = undefined;
 });
 
-// Thất bại thì ghi seed và nhật ký thao tác để dựng lại (tests/chaos/.out/ đã được gitignore).
+// Thất bại thì ghi seed, lý do và nhật ký thao tác để dựng lại (tests/chaos/.out/ đã được gitignore), rồi heal best-effort
+// để hệ dùng chung không đổ lỗi dây chuyền sang test sau.
 afterEach(async (ctx) => {
-  if (ctx.task.result?.state !== 'fail' || system === undefined) return;
-  const name = `${ctx.task.name.replace(/[^a-z0-9]+/gi, '-').slice(0, 60)}-seed${system.seed}`;
-  const path = await system.log.writeTo(OUT_DIR, name);
-  console.error(`[chaos] seed=${system.seed}, nhật ký thao tác: ${path}`);
+  await dumpFailedTask(ctx.task, system, OUT_DIR);
 });
 
 afterAll(async () => {
