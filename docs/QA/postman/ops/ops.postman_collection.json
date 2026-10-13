@@ -4814,6 +4814,521 @@
         }
       ],
       "description": "Negative và edge case của ops tools."
+    },
+    {
+      "name": "EndPoints",
+      "item": [
+        {
+          "name": "Wallet ops",
+          "item": [
+            {
+              "name": "POST /ops/wallets/:customerId/freeze",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{ep_cust}}/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{ep_cust}}",
+                    "freeze"
+                  ]
+                },
+                "description": "## Mục đích\nĐóng băng ví: ví đóng băng không trả được order (`WALLET_FROZEN`); nạp tiền, điều chỉnh, đảo vẫn chạy.\n\n## Nguồn\n- `services/wallet/src/interface/http/ops.controller.ts:51`\n- `services/wallet/src/application/freeze-wallet.ts:45`\n- `services/wallet/src/interface/http/ops.controller.ts:39`\n- `services/wallet/src/interface/http/ops.guard.ts:37`\n- `services/wallet/src/domain/ops.ts:14`\n\n## Điều kiện / Header bắt buộc\n| Header | Bắt buộc | Ý nghĩa | Lỗi khi thiếu/sai |\n| --- | --- | --- | --- |\n| `x-tenant-id` | Có | Tenant (mặc định `acme`, `beta` ở local) | 400 MISSING_TENANT; 403 UNKNOWN_TENANT |\n| `x-actor-id` | Có | Người vận hành, 1..100 ký tự sau khi cắt khoảng trắng; ghi vào `ops_actions.actor` | 401 MISSING_ACTOR |\n| `x-actor-role` | Có | Phải đúng `OPS` | 403 FORBIDDEN_ROLE |\n| `content-type` | Có (khi có body) | `application/json` | 400 INVALID_REQUEST nếu body không parse được |\n\n## Path / Query params\n| Tên | Kiểu | Bắt buộc | Giới hạn | Mặc định |\n| --- | --- | --- | --- | --- |\n| `customerId` | string (path) | Có | `^[A-Za-z0-9_-]{1,64}$` | `{{ep_cust}}` |\n\n## Body\n| Trường | Kiểu | Bắt buộc | Giới hạn |\n| --- | --- | --- | --- |\n| `reason` | string | Có | Cắt khoảng trắng, 1..500 ký tự (`domain/ops.ts` `MAX_REASON`) |\n| `idempotencyKey` | string | Có | Cắt khoảng trắng, 1..200 ký tự (`MAX_IDEMPOTENCY_KEY`); khóa chỉ có nghĩa trong một tenant |\n\n## Enum cho phép\n**Lý do thất bại order khi ví đóng băng (`reason` của `OrderPaymentFailedV1`)** (nguồn: `packages/contracts/src/events.ts:75`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `WALLET_FROZEN` | Ví đang đóng băng |\n| `INSUFFICIENT_FUNDS` | Không đủ tiền |\n| `WALLET_NOT_FOUND` | Khách chưa có ví |\n| `CURRENCY_MISMATCH` | Sai đồng tiền |\n| `CONFLICT` | Order đã trả khác nội dung / đã bị đảo |\n\n## Response\n`200` `{customerId:string, frozen:boolean, changed:boolean, frozenAt:ISO|null, actionId:string|null}`; no-op ⇒ `changed:false`, `actionId:null`, không ghi nhật ký.\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 401 | MISSING_ACTOR | Thiếu `x-actor-id` | services/wallet/src/interface/http/ops.guard.ts:37 |\n| 403 | FORBIDDEN_ROLE | `x-actor-role` khác `OPS` | services/wallet/src/interface/http/ops.guard.ts:40 |\n| 400 | MISSING_TENANT | Thiếu hoặc rỗng header `x-tenant-id` | services/wallet/src/interface/http/errors.ts:67 |\n| 403 | UNKNOWN_TENANT | Tenant không được wallet phục vụ (kể cả sai định dạng `^[a-z][a-z0-9-]{0,39}$`) | services/wallet/src/interface/http/errors.ts:68 |\n| 400 | INVALID_REQUEST | Body không phải JSON object; trường sai kiểu; customer id sai định dạng; số tiền/đồng tiền không hợp lệ | services/wallet/src/interface/http/errors.ts:76 |\n| 422 | INVALID_OPS_REQUEST | `reason`/`idempotencyKey` rỗng hoặc quá dài; `direction`/`amount`/`currency` sai | services/wallet/src/interface/http/errors.ts:114 |\n| 404 | WALLET_NOT_FOUND | Khách chưa có ví | services/wallet/src/interface/http/errors.ts:79 |\n| 409 | IDEMPOTENCY_CONFLICT | Cùng `idempotencyKey` nhưng khác thao tác/đối tượng/tham số | services/wallet/src/interface/http/errors.ts:119 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s -X POST \"$WALLET_BASE_URL/ops/wallets/qa-c1/freeze\" -H \"x-tenant-id: acme\" -H \"x-actor-id: qa.tester\" -H \"x-actor-role: OPS\" -H \"content-type: application/json\" -d '{\"reason\":\"qa\",\"idempotencyKey\":\"k1\"}'\n```\n\n## Ghi chú test nhanh\n- Ví `{{ep_cust}}` được folder `EndPoints` tự tạo (qua `POST /wallets` VND, idempotent) trước mỗi request; không cần chuẩn bị gì thêm.\n- Mỗi lần gọi sinh `idempotencyKey` mới; gửi lại cùng khóa trả đúng kết quả cũ.\n- Thao tác đổi trạng thái ghi một dòng `ops_actions` (bảng chỉ thêm, không xóa được).\n- Gọi lại với khóa mới để thấy no-op (`changed:false`).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"qa endpoints\",\n  \"idempotencyKey\": \"{{ep_idem}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [200]\", function () { pm.expect([200]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "POST /ops/wallets/:customerId/unfreeze",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{ep_cust}}/unfreeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{ep_cust}}",
+                    "unfreeze"
+                  ]
+                },
+                "description": "## Mục đích\nMở băng ví.\n\n## Nguồn\n- `services/wallet/src/interface/http/ops.controller.ts:65`\n- `services/wallet/src/application/freeze-wallet.ts:60`\n- `services/wallet/src/interface/http/ops.controller.ts:39`\n- `services/wallet/src/interface/http/ops.guard.ts:37`\n- `services/wallet/src/domain/ops.ts:14`\n\n## Điều kiện / Header bắt buộc\n| Header | Bắt buộc | Ý nghĩa | Lỗi khi thiếu/sai |\n| --- | --- | --- | --- |\n| `x-tenant-id` | Có | Tenant (mặc định `acme`, `beta` ở local) | 400 MISSING_TENANT; 403 UNKNOWN_TENANT |\n| `x-actor-id` | Có | Người vận hành, 1..100 ký tự sau khi cắt khoảng trắng; ghi vào `ops_actions.actor` | 401 MISSING_ACTOR |\n| `x-actor-role` | Có | Phải đúng `OPS` | 403 FORBIDDEN_ROLE |\n| `content-type` | Có (khi có body) | `application/json` | 400 INVALID_REQUEST nếu body không parse được |\n\n## Path / Query params\n| Tên | Kiểu | Bắt buộc | Giới hạn | Mặc định |\n| --- | --- | --- | --- | --- |\n| `customerId` | string (path) | Có | `^[A-Za-z0-9_-]{1,64}$` | `{{ep_cust}}` |\n\n## Body\n| Trường | Kiểu | Bắt buộc | Giới hạn |\n| --- | --- | --- | --- |\n| `reason` | string | Có | Cắt khoảng trắng, 1..500 ký tự (`domain/ops.ts` `MAX_REASON`) |\n| `idempotencyKey` | string | Có | Cắt khoảng trắng, 1..200 ký tự (`MAX_IDEMPOTENCY_KEY`); khóa chỉ có nghĩa trong một tenant |\n\n## Response\n`200` `{customerId:string, frozen:boolean, changed:boolean, frozenAt:ISO|null, actionId:string|null}`; no-op ⇒ `changed:false`, `actionId:null`, không ghi nhật ký.\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 401 | MISSING_ACTOR | Thiếu `x-actor-id` | services/wallet/src/interface/http/ops.guard.ts:37 |\n| 403 | FORBIDDEN_ROLE | `x-actor-role` khác `OPS` | services/wallet/src/interface/http/ops.guard.ts:40 |\n| 400 | MISSING_TENANT | Thiếu hoặc rỗng header `x-tenant-id` | services/wallet/src/interface/http/errors.ts:67 |\n| 403 | UNKNOWN_TENANT | Tenant không được wallet phục vụ (kể cả sai định dạng `^[a-z][a-z0-9-]{0,39}$`) | services/wallet/src/interface/http/errors.ts:68 |\n| 400 | INVALID_REQUEST | Body không phải JSON object; trường sai kiểu; customer id sai định dạng; số tiền/đồng tiền không hợp lệ | services/wallet/src/interface/http/errors.ts:76 |\n| 422 | INVALID_OPS_REQUEST | `reason`/`idempotencyKey` rỗng hoặc quá dài; `direction`/`amount`/`currency` sai | services/wallet/src/interface/http/errors.ts:114 |\n| 404 | WALLET_NOT_FOUND | Khách chưa có ví | services/wallet/src/interface/http/errors.ts:79 |\n| 409 | IDEMPOTENCY_CONFLICT | Cùng `idempotencyKey` nhưng khác thao tác/đối tượng/tham số | services/wallet/src/interface/http/errors.ts:119 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s -X POST \"$WALLET_BASE_URL/ops/wallets/qa-c1/unfreeze\" -H \"x-tenant-id: acme\" -H \"x-actor-id: qa.tester\" -H \"x-actor-role: OPS\" -H \"content-type: application/json\" -d '{\"reason\":\"qa\",\"idempotencyKey\":\"k2\"}'\n```\n\n## Ghi chú test nhanh\n- Ví `{{ep_cust}}` được folder `EndPoints` tự tạo (qua `POST /wallets` VND, idempotent) trước mỗi request; không cần chuẩn bị gì thêm.\n- Mỗi lần gọi sinh `idempotencyKey` mới; gửi lại cùng khóa trả đúng kết quả cũ.\n- Thao tác đổi trạng thái ghi một dòng `ops_actions` (bảng chỉ thêm, không xóa được).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"qa endpoints\",\n  \"idempotencyKey\": \"{{ep_idem}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [200]\", function () { pm.expect([200]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "POST /ops/wallets/:customerId/adjustments",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{ep_cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{ep_cust}}",
+                    "adjustments"
+                  ]
+                },
+                "description": "## Mục đích\nĐiều chỉnh số dư bằng một giao dịch `ADJUSTMENT` hai dòng (CREDIT cộng ví, DEBIT trừ ví).\n\n## Nguồn\n- `services/wallet/src/interface/http/ops.controller.ts:79`\n- `services/wallet/src/application/adjust-wallet.ts:38`\n- `services/wallet/src/application/adjust-wallet.ts:41`\n- `services/wallet/src/interface/http/ops.controller.ts:39`\n- `services/wallet/src/interface/http/ops.guard.ts:37`\n- `services/wallet/src/domain/ops.ts:14`\n\n## Điều kiện / Header bắt buộc\n| Header | Bắt buộc | Ý nghĩa | Lỗi khi thiếu/sai |\n| --- | --- | --- | --- |\n| `x-tenant-id` | Có | Tenant (mặc định `acme`, `beta` ở local) | 400 MISSING_TENANT; 403 UNKNOWN_TENANT |\n| `x-actor-id` | Có | Người vận hành, 1..100 ký tự sau khi cắt khoảng trắng; ghi vào `ops_actions.actor` | 401 MISSING_ACTOR |\n| `x-actor-role` | Có | Phải đúng `OPS` | 403 FORBIDDEN_ROLE |\n| `content-type` | Có (khi có body) | `application/json` | 400 INVALID_REQUEST nếu body không parse được |\n\n## Path / Query params\n| Tên | Kiểu | Bắt buộc | Giới hạn | Mặc định |\n| --- | --- | --- | --- | --- |\n| `customerId` | string (path) | Có | `^[A-Za-z0-9_-]{1,64}$` | `{{ep_cust}}` |\n\n## Body\n| Trường | Kiểu | Bắt buộc | Giới hạn |\n| --- | --- | --- | --- |\n| `direction` | enum | Có | Xem enum |\n| `amount` | number | Có | Số nguyên an toàn dương (đơn vị nhỏ nhất) |\n| `currency` | enum | Có | Phải khớp đồng tiền của ví |\n| `reason` | string | Có | Cắt khoảng trắng, 1..500 ký tự (`domain/ops.ts` `MAX_REASON`) |\n| `idempotencyKey` | string | Có | Cắt khoảng trắng, 1..200 ký tự (`MAX_IDEMPOTENCY_KEY`); khóa chỉ có nghĩa trong một tenant |\n\n## Enum cho phép\n**Direction** (nguồn: `services/wallet/src/application/adjust-wallet.ts:37`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `CREDIT` | Cộng vào ví |\n| `DEBIT` | Trừ khỏi ví (409 INSUFFICIENT_FUNDS nếu vượt số dư) |\n\n**Currency** (nguồn: `packages/money/src/money.ts:3`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `VND` | Việt Nam đồng; số tiền tính bằng đồng |\n| `USD` | Đô la Mỹ; số tiền tính bằng cent |\n\n## Response\n`201` `{transactionId:string, actionId:string}`. Entry mới có `businessKey` `adjustment:<actionId>`.\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 401 | MISSING_ACTOR | Thiếu `x-actor-id` | services/wallet/src/interface/http/ops.guard.ts:37 |\n| 403 | FORBIDDEN_ROLE | `x-actor-role` khác `OPS` | services/wallet/src/interface/http/ops.guard.ts:40 |\n| 400 | MISSING_TENANT | Thiếu hoặc rỗng header `x-tenant-id` | services/wallet/src/interface/http/errors.ts:67 |\n| 403 | UNKNOWN_TENANT | Tenant không được wallet phục vụ (kể cả sai định dạng `^[a-z][a-z0-9-]{0,39}$`) | services/wallet/src/interface/http/errors.ts:68 |\n| 400 | INVALID_REQUEST | Body không phải JSON object; trường sai kiểu; customer id sai định dạng; số tiền/đồng tiền không hợp lệ | services/wallet/src/interface/http/errors.ts:76 |\n| 422 | INVALID_OPS_REQUEST | `reason`/`idempotencyKey` rỗng hoặc quá dài; `direction`/`amount`/`currency` sai | services/wallet/src/interface/http/errors.ts:114 |\n| 404 | WALLET_NOT_FOUND | Khách chưa có ví | services/wallet/src/interface/http/errors.ts:79 |\n| 409 | INSUFFICIENT_FUNDS | Ví không đủ tiền cho thao tác (DEBIT quá số dư, hoặc đảo CREDIT khi ví đã tiêu) | services/wallet/src/interface/http/errors.ts:160 |\n| 409 | IDEMPOTENCY_CONFLICT | Cùng `idempotencyKey` nhưng khác thao tác/đối tượng/tham số | services/wallet/src/interface/http/errors.ts:119 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s -X POST \"$WALLET_BASE_URL/ops/wallets/qa-c1/adjustments\" -H \"x-tenant-id: acme\" -H \"x-actor-id: qa.tester\" -H \"x-actor-role: OPS\" -H \"content-type: application/json\" -d '{\"direction\":\"CREDIT\",\"amount\":50000,\"currency\":\"VND\",\"reason\":\"qa\",\"idempotencyKey\":\"k3\"}'\n```\n\n## Ghi chú test nhanh\n- Ví `{{ep_cust}}` được folder `EndPoints` tự tạo (qua `POST /wallets` VND, idempotent) trước mỗi request; không cần chuẩn bị gì thêm.\n- Mỗi lần gọi sinh `idempotencyKey` mới; gửi lại cùng khóa trả đúng kết quả cũ.\n- Thao tác đổi trạng thái ghi một dòng `ops_actions` (bảng chỉ thêm, không xóa được).\n- Request này lưu `ep_tx_id` để dùng cho `POST /ops/transactions/:id/reversals`.\n- Biên: `amount` `0`, `-5`, `10.5`, `\"1000\"`; `direction` `UP`; `currency` khác ví (đều 422 INVALID_OPS_REQUEST).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"direction\": \"CREDIT\",\n  \"amount\": 50000,\n  \"currency\": \"VND\",\n  \"reason\": \"qa endpoints\",\n  \"idempotencyKey\": \"{{ep_idem}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [201]\", function () { pm.expect([201]).to.include(pm.response.code); });",
+                      "pm.test(\"Lưu ep_tx_id\", function () { pm.collectionVariables.set(\"ep_tx_id\", String(pm.response.json().transactionId)); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Transactions",
+          "item": [
+            {
+              "name": "POST /ops/transactions/:id/reversals",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/transactions/{{ep_tx_id}}/reversals",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "transactions",
+                    "{{ep_tx_id}}",
+                    "reversals"
+                  ]
+                },
+                "description": "## Mục đích\nĐảo một giao dịch bằng giao dịch `REVERSAL` đối nghịch; giao dịch gốc không bị sửa; mỗi giao dịch chỉ đảo một lần.\n\n## Nguồn\n- `services/wallet/src/interface/http/ops.controller.ts:97`\n- `services/wallet/src/application/reverse-transaction.ts:44`\n- `services/wallet/src/application/reverse-transaction.ts:63`\n- `services/wallet/src/interface/http/ops.controller.ts:39`\n- `services/wallet/src/interface/http/ops.guard.ts:37`\n- `services/wallet/src/domain/ops.ts:14`\n\n## Điều kiện / Header bắt buộc\n| Header | Bắt buộc | Ý nghĩa | Lỗi khi thiếu/sai |\n| --- | --- | --- | --- |\n| `x-tenant-id` | Có | Tenant (mặc định `acme`, `beta` ở local) | 400 MISSING_TENANT; 403 UNKNOWN_TENANT |\n| `x-actor-id` | Có | Người vận hành, 1..100 ký tự sau khi cắt khoảng trắng; ghi vào `ops_actions.actor` | 401 MISSING_ACTOR |\n| `x-actor-role` | Có | Phải đúng `OPS` | 403 FORBIDDEN_ROLE |\n| `content-type` | Có (khi có body) | `application/json` | 400 INVALID_REQUEST nếu body không parse được |\n\n## Path / Query params\n| Tên | Kiểu | Bắt buộc | Giới hạn | Mặc định |\n| --- | --- | --- | --- | --- |\n| `id` | string (path) | Có | Id giao dịch (`tx_...`) từ `POST adjustments` hoặc `OrderPaidV1.walletTransactionId` | `{{ep_tx_id}}` |\n\n## Body\n| Trường | Kiểu | Bắt buộc | Giới hạn |\n| --- | --- | --- | --- |\n| `reason` | string | Có | Cắt khoảng trắng, 1..500 ký tự (`domain/ops.ts` `MAX_REASON`) |\n| `idempotencyKey` | string | Có | Cắt khoảng trắng, 1..200 ký tự (`MAX_IDEMPOTENCY_KEY`); khóa chỉ có nghĩa trong một tenant |\n\n## Enum cho phép\n**Loại giao dịch đảo được / không** (nguồn: `services/wallet/src/domain/ledger-transaction.ts:9`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `ORDER_PAYMENT` | Đảo được |\n| `ADJUSTMENT` | Đảo được |\n| `TOPUP` | Không đảo được (409 REVERSAL_NOT_SUPPORTED) |\n| `REVERSAL` | Không đảo được (409 REVERSAL_NOT_SUPPORTED) |\n\n## Response\n`201` `{transactionId:string, reversesTransactionId:string, actionId:string}`. Entry mới có `businessKey` `reversal:<id gốc>`.\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 401 | MISSING_ACTOR | Thiếu `x-actor-id` | services/wallet/src/interface/http/ops.guard.ts:37 |\n| 403 | FORBIDDEN_ROLE | `x-actor-role` khác `OPS` | services/wallet/src/interface/http/ops.guard.ts:40 |\n| 400 | MISSING_TENANT | Thiếu hoặc rỗng header `x-tenant-id` | services/wallet/src/interface/http/errors.ts:67 |\n| 403 | UNKNOWN_TENANT | Tenant không được wallet phục vụ (kể cả sai định dạng `^[a-z][a-z0-9-]{0,39}$`) | services/wallet/src/interface/http/errors.ts:68 |\n| 422 | INVALID_OPS_REQUEST | `reason`/`idempotencyKey` rỗng hoặc quá dài; `direction`/`amount`/`currency` sai | services/wallet/src/interface/http/errors.ts:114 |\n| 404 | TRANSACTION_NOT_FOUND | Không có giao dịch với id đó | services/wallet/src/interface/http/errors.ts:124 |\n| 409 | ALREADY_REVERSED | Giao dịch đã bị đảo | services/wallet/src/interface/http/errors.ts:134 |\n| 409 | REVERSAL_NOT_SUPPORTED | Giao dịch loại `TOPUP` hoặc `REVERSAL` | services/wallet/src/interface/http/errors.ts:139 |\n| 409 | REVERSAL_NOT_POSSIBLE | Đảo sẽ làm tài khoản đối ứng (MERCHANT) âm | services/wallet/src/interface/http/errors.ts:144 |\n| 409 | INSUFFICIENT_FUNDS | Ví không đủ tiền cho thao tác (DEBIT quá số dư, hoặc đảo CREDIT khi ví đã tiêu) | services/wallet/src/interface/http/errors.ts:160 |\n| 409 | IDEMPOTENCY_CONFLICT | Cùng `idempotencyKey` nhưng khác thao tác/đối tượng/tham số | services/wallet/src/interface/http/errors.ts:119 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s -X POST \"$WALLET_BASE_URL/ops/transactions/$TX_ID/reversals\" -H \"x-tenant-id: acme\" -H \"x-actor-id: qa.tester\" -H \"x-actor-role: OPS\" -H \"content-type: application/json\" -d '{\"reason\":\"qa\",\"idempotencyKey\":\"k4\"}'\n```\n\n## Ghi chú test nhanh\n- Chạy `POST adjustments` trước để có `{{ep_tx_id}}`.\n- Đảo một `ADJUSTMENT CREDIT` khi ví đã tiêu hết → 409 INSUFFICIENT_FUNDS.\n- Gọi lần hai với khóa mới → 409 ALREADY_REVERSED.\n- Thao tác đổi trạng thái ghi một dòng `ops_actions` (bảng chỉ thêm, không xóa được).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"qa endpoints\",\n  \"idempotencyKey\": \"{{ep_idem}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [201]\", function () { pm.expect([201]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Orders",
+          "item": [
+            {
+              "name": "POST /ops/orders/:orderId/replay-paid",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/orders/{{ep_order_id}}/replay-paid",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "orders",
+                    "{{ep_order_id}}",
+                    "replay-paid"
+                  ]
+                },
+                "description": "## Mục đích\nPhát lại `OrderPaidV1` của một order đã trả (khi Orders mất sự kiện): giữ nguyên `eventId` gốc, không đổi sổ cái.\n\n## Nguồn\n- `services/wallet/src/interface/http/ops.controller.ts:106`\n- `services/wallet/src/application/replay-order-paid.ts:4`\n- `services/wallet/src/interface/http/ops.controller.ts:39`\n- `services/wallet/src/interface/http/ops.guard.ts:37`\n- `services/wallet/src/domain/ops.ts:14`\n\n## Điều kiện / Header bắt buộc\n| Header | Bắt buộc | Ý nghĩa | Lỗi khi thiếu/sai |\n| --- | --- | --- | --- |\n| `x-tenant-id` | Có | Tenant (mặc định `acme`, `beta` ở local) | 400 MISSING_TENANT; 403 UNKNOWN_TENANT |\n| `x-actor-id` | Có | Người vận hành, 1..100 ký tự sau khi cắt khoảng trắng; ghi vào `ops_actions.actor` | 401 MISSING_ACTOR |\n| `x-actor-role` | Có | Phải đúng `OPS` | 403 FORBIDDEN_ROLE |\n| `content-type` | Có (khi có body) | `application/json` | 400 INVALID_REQUEST nếu body không parse được |\n\n## Path / Query params\n| Tên | Kiểu | Bắt buộc | Giới hạn | Mặc định |\n| --- | --- | --- | --- | --- |\n| `orderId` | string (path) | Có | `orderId` (UUID) của order đã trả | `{{ep_order_id}}` (UUID ngẫu nhiên: sẽ 404 nếu chưa có order thật) |\n\n## Body\n| Trường | Kiểu | Bắt buộc | Giới hạn |\n| --- | --- | --- | --- |\n| `reason` | string | Có | Cắt khoảng trắng, 1..500 ký tự (`domain/ops.ts` `MAX_REASON`) |\n| `idempotencyKey` | string | Có | Cắt khoảng trắng, 1..200 ký tự (`MAX_IDEMPOTENCY_KEY`); khóa chỉ có nghĩa trong một tenant |\n\n## Response\n`202` `{eventId:string, actionId:string}` (`eventId` là eventId gốc của `OrderPaidV1`).\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 401 | MISSING_ACTOR | Thiếu `x-actor-id` | services/wallet/src/interface/http/ops.guard.ts:37 |\n| 403 | FORBIDDEN_ROLE | `x-actor-role` khác `OPS` | services/wallet/src/interface/http/ops.guard.ts:40 |\n| 400 | MISSING_TENANT | Thiếu hoặc rỗng header `x-tenant-id` | services/wallet/src/interface/http/errors.ts:67 |\n| 403 | UNKNOWN_TENANT | Tenant không được wallet phục vụ (kể cả sai định dạng `^[a-z][a-z0-9-]{0,39}$`) | services/wallet/src/interface/http/errors.ts:68 |\n| 422 | INVALID_OPS_REQUEST | `reason`/`idempotencyKey` rỗng hoặc quá dài; `direction`/`amount`/`currency` sai | services/wallet/src/interface/http/errors.ts:114 |\n| 404 | ORDER_NOT_FOUND | Order chưa có khoản trả ở tenant này | services/wallet/src/interface/http/errors.ts:129 |\n| 409 | ORDER_REVERSED | Khoản trả của order đã bị đảo | services/wallet/src/interface/http/errors.ts:150 |\n| 409 | EVENT_ID_UNKNOWN | Order không có `paid_event_id` để phát lại | services/wallet/src/interface/http/errors.ts:155 |\n| 409 | IDEMPOTENCY_CONFLICT | Cùng `idempotencyKey` nhưng khác thao tác/đối tượng/tham số | services/wallet/src/interface/http/errors.ts:119 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s -X POST \"$WALLET_BASE_URL/ops/orders/$ORDER_ID/replay-paid\" -H \"x-tenant-id: acme\" -H \"x-actor-id: qa.tester\" -H \"x-actor-role: OPS\" -H \"content-type: application/json\" -d '{\"reason\":\"qa\",\"idempotencyKey\":\"k5\"}'\n```\n\n## Ghi chú test nhanh\n- Mặc định dùng UUID ngẫu nhiên nên nhận `404 ORDER_NOT_FOUND`; thay `ep_order_id` bằng orderId đã trả qua RabbitMQ (xem `03-manual-order-payment.md`) để thấy `202`.\n- Cần queue nhận kết quả để xem message phát lại.\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"qa endpoints\",\n  \"idempotencyKey\": \"{{ep_idem}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"ep_order_id\", pm.collectionVariables.get(\"ep_order_id\") || pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [202, 404]\", function () { pm.expect([202, 404]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Audit",
+          "item": [
+            {
+              "name": "GET /ops/actions",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions?limit=20",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    }
+                  ]
+                },
+                "description": "## Mục đích\nXem nhật ký thao tác vận hành của tenant, mới nhất trước.\n\n## Nguồn\n- `services/wallet/src/interface/http/ops.controller.ts:112`\n- `services/wallet/src/application/list-ops-actions.ts:5`\n- `services/wallet/src/application/list-ops-actions.ts:7`\n- `services/wallet/src/domain/ops.ts:1`\n\n## Điều kiện / Header bắt buộc\n| Header | Bắt buộc | Ý nghĩa | Lỗi khi thiếu/sai |\n| --- | --- | --- | --- |\n| `x-tenant-id` | Có | Tenant (mặc định `acme`, `beta` ở local) | 400 MISSING_TENANT; 403 UNKNOWN_TENANT |\n| `x-actor-id` | Có | Người vận hành, 1..100 ký tự sau khi cắt khoảng trắng; ghi vào `ops_actions.actor` | 401 MISSING_ACTOR |\n| `x-actor-role` | Có | Phải đúng `OPS` | 403 FORBIDDEN_ROLE |\n\n## Path / Query params\n| Tên | Kiểu | Bắt buộc | Giới hạn | Mặc định |\n| --- | --- | --- | --- | --- |\n| `limit` | integer (query) | Không | 1..200 | 50 |\n| `cursor` | string (query) | Không | Regex `^[1-9]\\d{0,17}$`; dùng `nextCursor` của trang trước | (trang đầu) |\n\n## Enum cho phép\n**Ops action (`action`)** (nguồn: `services/wallet/src/domain/ops.ts:1`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `FREEZE` | Đóng băng ví |\n| `UNFREEZE` | Mở băng ví |\n| `ADJUST` | Điều chỉnh số dư |\n| `REVERSE` | Đảo giao dịch |\n| `REPLAY_PAID` | Phát lại `OrderPaidV1` |\n\n## Response\n`200` `{items:[{id:string, action:enum, actor:string, reason:string, target:string, createdAt:ISO}], nextCursor:string|null}`. Không trả khóa idempotency, fingerprint hay result.\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 401 | MISSING_ACTOR | Thiếu `x-actor-id` | services/wallet/src/interface/http/ops.guard.ts:37 |\n| 403 | FORBIDDEN_ROLE | `x-actor-role` khác `OPS` | services/wallet/src/interface/http/ops.guard.ts:40 |\n| 400 | MISSING_TENANT | Thiếu hoặc rỗng header `x-tenant-id` | services/wallet/src/interface/http/errors.ts:67 |\n| 403 | UNKNOWN_TENANT | Tenant không được wallet phục vụ (kể cả sai định dạng `^[a-z][a-z0-9-]{0,39}$`) | services/wallet/src/interface/http/errors.ts:68 |\n| 400 | INVALID_QUERY | `limit`/`cursor`/`caseStatus` sai hoặc lặp tham số | services/wallet/src/interface/http/errors.ts:78 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s \"$WALLET_BASE_URL/ops/actions?limit=20\" -H \"x-tenant-id: acme\" -H \"x-actor-id: qa.tester\" -H \"x-actor-role: OPS\"\n```\n\n## Ghi chú test nhanh\n- Cách ly theo tenant: đổi `x-tenant-id` để thấy nhật ký khác.\n- Biên: `limit=0`, `limit=201`, `cursor=0`, `cursor=abc`, tham số lặp (đều 400 INVALID_QUERY).\n"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [200]\", function () { pm.expect([200]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Enum variants",
+          "item": [
+            {
+              "name": "POST /ops/wallets/:customerId/adjustments [direction=DEBIT]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{ep_cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{ep_cust}}",
+                    "adjustments"
+                  ]
+                },
+                "description": "## Mục đích\nĐiều chỉnh **trừ** 1000 khỏi ví. `201` nếu đủ số dư, `409 INSUFFICIENT_FUNDS` nếu không (chạy `adjustments` CREDIT trước để có số dư).\n\n## Nguồn\n- `services/wallet/src/interface/http/ops.controller.ts:79`\n\n## Enum cho phép\n**Direction** (nguồn: `services/wallet/src/application/adjust-wallet.ts:37`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `CREDIT` | Đã có ở request chính |\n| `DEBIT` | Request này: trừ ví |\n\n## Ghi chú test nhanh\n- Biến thể của endpoint chính cùng tên (xem Docs đầy đủ ở folder chính).\n- Đảo giao dịch DEBIT này bằng `POST /ops/transactions/:id/reversals` với `ep_tx_debit_id`.\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"direction\": \"DEBIT\",\n  \"amount\": 1000,\n  \"currency\": \"VND\",\n  \"reason\": \"qa endpoints\",\n  \"idempotencyKey\": \"{{ep_idem}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [201, 409]\", function () { pm.expect([201, 409]).to.include(pm.response.code); });",
+                      "pm.test(\"Lưu ep_tx_debit_id\", function () { pm.collectionVariables.set(\"ep_tx_debit_id\", String((pm.response.code === 201 ? pm.response.json().transactionId : \"\"))); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "POST /ops/transactions/:id/reversals [debit transaction]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/transactions/{{ep_tx_debit_id}}/reversals",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "transactions",
+                    "{{ep_tx_debit_id}}",
+                    "reversals"
+                  ]
+                },
+                "description": "## Mục đích\nĐảo giao dịch `ADJUSTMENT` loại DEBIT vừa tạo (loại giao dịch đảo được: `ADJUSTMENT`, `ORDER_PAYMENT`). `404` nếu chưa chạy request DEBIT thành công.\n\n## Nguồn\n- `services/wallet/src/interface/http/ops.controller.ts:97`\n\n## Enum cho phép\n**Loại giao dịch** (nguồn: `services/wallet/src/domain/ledger-transaction.ts:9`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `ORDER_PAYMENT` | Đảo được |\n| `ADJUSTMENT` | Đảo được (request này) |\n| `TOPUP` | 409 REVERSAL_NOT_SUPPORTED |\n| `REVERSAL` | 409 REVERSAL_NOT_SUPPORTED |\n\n## Ghi chú test nhanh\n- Biến thể của endpoint chính cùng tên (xem Docs đầy đủ ở folder chính).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"qa endpoints\",\n  \"idempotencyKey\": \"{{ep_idem}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [201, 404]\", function () { pm.expect([201, 404]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "description": "Liệt kê mọi endpoint `/ops` của wallet. Chỉ dành cho mạng vận hành; QA tự đặt header x-actor-*. Folder tự tạo ví `ep_cust` (VND) nếu chưa có.",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get(\"ep_cust\")) { pm.collectionVariables.set(\"ep_cust\", \"qa-ep-\" + Date.now().toString(36)); }",
+              "pm.collectionVariables.set(\"ep_today\", new Date().toISOString().slice(0, 10));",
+              "pm.collectionVariables.set(\"ep_key\", pm.variables.replaceIn(\"{{$guid}}\"));",
+              "pm.collectionVariables.set(\"ep_idem\", pm.variables.replaceIn(\"{{$guid}}\"));",
+              "pm.collectionVariables.set(\"ep_run\", Date.now().toString(36));",
+              "pm.sendRequest({ url: pm.environment.get(\"wallet_base_url\") + \"/wallets\", method: \"POST\",",
+              "  header: { \"x-tenant-id\": pm.environment.get(\"tenant_id\"), \"x-customer-id\": pm.collectionVariables.get(\"ep_cust\"), \"content-type\": \"application/json\" },",
+              "  body: { mode: \"raw\", raw: JSON.stringify({ currency: \"VND\" }) } }, function (err, res) { if (err) { console.warn(\"Không tạo được ví ep_cust: \" + err); } });"
+            ]
+          }
+        }
+      ]
     }
   ]
 }

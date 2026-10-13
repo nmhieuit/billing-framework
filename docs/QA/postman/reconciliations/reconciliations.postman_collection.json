@@ -262,7 +262,7 @@
                 "items"
               ]
             },
-            "description": "Các bước đóng ca phía sau chỉ chạy khi environment reconciliation_resolve_enabled = \"true\" VÀ có ca OPEN (đóng ca ghi dữ liệu thật)."
+            "description": "Các bước đóng ca phía sau chỉ kiểm khi environment reconciliation_resolve_enabled = \"true\" VÀ có ca OPEN (đóng ca ghi dữ liệu thật); nếu không, test của chúng được bỏ qua (request vẫn được gửi và nhận 404 vô hại)."
           },
           "response": [],
           "event": [
@@ -276,7 +276,7 @@
                   "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
                   "const resolveOn = pm.environment.get(\"reconciliation_resolve_enabled\") === \"true\";",
                   "const open = pm.response.json().items.find(function (i) { return i.caseStatus === \"OPEN\"; });",
-                  "if (resolveOn && open) { pm.collectionVariables.set(\"item_id\", open.id); } else { postman.setNextRequest(null); }"
+                  "if (resolveOn && open) { pm.collectionVariables.set(\"item_id\", open.id); pm.collectionVariables.set(\"resolve_ready\", \"1\"); } else { pm.collectionVariables.set(\"resolve_ready\", \"\"); }"
                 ]
               }
             }
@@ -324,9 +324,11 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
-                  "pm.test(\".caseStatus = RESOLVED\", function () { const j = pm.response.json(); pm.expect(j.caseStatus).to.eql(\"RESOLVED\"); });",
-                  "pm.test(\".resolvedBy = qa.tester\", function () { const j = pm.response.json(); pm.expect(j.resolvedBy).to.eql(\"qa.tester\"); });"
+                  "if (!pm.collectionVariables.get(\"resolve_ready\")) { pm.test.skip(\"Bỏ qua: chưa bật reconciliation_resolve_enabled hoặc không có ca OPEN\"); } else {",
+                  "  pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "  pm.test(\".caseStatus = RESOLVED\", function () { const j = pm.response.json(); pm.expect(j.caseStatus).to.eql(\"RESOLVED\"); });",
+                  "  pm.test(\".resolvedBy = qa.tester\", function () { const j = pm.response.json(); pm.expect(j.resolvedBy).to.eql(\"qa.tester\"); });",
+                  "}"
                 ]
               }
             }
@@ -374,8 +376,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
-                  "pm.test(\".caseStatus = RESOLVED\", function () { const j = pm.response.json(); pm.expect(j.caseStatus).to.eql(\"RESOLVED\"); });"
+                  "if (!pm.collectionVariables.get(\"resolve_ready\")) { pm.test.skip(\"Bỏ qua: chưa bật reconciliation_resolve_enabled hoặc không có ca OPEN\"); } else {",
+                  "  pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "  pm.test(\".caseStatus = RESOLVED\", function () { const j = pm.response.json(); pm.expect(j.caseStatus).to.eql(\"RESOLVED\"); });",
+                  "}"
                 ]
               }
             }
@@ -423,8 +427,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status 409\", function () { pm.response.to.have.status(409); });",
-                  "pm.test(\"error.code = RECONCILIATION_CONFLICT\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"RECONCILIATION_CONFLICT\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                  "if (!pm.collectionVariables.get(\"resolve_ready\")) { pm.test.skip(\"Bỏ qua: chưa bật reconciliation_resolve_enabled hoặc không có ca OPEN\"); } else {",
+                  "  pm.test(\"Status 409\", function () { pm.response.to.have.status(409); });",
+                  "  pm.test(\"error.code = RECONCILIATION_CONFLICT\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"RECONCILIATION_CONFLICT\"); pm.expect(j.error.message).to.be.a(\"string\"); });",
+                  "}"
                 ]
               }
             }
@@ -1138,7 +1144,7 @@
               ]
             },
             {
-              "name": "REC-017 Run of tenant A is not visible to tenant B (mã chưa xác minh)",
+              "name": "REC-017 Run of tenant A is not visible to tenant B",
               "request": {
                 "method": "GET",
                 "header": [
@@ -1165,7 +1171,8 @@
                   "script": {
                     "type": "text/javascript",
                     "exec": [
-                      "pm.test(\"Status 4xx (mã cụ thể chưa xác minh)\", function () { pm.expect(pm.response.code).to.be.within(400, 499); });"
+                      "pm.test(\"Status 404\", function () { pm.response.to.have.status(404); });",
+                      "pm.test(\"error.code = RECONCILIATION_NOT_FOUND\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"RECONCILIATION_NOT_FOUND\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
                     ]
                   }
                 }
@@ -2131,6 +2138,354 @@
         }
       ],
       "description": "Negative và edge case của đối soát (không ghi dữ liệu ngoài việc tạo lượt chạy)."
+    },
+    {
+      "name": "EndPoints",
+      "item": [
+        {
+          "name": "Runs",
+          "item": [
+            {
+              "name": "POST /reconciliations",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations"
+                  ]
+                },
+                "description": "## Mục đích\nChạy đối soát tay cho một ngày UTC; trả `runId` ngay, phần còn lại chạy nền.\n\n## Nguồn\n- `services/wallet/src/interface/http/reconciliations.controller.ts:40`\n- `services/wallet/src/domain/reconciliation.ts:140`\n- `services/wallet/src/application/start-manual-reconciliation.ts:21`\n- `services/wallet/src/interface/http/reconciliations.controller.ts:28`\n- `services/wallet/src/interface/http/tenant.guard.ts:25`\n\n## Điều kiện / Header bắt buộc\n| Header | Bắt buộc | Ý nghĩa | Lỗi khi thiếu/sai |\n| --- | --- | --- | --- |\n| `x-tenant-id` | Có | Tenant (mặc định `acme`, `beta` ở local) | 400 MISSING_TENANT; 403 UNKNOWN_TENANT |\n| `content-type` | Có (khi có body) | `application/json` | 400 INVALID_REQUEST nếu body không parse được |\n\n## Body\n| Trường | Kiểu | Bắt buộc | Giới hạn |\n| --- | --- | --- | --- |\n| `date` | string | Có | `YYYY-MM-DD` (UTC), đúng lịch, không ở tương lai |\n\n## Enum cho phép\n**Run status (`status` của lượt)** (nguồn: `services/wallet/src/application/ports.ts:254`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `RUNNING` | Đang chạy nền |\n| `COMPLETED` | Xong |\n| `FAILED` | Thất bại (xem `failureReason`; không lưu item nào) |\n\n## Response\n`202` `{runId:string, status:\"RUNNING\"}`. Dùng `GET /reconciliations/:runId` để chờ `COMPLETED`.\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 400 | MISSING_TENANT | Thiếu hoặc rỗng header `x-tenant-id` | services/wallet/src/interface/http/errors.ts:67 |\n| 403 | UNKNOWN_TENANT | Tenant không được wallet phục vụ (kể cả sai định dạng `^[a-z][a-z0-9-]{0,39}$`) | services/wallet/src/interface/http/errors.ts:68 |\n| 400 | INVALID_REQUEST | Body không phải JSON object; trường sai kiểu; customer id sai định dạng; số tiền/đồng tiền không hợp lệ | services/wallet/src/interface/http/errors.ts:76 |\n| 422 | INVALID_RECONCILIATION | `date` sai định dạng/không phải ngày lịch/ở tương lai; `status`/`note`/`resolvedBy` sai | services/wallet/src/interface/http/errors.ts:94 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s -X POST \"$WALLET_BASE_URL/reconciliations\" -H \"x-tenant-id: acme\" -H \"content-type: application/json\" -d '{\"date\":\"2026-10-13\"}'\n```\n\n## Ghi chú test nhanh\n- **Chỉ dành cho mạng vận hành**; chỉ cần `x-tenant-id` (không có `x-actor-*`), nên `resolvedBy` do người gọi tự khai.\n- Cần payment đang chạy để lấy sao kê.\n- Chạy lại tạo lượt mới (lượt cũ bất biến).\n- Biên: `2026/10/13`, `2026-02-30`, ngày mai (đều 422).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"date\": \"{{ep_today}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [202]\", function () { pm.expect([202]).to.include(pm.response.code); });",
+                      "pm.test(\"Lưu ep_run_id\", function () { pm.collectionVariables.set(\"ep_run_id\", String(pm.response.json().runId)); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "GET /reconciliations/:runId",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{ep_run_id}}",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{ep_run_id}}"
+                  ]
+                },
+                "description": "## Mục đích\nXem trạng thái và tổng kiểm của một lượt đối soát.\n\n## Nguồn\n- `services/wallet/src/interface/http/reconciliations.controller.ts:46`\n- `services/wallet/src/application/reconciliation-views.ts:3`\n- `services/wallet/src/application/get-reconciliation-run.ts:2`\n- `services/wallet/src/interface/http/reconciliations.controller.ts:28`\n- `services/wallet/src/interface/http/tenant.guard.ts:25`\n\n## Điều kiện / Header bắt buộc\n| Header | Bắt buộc | Ý nghĩa | Lỗi khi thiếu/sai |\n| --- | --- | --- | --- |\n| `x-tenant-id` | Có | Tenant (mặc định `acme`, `beta` ở local) | 400 MISSING_TENANT; 403 UNKNOWN_TENANT |\n\n## Path / Query params\n| Tên | Kiểu | Bắt buộc | Giới hạn | Mặc định |\n| --- | --- | --- | --- | --- |\n| `runId` | string (path) | Có | `runId` do `POST /reconciliations` trả | `{{ep_run_id}}` |\n\n## Enum cho phép\n**Run status (`status` của lượt)** (nguồn: `services/wallet/src/application/ports.ts:254`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `RUNNING` | Đang chạy nền |\n| `COMPLETED` | Xong |\n| `FAILED` | Thất bại (xem `failureReason`; không lưu item nào) |\n\n**Run trigger (`triggeredBy`)** (nguồn: `services/wallet/src/application/ports.ts:255`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `MANUAL` | Chạy tay qua API |\n| `SCHEDULED` | Lịch hằng ngày (sau `RECONCILE_AT_UTC_HOUR`) |\n\n## Response\n`200` `{id:string, day:\"YYYY-MM-DD\", status, triggeredBy, failureReason:string|null, gatewayTotals:object, walletTotals:object, itemCount:integer, startedAt:ISO, finishedAt:ISO|null}` (`reconciliation-views.ts` `ReconciliationRunView`).\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 400 | MISSING_TENANT | Thiếu hoặc rỗng header `x-tenant-id` | services/wallet/src/interface/http/errors.ts:67 |\n| 403 | UNKNOWN_TENANT | Tenant không được wallet phục vụ (kể cả sai định dạng `^[a-z][a-z0-9-]{0,39}$`) | services/wallet/src/interface/http/errors.ts:68 |\n| 404 | RECONCILIATION_NOT_FOUND | Không có lượt đối soát với `runId` đó | services/wallet/src/interface/http/errors.ts:99 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s \"$WALLET_BASE_URL/reconciliations/$RUN_ID\" -H \"x-tenant-id: acme\"\n```\n\n## Ghi chú test nhanh\n- Trường id của lượt là `id` (không phải `runId`).\n- Tổng kiểm chỉ tham khảo; chỉ item mới là lệch thật.\n"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [200]\", function () { pm.expect([200]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Items",
+          "item": [
+            {
+              "name": "GET /reconciliations/:runId/items",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{ep_run_id}}/items?caseStatus=OPEN&limit=100",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{ep_run_id}}",
+                    "items"
+                  ],
+                  "query": [
+                    {
+                      "key": "caseStatus",
+                      "value": "OPEN"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "100"
+                    }
+                  ]
+                },
+                "description": "## Mục đích\nLiệt kê các ca lệch của một lượt, lọc theo trạng thái ca, phân trang bằng cursor.\n\n## Nguồn\n- `services/wallet/src/interface/http/reconciliations.controller.ts:51`\n- `services/wallet/src/application/list-reconciliation-items.ts:7`\n- `services/wallet/src/application/list-reconciliation-items.ts:26`\n- `services/wallet/src/interface/http/reconciliations.controller.ts:28`\n- `services/wallet/src/interface/http/tenant.guard.ts:25`\n\n## Điều kiện / Header bắt buộc\n| Header | Bắt buộc | Ý nghĩa | Lỗi khi thiếu/sai |\n| --- | --- | --- | --- |\n| `x-tenant-id` | Có | Tenant (mặc định `acme`, `beta` ở local) | 400 MISSING_TENANT; 403 UNKNOWN_TENANT |\n\n## Path / Query params\n| Tên | Kiểu | Bắt buộc | Giới hạn | Mặc định |\n| --- | --- | --- | --- | --- |\n| `runId` | string (path) | Có | Lượt đối soát | `{{ep_run_id}}` |\n| `caseStatus` | enum (query) | Không | `OPEN`/`RESOLVED`/`IGNORED` | (tất cả) |\n| `limit` | integer (query) | Không | 1..500 | 100 |\n| `cursor` | string (query) | Không | Regex `^\\d{1,15}$` (= `nextCursor`) | (trang đầu) |\n\n## Enum cho phép\n**Case status (`caseStatus`)** (nguồn: `services/wallet/src/domain/reconciliation.ts:13`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `OPEN` | Ca còn mở |\n| `RESOLVED` | Đã xử lý |\n| `IGNORED` | Bỏ qua có lý do |\n\n**Loại lệch (`kind`)** (nguồn: `services/wallet/src/domain/reconciliation.ts:3`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `LEDGER_UNBALANCED` | Giao dịch không cân (lỗi toàn vẹn, mức cao nhất) |\n| `BALANCE_MISMATCH` | Số dư cache khác tổng sổ cái (lỗi toàn vẹn) |\n| `MISSING_AT_WALLET` | Payment đã thu tiền nhưng wallet chưa ghi (webhook mất) |\n| `UNKNOWN_CHARGE` | Payment có charge mà wallet không có topup tương ứng |\n| `MISSING_AT_GATEWAY` | Wallet đã cộng tiền nhưng sao kê payment không có charge |\n| `AMOUNT_MISMATCH` | Khác số tiền/đồng tiền |\n| `STATUS_MISMATCH` | Khác trạng thái |\n\n**Autofix action (`action`)** (nguồn: `services/wallet/src/domain/reconciliation.ts:12`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `NONE` | Không tự sửa (hoặc `RECONCILE_AUTOFIX=false`) |\n| `AUTO_APPLIED` | Đã tự ghi bù qua đường nạp bình thường |\n| `FAILED_AUTOFIX` | Tự ghi bù không thành (xem `detail.autofix`) |\n\n## Response\n`200` `{items:[{id, runId, kind, chargeId, topupId, amountGateway, amountWallet, currency, detail:object, action, caseStatus, resolvedBy, resolutionNote, resolvedAt, createdAt}], nextCursor:string|null}`.\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 400 | MISSING_TENANT | Thiếu hoặc rỗng header `x-tenant-id` | services/wallet/src/interface/http/errors.ts:67 |\n| 403 | UNKNOWN_TENANT | Tenant không được wallet phục vụ (kể cả sai định dạng `^[a-z][a-z0-9-]{0,39}$`) | services/wallet/src/interface/http/errors.ts:68 |\n| 400 | INVALID_QUERY | `limit`/`cursor`/`caseStatus` sai hoặc lặp tham số | services/wallet/src/interface/http/errors.ts:78 |\n| 404 | RECONCILIATION_NOT_FOUND | Không có lượt đối soát với `runId` đó | services/wallet/src/interface/http/errors.ts:99 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s \"$WALLET_BASE_URL/reconciliations/$RUN_ID/items?caseStatus=OPEN\" -H \"x-tenant-id: acme\"\n```\n\n## Ghi chú test nhanh\n- Lượt sạch trả `items:[]`.\n- Request này lưu `ep_item_id` (item đầu) cho `POST /reconciliation-items/:id/resolve`.\n- Biên: `limit=0|501|abc|1.5`, `caseStatus=DONE`, `cursor=abc`, tham số lặp (đều 400 INVALID_QUERY).\n"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [200]\", function () { pm.expect([200]).to.include(pm.response.code); });",
+                      "pm.test(\"Lưu item đầu tiên (nếu có)\", function () { const it = pm.response.json().items; if (it && it.length) { pm.collectionVariables.set(\"ep_item_id\", it[0].id); } });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "POST /reconciliation-items/:id/resolve",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliation-items/{{ep_item_id}}/resolve",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliation-items",
+                    "{{ep_item_id}}",
+                    "resolve"
+                  ]
+                },
+                "description": "## Mục đích\nĐóng một ca lệch bằng ghi chú và người xử lý; không sửa sổ cái. Đóng lại cùng giá trị trả cùng kết quả.\n\n## Nguồn\n- `services/wallet/src/interface/http/reconciliations.controller.ts:71`\n- `services/wallet/src/domain/reconciliation.ts:179`\n- `services/wallet/src/application/resolve-reconciliation-item.ts:40`\n- `services/wallet/src/interface/http/reconciliations.controller.ts:28`\n- `services/wallet/src/interface/http/tenant.guard.ts:25`\n\n## Điều kiện / Header bắt buộc\n| Header | Bắt buộc | Ý nghĩa | Lỗi khi thiếu/sai |\n| --- | --- | --- | --- |\n| `x-tenant-id` | Có | Tenant (mặc định `acme`, `beta` ở local) | 400 MISSING_TENANT; 403 UNKNOWN_TENANT |\n| `content-type` | Có (khi có body) | `application/json` | 400 INVALID_REQUEST nếu body không parse được |\n\n## Path / Query params\n| Tên | Kiểu | Bắt buộc | Giới hạn | Mặc định |\n| --- | --- | --- | --- | --- |\n| `id` | string (path) | Có | Id ca (item) từ danh sách | `{{ep_item_id}}` (chỉ có khi đã có ca) |\n\n## Body\n| Trường | Kiểu | Bắt buộc | Giới hạn |\n| --- | --- | --- | --- |\n| `status` | enum | Có | `RESOLVED` hoặc `IGNORED` |\n| `note` | string | Có | 1..500 ký tự (`MAX_NOTE_LENGTH`) |\n| `resolvedBy` | string | Có | 1..64 ký tự; tự khai, không xác thực |\n\n## Enum cho phép\n**Resolve status** (nguồn: `services/wallet/src/domain/reconciliation.ts:179`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `RESOLVED` | Đã xử lý |\n| `IGNORED` | Bỏ qua kèm lý do (ví dụ dương tính giả) |\n\n## Response\n`200` item sau khi đóng (cùng cấu trúc item): `caseStatus`, `resolvedBy`, `resolutionNote`, `resolvedAt`.\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 400 | MISSING_TENANT | Thiếu hoặc rỗng header `x-tenant-id` | services/wallet/src/interface/http/errors.ts:67 |\n| 403 | UNKNOWN_TENANT | Tenant không được wallet phục vụ (kể cả sai định dạng `^[a-z][a-z0-9-]{0,39}$`) | services/wallet/src/interface/http/errors.ts:68 |\n| 400 | INVALID_REQUEST | Body không phải JSON object; trường sai kiểu; customer id sai định dạng; số tiền/đồng tiền không hợp lệ | services/wallet/src/interface/http/errors.ts:76 |\n| 422 | INVALID_RECONCILIATION | `date` sai định dạng/không phải ngày lịch/ở tương lai; `status`/`note`/`resolvedBy` sai | services/wallet/src/interface/http/errors.ts:94 |\n| 404 | RECONCILIATION_ITEM_NOT_FOUND | Không có ca đối soát với id đó | services/wallet/src/interface/http/errors.ts:104 |\n| 409 | RECONCILIATION_CONFLICT | Ca đã đóng với giá trị khác | services/wallet/src/interface/http/errors.ts:109 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s -X POST \"$WALLET_BASE_URL/reconciliation-items/$ITEM_ID/resolve\" -H \"x-tenant-id: acme\" -H \"content-type: application/json\" -d '{\"status\":\"RESOLVED\",\"note\":\"qa\",\"resolvedBy\":\"qa.tester\"}'\n```\n\n## Ghi chú test nhanh\n- **Chỉ dành cho mạng vận hành**; chỉ cần `x-tenant-id` (không có `x-actor-*`), nên `resolvedBy` do người gọi tự khai.\n- Validation chạy **trước** khi tra item, nên id giả vẫn cho 422 với body sai.\n- Không có ca thì request này nhận `404 RECONCILIATION_ITEM_NOT_FOUND` (test chấp nhận 200 hoặc 404).\n- Đóng ca là ghi dữ liệu thật vào ca.\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"RESOLVED\",\n  \"note\": \"qa endpoints\",\n  \"resolvedBy\": \"qa.tester\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [200, 404]\", function () { pm.expect([200, 404]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Enum variants",
+          "item": [
+            {
+              "name": "GET /reconciliations/:runId/items [caseStatus=RESOLVED]",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{ep_run_id}}/items?caseStatus=RESOLVED",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{ep_run_id}}",
+                    "items"
+                  ],
+                  "query": [
+                    {
+                      "key": "caseStatus",
+                      "value": "RESOLVED"
+                    }
+                  ]
+                },
+                "description": "## Mục đích\nChỉ các ca đã `RESOLVED`.\n\n## Nguồn\n- `services/wallet/src/interface/http/reconciliations.controller.ts:51`\n\n## Enum cho phép\n**Case status (`caseStatus`)** (nguồn: `services/wallet/src/domain/reconciliation.ts:13`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `OPEN` | Ca còn mở |\n| `RESOLVED` | Đã xử lý |\n| `IGNORED` | Bỏ qua có lý do |\n\n## Ghi chú test nhanh\n- Biến thể của endpoint chính cùng tên (xem Docs đầy đủ ở folder chính).\n"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [200]\", function () { pm.expect([200]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "GET /reconciliations/:runId/items [caseStatus=IGNORED]",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{ep_run_id}}/items?caseStatus=IGNORED",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{ep_run_id}}",
+                    "items"
+                  ],
+                  "query": [
+                    {
+                      "key": "caseStatus",
+                      "value": "IGNORED"
+                    }
+                  ]
+                },
+                "description": "## Mục đích\nChỉ các ca đã `IGNORED`.\n\n## Nguồn\n- `services/wallet/src/interface/http/reconciliations.controller.ts:51`\n\n## Enum cho phép\n**Case status (`caseStatus`)** (nguồn: `services/wallet/src/domain/reconciliation.ts:13`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `OPEN` | Ca còn mở |\n| `RESOLVED` | Đã xử lý |\n| `IGNORED` | Bỏ qua có lý do |\n\n## Ghi chú test nhanh\n- Biến thể của endpoint chính cùng tên (xem Docs đầy đủ ở folder chính).\n"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [200]\", function () { pm.expect([200]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "POST /reconciliation-items/:id/resolve [status=IGNORED]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliation-items/{{ep_item_id}}/resolve",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliation-items",
+                    "{{ep_item_id}}",
+                    "resolve"
+                  ]
+                },
+                "description": "## Mục đích\nĐóng ca bằng `IGNORED`. `409 RECONCILIATION_CONFLICT` nếu ca đã đóng bằng giá trị khác (ví dụ đã `RESOLVED` ở request chính).\n\n## Nguồn\n- `services/wallet/src/interface/http/reconciliations.controller.ts:71`\n\n## Enum cho phép\n**Resolve status** (nguồn: `services/wallet/src/domain/reconciliation.ts:179`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `RESOLVED` | Đã có ở request chính |\n| `IGNORED` | Request này |\n\n## Ghi chú test nhanh\n- Biến thể của endpoint chính cùng tên (xem Docs đầy đủ ở folder chính).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"IGNORED\",\n  \"note\": \"qa endpoints (ignored)\",\n  \"resolvedBy\": \"qa.tester\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [200, 404, 409]\", function () { pm.expect([200, 404, 409]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "description": "Liệt kê mọi endpoint đối soát của wallet. Chỉ dành cho mạng vận hành.",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get(\"ep_cust\")) { pm.collectionVariables.set(\"ep_cust\", \"qa-ep-\" + Date.now().toString(36)); }",
+              "pm.collectionVariables.set(\"ep_today\", new Date().toISOString().slice(0, 10));",
+              "pm.collectionVariables.set(\"ep_key\", pm.variables.replaceIn(\"{{$guid}}\"));",
+              "pm.collectionVariables.set(\"ep_idem\", pm.variables.replaceIn(\"{{$guid}}\"));",
+              "pm.collectionVariables.set(\"ep_run\", Date.now().toString(36));"
+            ]
+          }
+        }
+      ]
     }
   ]
 }
