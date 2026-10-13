@@ -80,5 +80,8 @@ Exchange tích hợp (`orders.events`, `billing.events`) do script init khai bá
 - `*.integration.test.ts`: cần Docker (`corepack pnpm test:integration`). Một container SQL Server và một container
   RabbitMQ dùng chung cho cả lượt chạy (`@billing/testing`); mỗi test file tự tạo database riêng bằng
   `createTestDatabase` hoặc vhost riêng bằng `createTestBroker`.
+- `*.chaos.test.ts` (`tests/chaos/`) và `*.soak.test.ts`: gây lỗi có chủ đích, cần Docker (`corepack pnpm test:chaos`,
+  `corepack pnpm test:chaos:soak`); không nằm trong `test` hay `test:integration`. Xem
+  [chaos-testing](../ops/chaos-testing.vi.md) và [ADR-0014](../adr/0014-chaos-tests-in-process-and-child.vi.md).
 - Test trong `domain/` và `application/` không import `kysely` hay `infrastructure/` (lint cấm); chúng dùng
   `services/<tên>/src/test-support.ts`.
