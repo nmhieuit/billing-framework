@@ -60,6 +60,22 @@ rồi mới đặt `RETENTION_DRY_RUN=false` để xóa thật (không hoàn tá
 [`docs/ops/retention.vi.md`](docs/ops/retention.vi.md) (chính sách, quy trình chạy thử sang xóa thật, đọc metric và rule
 `billing-retention-stalled`), [ADR-0012](docs/adr/0012-batched-dry-run-first-retention.vi.md).
 
+## Chaos test
+
+Bộ test cố tình làm hỏng SQL Server (`KILL` session), RabbitMQ (rớt kết nối, publish trùng/mất), đường HTTP wallet ↔ payment
+(5xx, chậm, mất, webhook trùng/muộn) và chính dịch vụ (`SIGKILL`), rồi đối chiếu 8 bất biến về tiền (sổ cái cân, không ghi nợ hai lần,
+nạp tiền khớp payment, outbox ít nhất một lần, đối soát hội tụ, ops nguyên tử, retention an toàn, phục hồi). Cần Docker (testcontainers,
+**không** dùng stack `billing-local`); không nằm trong `test` hay `test:integration`.
+
+```bash
+corepack pnpm test:chaos         # 13 kịch bản xác định (S1-S13), test công cụ và một vòng soak ngắn với seed cố định
+corepack pnpm test:chaos:soak    # bài soak dài, ngẫu nhiên; chỉnh bằng CHAOS_SEED, CHAOS_ROUNDS, CHAOS_MAX_SECONDS, CHAOS_MODE
+```
+
+Hướng dẫn chạy một kịch bản, đọc nhật ký lỗi (`tests/chaos/.out/`), tái hiện từ seed, thêm kịch bản và giới hạn:
+[`docs/ops/chaos-testing.vi.md`](docs/ops/chaos-testing.vi.md); quyết định: [ADR-0014](docs/adr/0014-chaos-tests-in-process-and-child.vi.md);
+kết quả và ghi chú vận hành: [`docs/ops/chaos-findings.vi.md`](docs/ops/chaos-findings.vi.md).
+
 ## Hạ tầng dùng chung với ecommerce
 
 Billing dùng chung nền tảng (SQL Server, RabbitMQ, K8s, CI, observability, Vault) nhưng cô lập dữ liệu:
@@ -189,6 +205,7 @@ corepack pnpm --filter @billing/wallet-service start
 ```bash
 corepack pnpm test               # unit, không cần Docker
 corepack pnpm test:integration   # cần Docker: chạy SQL Server 2022 bằng testcontainers (lần đầu kéo image)
+corepack pnpm test:chaos         # cần Docker: chaos test (mục "Chaos test" ở trên), không nằm trong hai lệnh trên
 ```
 
 Nếu testcontainers báo lỗi khởi động container "reaper" (Ryuk), đặt `TESTCONTAINERS_RYUK_DISABLED=true`.

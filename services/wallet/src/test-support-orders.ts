@@ -100,6 +100,19 @@ export class OrdersSimulator {
     });
   }
 
+  /** Mọi sự kiện kết quả đã nhận, theo thứ tự nhận (loại sự kiện, payload đã parse, messageId). */
+  received(): Array<{
+    eventType: string | undefined;
+    payload: Record<string, unknown>;
+    messageId: string | undefined;
+  }> {
+    return this.results.map((result) => ({
+      eventType: result.type,
+      payload: result.body,
+      messageId: result.messageId,
+    }));
+  }
+
   ready(overrides: Partial<OrderReadyForPaymentV1> = {}): OrderReadyForPaymentV1 {
     return {
       eventId: randomUUID(),

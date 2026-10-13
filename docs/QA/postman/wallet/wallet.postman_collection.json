@@ -1,0 +1,3980 @@
+{
+  "info": {
+    "name": "Billing / Wallet",
+    "description": "Collection Wallet của billing-framework (local stack). Smoke = happy path; Regression = negative/edge. Cần environment `billing-local` (wallet_base_url, tenant_id, tenant_id_other, tenant_unknown, webhook_secret...). Chạy bằng Collection Runner hoặc Newman theo thứ tự (có request lặp bằng postman.setNextRequest). Mọi kỳ vọng suy ra từ code/tài liệu, chưa chạy thật: xem docs/QA/07-postman-smoke.md và 08-postman-regression.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Smoke",
+      "item": [
+        {
+          "name": "HLT-W01 Wallet health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{wallet_base_url}}/health",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Đặt lại run id cho cả lượt Smoke (customer id mới mỗi lần chạy)."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const run = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);",
+                  "pm.collectionVariables.set(\"run\", run);",
+                  "pm.collectionVariables.set(\"cust\", \"qa-smoke-\" + run + \"-a\");",
+                  "pm.collectionVariables.set(\"cust_b\", \"qa-smoke-\" + run + \"-b\");",
+                  "pm.collectionVariables.set(\"cust_none\", \"qa-smoke-\" + run + \"-none\");",
+                  "pm.collectionVariables.set(\"today\", new Date().toISOString().slice(0, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"status\", \"service\"], \"properties\": {\"status\": {\"const\": \"ok\"}, \"service\": {\"const\": \"wallet\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"Response time < 5000 ms\", function () { pm.expect(pm.response.responseTime).to.be.below(5000); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "WLT-001 Create wallet (VND)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallets",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"currency\": \"VND\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Tạo ví mới: 201, balance 0."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"balance = 0 (v\\u00ed m\\u1edbi)\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(0); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "WLT-002 Create wallet again (idempotent)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallets",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"currency\": \"VND\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "WLT-012 Get wallet (balance 0)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallet",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallet"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"balance = 0\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(0); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TOP-001a Request topup 150000",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "idempotency-key",
+                "value": "{{topup_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/topups",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "topups"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"amount\": 150000}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Nạp tiền bất đồng bộ: luôn 202."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"topup_key\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 202\", function () { pm.response.to.have.status(202); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"topupId\", \"status\", \"amount\", \"currency\", \"createdAt\"], \"properties\": {\"topupId\": {\"type\": \"string\"}, \"status\": {\"const\": \"REQUESTED\"}, \"amount\": {\"type\": \"integer\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\".amount = 150000\", function () { const j = pm.response.json(); pm.expect(j.amount).to.eql(150000); });",
+                  "pm.collectionVariables.set(\"topup_id\", String(pm.response.json().topupId));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TOP-001b Poll topup until SUCCEEDED",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/topups/{{topup_id}}",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "topups",
+                "{{topup_id}}"
+              ]
+            },
+            "description": "Lặp lại chính request này (tối đa poll_max_attempts lần, mỗi poll_interval_ms) tới khi SUCCEEDED/FAILED. Cần chạy bằng Collection Runner/Newman (dùng postman.setNextRequest)."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const maxN = parseInt(pm.environment.get(\"poll_max_attempts\") || \"20\", 10);",
+                  "const waitMs = parseInt(pm.environment.get(\"poll_interval_ms\") || \"1000\", 10);",
+                  "const key = \"poll_n_\" + pm.info.requestName;",
+                  "let n = parseInt(pm.collectionVariables.get(key) || \"0\", 10);",
+                  "const j = pm.response.json();",
+                  "const done = [\"SUCCEEDED\",\"FAILED\"].includes(j.status);",
+                  "if (!done && n < maxN) {",
+                  "  pm.collectionVariables.set(key, String(n + 1));",
+                  "  setTimeout(function () {}, waitMs);",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.unset(key);",
+                  "  pm.test(\"Topup kết thúc ở SUCCEEDED (nếu FAILED/hết lượt chờ thì lỗi)\", function () { pm.expect(j.status).to.eql(\"SUCCEEDED\"); });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TOP-001c Get wallet (balance 150000)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallet",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallet"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"balance = 150000\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(150000); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TOP-003 Get topup",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/topups/{{topup_id}}",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "topups",
+                "{{topup_id}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"topupId\", \"status\", \"amount\", \"currency\", \"createdAt\"], \"properties\": {\"topupId\": {\"type\": \"string\"}, \"status\": {\"enum\": [\"REQUESTED\", \"PENDING\", \"SUCCEEDED\", \"FAILED\"]}, \"amount\": {\"type\": \"integer\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\".status = SUCCEEDED\", function () { const j = pm.response.json(); pm.expect(j.status).to.eql(\"SUCCEEDED\"); });",
+                  "pm.test(\"completedAt c\\u00f3 gi\\u00e1 tr\\u1ecb\", function () { const j = pm.response.json(); pm.expect(j.completedAt).to.be.ok; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "IDM-003 Replay topup with same key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "idempotency-key",
+                "value": "{{topup_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/topups",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "topups"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"amount\": 150000}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 202\", function () { pm.response.to.have.status(202); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"topupId\", \"status\", \"amount\", \"currency\", \"createdAt\"], \"properties\": {\"topupId\": {\"type\": \"string\"}, \"status\": {\"const\": \"REQUESTED\"}, \"amount\": {\"type\": \"integer\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"Cùng topupId với lần đầu\", function () { pm.expect(pm.response.json().topupId).to.eql(pm.collectionVariables.get(\"topup_id\")); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "IDM-003b Balance unchanged after replay",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallet",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallet"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"balance = 150000\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(150000); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "LED-001 List ledger entries",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallet/entries",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallet",
+                "entries"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"items\", \"nextCursor\"], \"properties\": {\"items\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"required\": [\"entryId\", \"transactionId\", \"businessKey\", \"amount\", \"createdAt\"], \"properties\": {\"entryId\": {\"type\": \"integer\"}, \"transactionId\": {\"type\": \"string\"}, \"businessKey\": {\"type\": \"string\"}, \"amount\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}}}, \"nextCursor\": {\"type\": [\"string\", \"null\"]}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"Có ≥ 1 entry\", function () { pm.expect(pm.response.json().items.length).to.be.at.least(1); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "LED-002 Entries sum equals balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallet/entries?limit=1000",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallet",
+                "entries"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "1000"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Tổng entries = 150000 (chưa xác minh dấu entry; xem tài liệu)\", function () { const s = pm.response.json().items.reduce(function (a, e) { return a + e.amount; }, 0); pm.expect(s).to.eql(150000); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TEN-001a Same customer in other tenant: create wallet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id_other}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallets",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"currency\": \"VND\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Cùng customer id ở tenant khác là ví độc lập."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"balance = 0 (v\\u00ed m\\u1edbi)\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(0); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TEN-001b Other tenant balance is 0",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id_other}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallet",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallet"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"balance = 0\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(0); });"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Luồng happy path: tạo ví, nạp tiền (qua payment và webhook), kiểm số dư/sổ cái, idempotency, tenant."
+    },
+    {
+      "name": "Regression",
+      "item": [
+        {
+          "name": "Setup",
+          "item": [
+            {
+              "name": "SETUP-W01 Health + init run",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{wallet_base_url}}/health",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "health"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const run = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);",
+                      "pm.collectionVariables.set(\"run\", run);",
+                      "pm.collectionVariables.set(\"cust\", \"qa-reg-\" + run + \"-a\");",
+                      "pm.collectionVariables.set(\"cust_b\", \"qa-reg-\" + run + \"-b\");",
+                      "pm.collectionVariables.set(\"cust_none\", \"qa-reg-\" + run + \"-none\");",
+                      "pm.collectionVariables.set(\"today\", new Date().toISOString().slice(0, 10));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"status\", \"service\"], \"properties\": {\"status\": {\"const\": \"ok\"}, \"service\": {\"const\": \"wallet\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "SETUP-W02 Create wallet A",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"VND\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\"balance = 0 (v\\u00ed m\\u1edbi)\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(0); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "SETUP-W03 Create wallet B (second customer)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust_b}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"VND\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\"balance = 0 (v\\u00ed m\\u1edbi)\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(0); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "SETUP-W04 Topup A 100000",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_setup1}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 100000}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_setup1\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 202\", function () { pm.response.to.have.status(202); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"topupId\", \"status\", \"amount\", \"currency\", \"createdAt\"], \"properties\": {\"topupId\": {\"type\": \"string\"}, \"status\": {\"const\": \"REQUESTED\"}, \"amount\": {\"type\": \"integer\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\".amount = 100000\", function () { const j = pm.response.json(); pm.expect(j.amount).to.eql(100000); });",
+                      "pm.collectionVariables.set(\"topup_a1\", String(pm.response.json().topupId));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "SETUP-W05 Poll topup A1",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups/{{topup_a1}}",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups",
+                    "{{topup_a1}}"
+                  ]
+                },
+                "description": "Lặp lại chính request này (tối đa poll_max_attempts lần, mỗi poll_interval_ms) tới khi SUCCEEDED/FAILED. Cần chạy bằng Collection Runner/Newman (dùng postman.setNextRequest)."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const maxN = parseInt(pm.environment.get(\"poll_max_attempts\") || \"20\", 10);",
+                      "const waitMs = parseInt(pm.environment.get(\"poll_interval_ms\") || \"1000\", 10);",
+                      "const key = \"poll_n_\" + pm.info.requestName;",
+                      "let n = parseInt(pm.collectionVariables.get(key) || \"0\", 10);",
+                      "const j = pm.response.json();",
+                      "const done = [\"SUCCEEDED\",\"FAILED\"].includes(j.status);",
+                      "if (!done && n < maxN) {",
+                      "  pm.collectionVariables.set(key, String(n + 1));",
+                      "  setTimeout(function () {}, waitMs);",
+                      "  postman.setNextRequest(pm.info.requestName);",
+                      "} else {",
+                      "  pm.collectionVariables.unset(key);",
+                      "  pm.test(\"Topup kết thúc ở SUCCEEDED (nếu FAILED/hết lượt chờ thì lỗi)\", function () { pm.expect(j.status).to.eql(\"SUCCEEDED\"); });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "SETUP-W06 Topup A 2000 (second entry)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_setup2}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 2000}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_setup2\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 202\", function () { pm.response.to.have.status(202); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"topupId\", \"status\", \"amount\", \"currency\", \"createdAt\"], \"properties\": {\"topupId\": {\"type\": \"string\"}, \"status\": {\"const\": \"REQUESTED\"}, \"amount\": {\"type\": \"integer\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\".amount = 2000\", function () { const j = pm.response.json(); pm.expect(j.amount).to.eql(2000); });",
+                      "pm.collectionVariables.set(\"topup_a2\", String(pm.response.json().topupId));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "SETUP-W07 Poll topup A2",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups/{{topup_a2}}",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups",
+                    "{{topup_a2}}"
+                  ]
+                },
+                "description": "Lặp lại chính request này (tối đa poll_max_attempts lần, mỗi poll_interval_ms) tới khi SUCCEEDED/FAILED. Cần chạy bằng Collection Runner/Newman (dùng postman.setNextRequest)."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const maxN = parseInt(pm.environment.get(\"poll_max_attempts\") || \"20\", 10);",
+                      "const waitMs = parseInt(pm.environment.get(\"poll_interval_ms\") || \"1000\", 10);",
+                      "const key = \"poll_n_\" + pm.info.requestName;",
+                      "let n = parseInt(pm.collectionVariables.get(key) || \"0\", 10);",
+                      "const j = pm.response.json();",
+                      "const done = [\"SUCCEEDED\",\"FAILED\"].includes(j.status);",
+                      "if (!done && n < maxN) {",
+                      "  pm.collectionVariables.set(key, String(n + 1));",
+                      "  setTimeout(function () {}, waitMs);",
+                      "  postman.setNextRequest(pm.info.requestName);",
+                      "} else {",
+                      "  pm.collectionVariables.unset(key);",
+                      "  pm.test(\"Topup kết thúc ở SUCCEEDED (nếu FAILED/hết lượt chờ thì lỗi)\", function () { pm.expect(j.status).to.eql(\"SUCCEEDED\"); });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "Chuẩn bị dữ liệu cho các test bên dưới (ví A có số dư 102000 và ≥ 2 entries)."
+        },
+        {
+          "name": "Wallet / Wallets",
+          "item": [
+            {
+              "name": "WLT-002 Re-create same currency returns 200",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"VND\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WLT-003 Re-create with different currency",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"USD\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 409\", function () { pm.response.to.have.status(409); });",
+                      "pm.test(\"error.code = WALLET_CURRENCY_CONFLICT\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"WALLET_CURRENCY_CONFLICT\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WLT-004 Unsupported currency EUR (mã chưa xác minh)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust_none}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"EUR\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 4xx (mã cụ thể chưa xác minh)\", function () { pm.expect(pm.response.code).to.be.within(400, 499); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WLT-005 Body is array",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "[]",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WLT-006a currency wrong type",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": 123}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WLT-006b currency missing",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WLT-007 Missing tenant",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"VND\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = MISSING_TENANT\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"MISSING_TENANT\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WLT-008 Unknown tenant",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_unknown}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"VND\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 403\", function () { pm.response.to.have.status(403); });",
+                      "pm.test(\"error.code = UNKNOWN_TENANT\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"UNKNOWN_TENANT\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WLT-009 Missing customer",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"VND\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = MISSING_CUSTOMER\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"MISSING_CUSTOMER\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WLT-010a Customer id invalid chars",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "bad id!"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"VND\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WLT-010b Customer id 65 chars",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"VND\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WLT-013 Get wallet that does not exist",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust_none}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 404\", function () { pm.response.to.have.status(404); });",
+                      "pm.test(\"error.code = WALLET_NOT_FOUND\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"WALLET_NOT_FOUND\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Wallet / Topups",
+          "item": [
+            {
+              "name": "TOP-004 Topup not found",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups/does-not-exist",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups",
+                    "does-not-exist"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 404\", function () { pm.response.to.have.status(404); });",
+                      "pm.test(\"error.code = TOPUP_NOT_FOUND\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"TOPUP_NOT_FOUND\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "TOP-005 Other customer cannot read topup (mã chưa xác minh)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust_b}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups/{{topup_a1}}",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups",
+                    "{{topup_a1}}"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 4xx (mã cụ thể chưa xác minh)\", function () { pm.expect(pm.response.code).to.be.within(400, 499); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "TOP-007 Amount 0",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_zero}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 0}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_zero\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "TOP-008 Amount negative",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_neg}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": -1000}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_neg\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "TOP-009 Amount above cap (1e12 + 1)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_cap}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 1000000000001}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_cap\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "TOP-011 Amount decimal",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_dec}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 100.5}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_dec\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "TOP-012a Amount is string",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_str}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": \"1000\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_str\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "TOP-012b Amount missing",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_miss}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_miss\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "TOP-013 Body is array",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_arr}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "[]",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_arr\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "TOP-014 Topup for wallet that does not exist",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust_none}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_nowallet}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 1000}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_nowallet\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 404\", function () { pm.response.to.have.status(404); });",
+                      "pm.test(\"error.code = WALLET_NOT_FOUND\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"WALLET_NOT_FOUND\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Wallet / Idempotency",
+          "item": [
+            {
+              "name": "IDM-001 Missing Idempotency-Key",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 1000}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = MISSING_IDEMPOTENCY_KEY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"MISSING_IDEMPOTENCY_KEY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "IDM-002 Idempotency-Key 256 chars",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{key_256}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 1000}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"key_256\", \"k\".repeat(256));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_IDEMPOTENCY_KEY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_IDEMPOTENCY_KEY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "IDM-003a First topup with key",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_idm}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 1000}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_idm\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 202\", function () { pm.response.to.have.status(202); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"topupId\", \"status\", \"amount\", \"currency\", \"createdAt\"], \"properties\": {\"topupId\": {\"type\": \"string\"}, \"status\": {\"const\": \"REQUESTED\"}, \"amount\": {\"type\": \"integer\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\".amount = 1000\", function () { const j = pm.response.json(); pm.expect(j.amount).to.eql(1000); });",
+                      "pm.collectionVariables.set(\"topup_idm\", String(pm.response.json().topupId));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "IDM-003b Same key and body replays same topup",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_idm}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 1000}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 202\", function () { pm.response.to.have.status(202); });",
+                      "pm.test(\"Cùng topupId\", function () { pm.expect(pm.response.json().topupId).to.eql(pm.collectionVariables.get(\"topup_idm\")); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "IDM-004 Same key, different amount",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_idm}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 2000}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = IDEMPOTENCY_KEY_REUSED\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"IDEMPOTENCY_KEY_REUSED\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "IDM-005 Same key for another customer is independent",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust_b}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_idm}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 1000}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 202\", function () { pm.response.to.have.status(202); });",
+                      "pm.test(\"topupId khác với khách A\", function () { pm.expect(pm.response.json().topupId).to.not.eql(pm.collectionVariables.get(\"topup_idm\")); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "IDM-003c Poll topup of IDM-003a to completion",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups/{{topup_idm}}",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups",
+                    "{{topup_idm}}"
+                  ]
+                },
+                "description": "Lặp lại chính request này (tối đa poll_max_attempts lần, mỗi poll_interval_ms) tới khi SUCCEEDED/FAILED. Cần chạy bằng Collection Runner/Newman (dùng postman.setNextRequest)."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const maxN = parseInt(pm.environment.get(\"poll_max_attempts\") || \"20\", 10);",
+                      "const waitMs = parseInt(pm.environment.get(\"poll_interval_ms\") || \"1000\", 10);",
+                      "const key = \"poll_n_\" + pm.info.requestName;",
+                      "let n = parseInt(pm.collectionVariables.get(key) || \"0\", 10);",
+                      "const j = pm.response.json();",
+                      "const done = [\"SUCCEEDED\",\"FAILED\"].includes(j.status);",
+                      "if (!done && n < maxN) {",
+                      "  pm.collectionVariables.set(key, String(n + 1));",
+                      "  setTimeout(function () {}, waitMs);",
+                      "  postman.setNextRequest(pm.info.requestName);",
+                      "} else {",
+                      "  pm.collectionVariables.unset(key);",
+                      "  pm.test(\"Topup kết thúc ở SUCCEEDED (nếu FAILED/hết lượt chờ thì lỗi)\", function () { pm.expect(j.status).to.eql(\"SUCCEEDED\"); });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Wallet / Ledger",
+          "item": [
+            {
+              "name": "LED-004a limit=0",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet/entries?limit=0",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet",
+                    "entries"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "0"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LED-004b limit=1001",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet/entries?limit=1001",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet",
+                    "entries"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "1001"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LED-004c limit=abc",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet/entries?limit=abc",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet",
+                    "entries"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "abc"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LED-004d limit=1.5",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet/entries?limit=1.5",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet",
+                    "entries"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "1.5"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LED-005 cursor invalid",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet/entries?cursor=abc",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet",
+                    "entries"
+                  ],
+                  "query": [
+                    {
+                      "key": "cursor",
+                      "value": "abc"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LED-006 limit repeated",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet/entries?limit=1&limit=2",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet",
+                    "entries"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "2"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LED-007 Entries of missing wallet",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust_none}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet/entries",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet",
+                    "entries"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 404\", function () { pm.response.to.have.status(404); });",
+                      "pm.test(\"error.code = WALLET_NOT_FOUND\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"WALLET_NOT_FOUND\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LED-003a Page 1 (limit=1)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet/entries?limit=1",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet",
+                    "entries"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "1"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"items\", \"nextCursor\"], \"properties\": {\"items\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"required\": [\"entryId\", \"transactionId\", \"businessKey\", \"amount\", \"createdAt\"], \"properties\": {\"entryId\": {\"type\": \"integer\"}, \"transactionId\": {\"type\": \"string\"}, \"businessKey\": {\"type\": \"string\"}, \"amount\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}}}, \"nextCursor\": {\"type\": [\"string\", \"null\"]}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\"1 item và còn trang sau\", function () { const j = pm.response.json(); pm.expect(j.items.length).to.eql(1); pm.expect(j.nextCursor).to.be.a(\"string\"); pm.collectionVariables.set(\"entries_cursor\", j.nextCursor); pm.collectionVariables.set(\"entries_first\", String(j.items[0].entryId)); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LED-003b Page 2 using nextCursor",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet/entries?limit=1&cursor={{entries_cursor}}",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet",
+                    "entries"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "1"
+                    },
+                    {
+                      "key": "cursor",
+                      "value": "{{entries_cursor}}"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "pm.test(\"Không trùng entry trang 1\", function () { const j = pm.response.json(); pm.expect(j.items.length).to.eql(1); pm.expect(String(j.items[0].entryId)).to.not.eql(pm.collectionVariables.get(\"entries_first\")); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LED-002 Balance equals sum of all topups (102000 + 1000 from IDM-003)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\"balance = 103000\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(103000); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Wallet / Tenant isolation",
+          "item": [
+            {
+              "name": "TEN-001a Same customer id in other tenant is a separate wallet",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id_other}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"VND\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\"balance = 0 (v\\u00ed m\\u1edbi)\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(0); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "TEN-001b Other tenant balance is 0",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id_other}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\"balance = 0\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(0); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "TEN-002 Topup of tenant A not visible in tenant B",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id_other}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups/{{topup_a1}}",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups",
+                    "{{topup_a1}}"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 404\", function () { pm.response.to.have.status(404); });",
+                      "pm.test(\"error.code = TOPUP_NOT_FOUND\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"TOPUP_NOT_FOUND\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "TEN-003 Entries are not shared across tenants",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id_other}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet/entries",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet",
+                    "entries"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "pm.test(\"Tenant khác không có entry\", function () { pm.expect(pm.response.json().items.length).to.eql(0); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Wallet / Webhook (inbound)",
+          "item": [
+            {
+              "name": "WHK-001 No signature",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/webhooks/payment",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "webhooks",
+                    "payment"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 401\", function () { pm.response.to.have.status(401); });",
+                      "pm.test(\"error.code = INVALID_SIGNATURE\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_SIGNATURE\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WHK-002 Wrong signature",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-signature",
+                    "value": "abc"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/webhooks/payment",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "webhooks",
+                    "payment"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 401\", function () { pm.response.to.have.status(401); });",
+                      "pm.test(\"error.code = INVALID_SIGNATURE\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_SIGNATURE\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WHK-004 Valid signature, unknown topup",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-signature",
+                    "value": "{{whk_sig}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/webhooks/payment",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "webhooks",
+                    "payment"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{{whk_body}}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Ký HMAC-SHA256 của \"<t>.<body>\" bằng webhook_secret (environment). Bỏ qua nếu chưa có secret."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.variables.set(\"whk_mode\", \"ok\");",
+                      "pm.variables.set(\"whk_payload\", \"{\\\"eventId\\\": \\\"qa-evt-{{run}}-1\\\", \\\"type\\\": \\\"charge.succeeded\\\", \\\"createdAt\\\": \\\"2026-10-13T00:00:00Z\\\", \\\"data\\\": {\\\"chargeId\\\": \\\"qa-ch-{{run}}\\\", \\\"reference\\\": \\\"qa-unknown-topup\\\", \\\"amount\\\": 1000, \\\"currency\\\": \\\"VND\\\", \\\"status\\\": \\\"SUCCEEDED\\\", \\\"completedAt\\\": \\\"2026-10-13T00:00:00Z\\\", \\\"metadata\\\": {\\\"tenantId\\\": \\\"{{tenant_id}}\\\"}}}\");",
+                      "const secret = pm.environment.get(\"webhook_secret\");",
+                      "const mode = pm.variables.get(\"whk_mode\") || \"ok\";",
+                      "const body = JSON.stringify(JSON.parse(pm.variables.replaceIn(pm.variables.get(\"whk_payload\"))));",
+                      "pm.collectionVariables.set(\"whk_body\", body);",
+                      "let t = Math.floor(Date.now() / 1000);",
+                      "if (mode === \"expired\") t -= 600;",
+                      "if (secret) {",
+                      "  const sig = CryptoJS.HmacSHA256(t + \".\" + (mode === \"tampered\" ? body.replace(\"1000\", \"9999\") : body), secret).toString(CryptoJS.enc.Hex);",
+                      "  pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + sig);",
+                      "} else { pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + \"0\".repeat(64)); }"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (!pm.environment.get(\"webhook_secret\")) { pm.test.skip(\"Bỏ qua: chưa đặt webhook_secret trong environment\"); } else {",
+                      "  pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "  pm.test(\".outcome = UNKNOWN_TOPUP\", function () { const j = pm.response.json(); pm.expect(j.outcome).to.eql(\"UNKNOWN_TOPUP\"); });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WHK-005 Expired timestamp (600 s old)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-signature",
+                    "value": "{{whk_sig}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/webhooks/payment",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "webhooks",
+                    "payment"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{{whk_body}}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Ký HMAC-SHA256 của \"<t>.<body>\" bằng webhook_secret (environment). Bỏ qua nếu chưa có secret."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.variables.set(\"whk_mode\", \"expired\");",
+                      "pm.variables.set(\"whk_payload\", \"{\\\"eventId\\\": \\\"qa-evt-{{run}}-2\\\", \\\"type\\\": \\\"charge.succeeded\\\", \\\"createdAt\\\": \\\"2026-10-13T00:00:00Z\\\", \\\"data\\\": {\\\"chargeId\\\": \\\"qa-ch-{{run}}\\\", \\\"reference\\\": \\\"qa-unknown-topup\\\", \\\"amount\\\": 1000, \\\"currency\\\": \\\"VND\\\", \\\"status\\\": \\\"SUCCEEDED\\\", \\\"completedAt\\\": \\\"2026-10-13T00:00:00Z\\\", \\\"metadata\\\": {\\\"tenantId\\\": \\\"{{tenant_id}}\\\"}}}\");",
+                      "const secret = pm.environment.get(\"webhook_secret\");",
+                      "const mode = pm.variables.get(\"whk_mode\") || \"ok\";",
+                      "const body = JSON.stringify(JSON.parse(pm.variables.replaceIn(pm.variables.get(\"whk_payload\"))));",
+                      "pm.collectionVariables.set(\"whk_body\", body);",
+                      "let t = Math.floor(Date.now() / 1000);",
+                      "if (mode === \"expired\") t -= 600;",
+                      "if (secret) {",
+                      "  const sig = CryptoJS.HmacSHA256(t + \".\" + (mode === \"tampered\" ? body.replace(\"1000\", \"9999\") : body), secret).toString(CryptoJS.enc.Hex);",
+                      "  pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + sig);",
+                      "} else { pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + \"0\".repeat(64)); }"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (!pm.environment.get(\"webhook_secret\")) { pm.test.skip(\"Bỏ qua: chưa đặt webhook_secret trong environment\"); } else {",
+                      "  pm.test(\"Status 401\", function () { pm.response.to.have.status(401); });",
+                      "  pm.test(\"error.code = INVALID_SIGNATURE\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_SIGNATURE\"); pm.expect(j.error.message).to.be.a(\"string\"); });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WHK-006 Body tampered after signing",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-signature",
+                    "value": "{{whk_sig}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/webhooks/payment",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "webhooks",
+                    "payment"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{{whk_body}}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Ký HMAC-SHA256 của \"<t>.<body>\" bằng webhook_secret (environment). Bỏ qua nếu chưa có secret."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.variables.set(\"whk_mode\", \"tampered\");",
+                      "pm.variables.set(\"whk_payload\", \"{\\\"eventId\\\": \\\"qa-evt-{{run}}-3\\\", \\\"type\\\": \\\"charge.succeeded\\\", \\\"createdAt\\\": \\\"2026-10-13T00:00:00Z\\\", \\\"data\\\": {\\\"chargeId\\\": \\\"qa-ch-{{run}}\\\", \\\"reference\\\": \\\"qa-unknown-topup\\\", \\\"amount\\\": 1000, \\\"currency\\\": \\\"VND\\\", \\\"status\\\": \\\"SUCCEEDED\\\", \\\"completedAt\\\": \\\"2026-10-13T00:00:00Z\\\", \\\"metadata\\\": {\\\"tenantId\\\": \\\"{{tenant_id}}\\\"}}}\");",
+                      "const secret = pm.environment.get(\"webhook_secret\");",
+                      "const mode = pm.variables.get(\"whk_mode\") || \"ok\";",
+                      "const body = JSON.stringify(JSON.parse(pm.variables.replaceIn(pm.variables.get(\"whk_payload\"))));",
+                      "pm.collectionVariables.set(\"whk_body\", body);",
+                      "let t = Math.floor(Date.now() / 1000);",
+                      "if (mode === \"expired\") t -= 600;",
+                      "if (secret) {",
+                      "  const sig = CryptoJS.HmacSHA256(t + \".\" + (mode === \"tampered\" ? body.replace(\"1000\", \"9999\") : body), secret).toString(CryptoJS.enc.Hex);",
+                      "  pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + sig);",
+                      "} else { pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + \"0\".repeat(64)); }"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (!pm.environment.get(\"webhook_secret\")) { pm.test.skip(\"Bỏ qua: chưa đặt webhook_secret trong environment\"); } else {",
+                      "  pm.test(\"Status 401\", function () { pm.response.to.have.status(401); });",
+                      "  pm.test(\"error.code = INVALID_SIGNATURE\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_SIGNATURE\"); pm.expect(j.error.message).to.be.a(\"string\"); });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WHK-007 Valid signature, schema invalid",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-signature",
+                    "value": "{{whk_sig}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/webhooks/payment",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "webhooks",
+                    "payment"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{{whk_body}}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Ký HMAC-SHA256 của \"<t>.<body>\" bằng webhook_secret (environment). Bỏ qua nếu chưa có secret."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.variables.set(\"whk_mode\", \"ok\");",
+                      "pm.variables.set(\"whk_payload\", \"{\\\"eventId\\\": \\\"x\\\"}\");",
+                      "const secret = pm.environment.get(\"webhook_secret\");",
+                      "const mode = pm.variables.get(\"whk_mode\") || \"ok\";",
+                      "const body = JSON.stringify(JSON.parse(pm.variables.replaceIn(pm.variables.get(\"whk_payload\"))));",
+                      "pm.collectionVariables.set(\"whk_body\", body);",
+                      "let t = Math.floor(Date.now() / 1000);",
+                      "if (mode === \"expired\") t -= 600;",
+                      "if (secret) {",
+                      "  const sig = CryptoJS.HmacSHA256(t + \".\" + (mode === \"tampered\" ? body.replace(\"1000\", \"9999\") : body), secret).toString(CryptoJS.enc.Hex);",
+                      "  pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + sig);",
+                      "} else { pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + \"0\".repeat(64)); }"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (!pm.environment.get(\"webhook_secret\")) { pm.test.skip(\"Bỏ qua: chưa đặt webhook_secret trong environment\"); } else {",
+                      "  pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "  pm.test(\"error.code = INVALID_WEBHOOK\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_WEBHOOK\"); pm.expect(j.error.message).to.be.a(\"string\"); });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WHK-009 No tenantId in metadata",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-signature",
+                    "value": "{{whk_sig}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/webhooks/payment",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "webhooks",
+                    "payment"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{{whk_body}}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Ký HMAC-SHA256 của \"<t>.<body>\" bằng webhook_secret (environment). Bỏ qua nếu chưa có secret."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.variables.set(\"whk_mode\", \"ok\");",
+                      "pm.variables.set(\"whk_payload\", \"{\\\"eventId\\\": \\\"qa-evt-{{run}}-4\\\", \\\"type\\\": \\\"charge.succeeded\\\", \\\"createdAt\\\": \\\"2026-10-13T00:00:00Z\\\", \\\"data\\\": {\\\"chargeId\\\": \\\"qa-ch-{{run}}\\\", \\\"reference\\\": \\\"qa-unknown-topup\\\", \\\"amount\\\": 1000, \\\"currency\\\": \\\"VND\\\", \\\"status\\\": \\\"SUCCEEDED\\\", \\\"completedAt\\\": \\\"2026-10-13T00:00:00Z\\\"}}\");",
+                      "const secret = pm.environment.get(\"webhook_secret\");",
+                      "const mode = pm.variables.get(\"whk_mode\") || \"ok\";",
+                      "const body = JSON.stringify(JSON.parse(pm.variables.replaceIn(pm.variables.get(\"whk_payload\"))));",
+                      "pm.collectionVariables.set(\"whk_body\", body);",
+                      "let t = Math.floor(Date.now() / 1000);",
+                      "if (mode === \"expired\") t -= 600;",
+                      "if (secret) {",
+                      "  const sig = CryptoJS.HmacSHA256(t + \".\" + (mode === \"tampered\" ? body.replace(\"1000\", \"9999\") : body), secret).toString(CryptoJS.enc.Hex);",
+                      "  pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + sig);",
+                      "} else { pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + \"0\".repeat(64)); }"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (!pm.environment.get(\"webhook_secret\")) { pm.test.skip(\"Bỏ qua: chưa đặt webhook_secret trong environment\"); } else {",
+                      "  pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "  pm.test(\"error.code = INVALID_WEBHOOK\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_WEBHOOK\"); pm.expect(j.error.message).to.be.a(\"string\"); });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WHK-009b Unknown tenant in metadata",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-signature",
+                    "value": "{{whk_sig}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/webhooks/payment",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "webhooks",
+                    "payment"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{{whk_body}}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Ký HMAC-SHA256 của \"<t>.<body>\" bằng webhook_secret (environment). Bỏ qua nếu chưa có secret."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.variables.set(\"whk_mode\", \"ok\");",
+                      "pm.variables.set(\"whk_payload\", \"{\\\"eventId\\\": \\\"qa-evt-{{run}}-5\\\", \\\"type\\\": \\\"charge.succeeded\\\", \\\"createdAt\\\": \\\"2026-10-13T00:00:00Z\\\", \\\"data\\\": {\\\"chargeId\\\": \\\"qa-ch-{{run}}\\\", \\\"reference\\\": \\\"qa-unknown-topup\\\", \\\"amount\\\": 1000, \\\"currency\\\": \\\"VND\\\", \\\"status\\\": \\\"SUCCEEDED\\\", \\\"completedAt\\\": \\\"2026-10-13T00:00:00Z\\\", \\\"metadata\\\": {\\\"tenantId\\\": \\\"zzz\\\"}}}\");",
+                      "const secret = pm.environment.get(\"webhook_secret\");",
+                      "const mode = pm.variables.get(\"whk_mode\") || \"ok\";",
+                      "const body = JSON.stringify(JSON.parse(pm.variables.replaceIn(pm.variables.get(\"whk_payload\"))));",
+                      "pm.collectionVariables.set(\"whk_body\", body);",
+                      "let t = Math.floor(Date.now() / 1000);",
+                      "if (mode === \"expired\") t -= 600;",
+                      "if (secret) {",
+                      "  const sig = CryptoJS.HmacSHA256(t + \".\" + (mode === \"tampered\" ? body.replace(\"1000\", \"9999\") : body), secret).toString(CryptoJS.enc.Hex);",
+                      "  pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + sig);",
+                      "} else { pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + \"0\".repeat(64)); }"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (!pm.environment.get(\"webhook_secret\")) { pm.test.skip(\"Bỏ qua: chưa đặt webhook_secret trong environment\"); } else {",
+                      "  pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "  pm.test(\"error.code = INVALID_WEBHOOK\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_WEBHOOK\"); pm.expect(j.error.message).to.be.a(\"string\"); });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WHK-010a First delivery of event",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-signature",
+                    "value": "{{whk_sig}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/webhooks/payment",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "webhooks",
+                    "payment"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{{whk_body}}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Ký HMAC-SHA256 của \"<t>.<body>\" bằng webhook_secret (environment). Bỏ qua nếu chưa có secret."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.variables.set(\"whk_mode\", \"ok\");",
+                      "pm.variables.set(\"whk_payload\", \"{\\\"eventId\\\": \\\"qa-evt-{{run}}-dup\\\", \\\"type\\\": \\\"charge.succeeded\\\", \\\"createdAt\\\": \\\"2026-10-13T00:00:00Z\\\", \\\"data\\\": {\\\"chargeId\\\": \\\"qa-ch-{{run}}\\\", \\\"reference\\\": \\\"qa-unknown-topup\\\", \\\"amount\\\": 1000, \\\"currency\\\": \\\"VND\\\", \\\"status\\\": \\\"SUCCEEDED\\\", \\\"completedAt\\\": \\\"2026-10-13T00:00:00Z\\\", \\\"metadata\\\": {\\\"tenantId\\\": \\\"{{tenant_id}}\\\"}}}\");",
+                      "const secret = pm.environment.get(\"webhook_secret\");",
+                      "const mode = pm.variables.get(\"whk_mode\") || \"ok\";",
+                      "const body = JSON.stringify(JSON.parse(pm.variables.replaceIn(pm.variables.get(\"whk_payload\"))));",
+                      "pm.collectionVariables.set(\"whk_body\", body);",
+                      "let t = Math.floor(Date.now() / 1000);",
+                      "if (mode === \"expired\") t -= 600;",
+                      "if (secret) {",
+                      "  const sig = CryptoJS.HmacSHA256(t + \".\" + (mode === \"tampered\" ? body.replace(\"1000\", \"9999\") : body), secret).toString(CryptoJS.enc.Hex);",
+                      "  pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + sig);",
+                      "} else { pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + \"0\".repeat(64)); }"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (!pm.environment.get(\"webhook_secret\")) { pm.test.skip(\"Bỏ qua: chưa đặt webhook_secret trong environment\"); } else {",
+                      "  pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "  pm.test(\".outcome = UNKNOWN_TOPUP\", function () { const j = pm.response.json(); pm.expect(j.outcome).to.eql(\"UNKNOWN_TOPUP\"); });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "WHK-010b Same eventId again is a duplicate",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-signature",
+                    "value": "{{whk_sig}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/webhooks/payment",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "webhooks",
+                    "payment"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{{whk_body}}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Ký HMAC-SHA256 của \"<t>.<body>\" bằng webhook_secret (environment). Bỏ qua nếu chưa có secret."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.variables.set(\"whk_mode\", \"ok\");",
+                      "pm.variables.set(\"whk_payload\", \"{\\\"eventId\\\": \\\"qa-evt-{{run}}-dup\\\", \\\"type\\\": \\\"charge.succeeded\\\", \\\"createdAt\\\": \\\"2026-10-13T00:00:00Z\\\", \\\"data\\\": {\\\"chargeId\\\": \\\"qa-ch-{{run}}\\\", \\\"reference\\\": \\\"qa-unknown-topup\\\", \\\"amount\\\": 1000, \\\"currency\\\": \\\"VND\\\", \\\"status\\\": \\\"SUCCEEDED\\\", \\\"completedAt\\\": \\\"2026-10-13T00:00:00Z\\\", \\\"metadata\\\": {\\\"tenantId\\\": \\\"{{tenant_id}}\\\"}}}\");",
+                      "const secret = pm.environment.get(\"webhook_secret\");",
+                      "const mode = pm.variables.get(\"whk_mode\") || \"ok\";",
+                      "const body = JSON.stringify(JSON.parse(pm.variables.replaceIn(pm.variables.get(\"whk_payload\"))));",
+                      "pm.collectionVariables.set(\"whk_body\", body);",
+                      "let t = Math.floor(Date.now() / 1000);",
+                      "if (mode === \"expired\") t -= 600;",
+                      "if (secret) {",
+                      "  const sig = CryptoJS.HmacSHA256(t + \".\" + (mode === \"tampered\" ? body.replace(\"1000\", \"9999\") : body), secret).toString(CryptoJS.enc.Hex);",
+                      "  pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + sig);",
+                      "} else { pm.collectionVariables.set(\"whk_sig\", \"t=\" + t + \",v1=\" + \"0\".repeat(64)); }"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (!pm.environment.get(\"webhook_secret\")) { pm.test.skip(\"Bỏ qua: chưa đặt webhook_secret trong environment\"); } else {",
+                      "  pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "  pm.test(\".outcome = DUPLICATE\", function () { const j = pm.response.json(); pm.expect(j.outcome).to.eql(\"DUPLICATE\"); });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "Các request ký tay cần biến môi trường `webhook_secret` (= LOCAL_WEBHOOK_SECRET trong deploy/.env); thiếu thì test được bỏ qua."
+        }
+      ],
+      "description": "Negative và edge case của wallet."
+    }
+  ]
+}
