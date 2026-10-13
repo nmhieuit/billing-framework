@@ -12,6 +12,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:chaos": "vitest run --config vitest.chaos.config.ts",
     "test:chaos:soak": "vitest run --config vitest.chaos-soak.config.ts",
+    "test:perf": "vitest run --config vitest.perf.config.ts",
     "test:contract": "vitest run --config vitest.integration.config.ts services/wallet/src/contract",
     "db:migrate:payment": "tsx db/payment/migrate.ts",
     "db:migrate:wallet": "tsx db/wallet/migrate.ts",

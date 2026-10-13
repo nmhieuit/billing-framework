@@ -11,3 +11,6 @@ coverage/
 
 # Kết quả chạy chaos test (seed, nhật ký lỗi)
 /tests/chaos/.out/
+
+# Kết quả chạy bộ đo hiệu năng (JSON thô)
+/tests/perf/.out/
