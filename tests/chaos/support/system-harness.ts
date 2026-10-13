@@ -507,6 +507,18 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
               sql<{ n: number }>`select count(*) as n from ${schema}.outbox where status <> 'SENT'`,
             )) === 0,
         });
+        // Lượt đối soát đang chạy nền (do API gọi tay hoặc lịch) có thể ghi bù (autofix) SAU khi mọi thứ khác đã yên, làm oracle
+        // đọc nhiều truy vấn lệch pha nhau (thấy topup PENDING rồi mới thấy giao dịch sổ cái vừa được ghi bù).
+        list.push({
+          name: `đối soát ${tenant} còn RUNNING`,
+          check: async () =>
+            (await count(
+              adminWallet,
+              sql<{
+                n: number;
+              }>`select count(*) as n from ${schema}.reconciliation_runs where status = 'RUNNING'`,
+            )) === 0,
+        });
         if (allowUnsettledTopups) continue;
         list.push({
           name: `topups ${tenant} chưa ở trạng thái cuối`,

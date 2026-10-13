@@ -197,6 +197,23 @@ describe('in-process system harness', () => {
     await s.heal({ timeoutMs: 15_000 });
   });
 
+  it('heal() waits for a reconciliation run that is still RUNNING (it may auto-apply credits after everything else settled)', async () => {
+    const s = sys();
+    await s.heal();
+    const id = `chaos-run-${Date.now()}`;
+    await sql`
+      insert into t_acme.reconciliation_runs
+        (id, run_day, status, triggered_by, gateway_totals, wallet_totals, item_count, started_at)
+      values (${id}, '2000-01-01', 'RUNNING', 'MANUAL', '{}', '{}', 0, sysutcdatetime())`.execute(
+      s.walletAdmin,
+    );
+    await expect(s.heal({ timeoutMs: 1_500 })).rejects.toThrow(/quiesce hết hạn.*đối soát acme/);
+    await sql`
+      update t_acme.reconciliation_runs set status = 'COMPLETED', finished_at = sysutcdatetime()
+      where id = ${id}`.execute(s.walletAdmin);
+    await s.heal({ timeoutMs: 15_000 });
+  });
+
   it('heal() accelerates the outbox backoff: a row due in 10 minutes is delivered within seconds', async () => {
     const s = sys();
     s.plan.enable();
