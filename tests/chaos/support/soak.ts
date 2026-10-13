@@ -4,11 +4,12 @@ import {
   collectViolations,
   explainedByMissingAtWallet,
   isMissingAtWallet,
+  RECONCILE_TIMEOUT_MS,
   runReconciliationViaHttp,
 } from './invariants.js';
-import type { Prng } from './prng.js';
+import { createPrng, type Prng } from './prng.js';
 import { killSessions } from './sql-faults.js';
-import { adminQuery, type ChildSystem, type System } from './system-harness.js';
+import { adminQuery, createSystem, type ChildSystem, type System } from './system-harness.js';
 
 /**
  * Bộ sinh tải và lịch lỗi của bài SOAK.
@@ -24,7 +25,9 @@ export const SOAK_WORKERS = 8;
 export const SOAK_TENANTS = ['acme', 'beta'] as const;
 const CUSTOMERS_PER_TENANT = 4;
 const FUND = 1_000_000;
-const OP_TIMEOUT_MS = 30_000;
+// Phải >= thời gian chờ tối đa của một lượt đối soát gọi tay: nếu luồng bỏ cuộc sớm hơn thì lượt đối soát vẫn chạy nền và
+// có thể ghi bù SAU khi vòng kết thúc (xem heal() về lượt RUNNING).
+const OP_TIMEOUT_MS = RECONCILE_TIMEOUT_MS + 15_000;
 
 export type OpKind =
   | 'topup'
@@ -547,4 +550,103 @@ export async function settleAndJudge(
   system.log.record('soak.judge', { inv3: inv3.length, tolerate });
   await assertSystemInvariants(system, tolerate ? { expectMissingAtWallet: true } : {});
   return { missingAtWallet: inv3.filter(isMissingAtWallet).length, tolerated: tolerate };
+}
+
+export type SoakMode = 'inproc' | 'child' | 'mixed';
+
+/** Vòng lẻ chạy inproc, vòng chẵn chạy child khi mode = mixed. */
+export const soakRoundMode = (mode: SoakMode, round: number): 'inproc' | 'child' =>
+  mode === 'mixed' ? (round % 2 === 1 ? 'inproc' : 'child') : mode;
+
+/**
+ * Chạy `rounds` vòng soak liên tiếp (mỗi vòng một hệ mới) và để oracle quyết định. Thất bại: ghi `soak-<seed>-round<k>.json`
+ * (nhật ký thao tác + lỗi) vào `outDir`, in lệnh chạy lại `rerun(k)` rồi ném lại lỗi.
+ */
+export async function runSoakRounds(input: {
+  seed: number;
+  rounds: number;
+  maxSeconds: number;
+  mode: SoakMode;
+  outDir: string;
+  rerun: (round: number) => string;
+  onSystem?: (system: System | undefined) => void;
+}): Promise<void> {
+  const { seed, rounds, maxSeconds, mode, outDir } = input;
+  for (let round = 1; round <= rounds; round += 1) {
+    const kind = soakRoundMode(mode, round);
+    const prng = createPrng(seed).fork(`round-${round}`);
+    // Retention THẬT trong ~1/3 số vòng inproc (rút prng ở mọi vòng nên ổn định theo seed). Child bị loại: loadConfig thật của
+    // dịch vụ từ chối chu kỳ lẻ phút và số ngày < 7 cho khóa idempotency của payment, nên tiến trình con không chạy được cấu hình này.
+    const realRetention = prng.fork('retention').chance(1 / 3) && kind === 'inproc';
+    const startedAt = Date.now();
+    let system: System | undefined;
+    try {
+      const options = {
+        seed,
+        tenants: ['acme', 'beta'],
+        ...(realRetention
+          ? {
+              retention: {
+                dryRun: false,
+                batchSize: 5,
+                intervalMinutes: 0.1,
+                days: {
+                  wallet: {
+                    outboxSent: 1,
+                    processedMessages: 1,
+                    idempotencyKeys: 1,
+                    reconciliation: 1,
+                  },
+                  payment: { webhook: 1, idempotencyKeys: 1 },
+                },
+              },
+            }
+          : {}),
+      };
+      // Child: wallet có thể chết vài giây; lịch webhook dài như S9 để webhook không hết lượt chỉ vì thế.
+      system =
+        kind === 'child'
+          ? await createSystem({
+              ...options,
+              mode: 'child',
+              webhookBackoffSeconds: [2, 5, 10, 20, 30],
+            })
+          : await createSystem(options);
+      input.onSystem?.(system);
+      const report = await runSoakRound({
+        system,
+        prng,
+        durationMs: maxSeconds * 1000,
+        mode: kind,
+      });
+      const verdict = await settleAndJudge(system, report);
+      console.info(
+        `chaos round=${round}/${rounds} mode=${kind} retention=${realRetention} missingAtWallet=${verdict.missingAtWallet} tolerated=${verdict.tolerated} faults=${report.executed.length}/${report.planned.length} ops=${report.opsStarted.reduce((a, b) => a + b, 0)} clientErrors=${report.opErrors} webhookAffecting=${report.webhookAffecting} ${Math.round((Date.now() - startedAt) / 1000)}s`,
+      );
+      if (report.executed.length === 0) throw new Error('lịch lỗi phải thực sự bắn lỗi');
+      // Từng loại tải chính phải thực sự thành công ít nhất một lần (maxSeconds quá ngắn thì bỏ qua kiểm tra này).
+      if (maxSeconds >= 20) {
+        for (const op of ['topup', 'order', 'adjust', 'read', 'freeze'] as const) {
+          if ((report.succeeded[op] ?? 0) === 0)
+            throw new Error(`loại tải ${op} chưa từng thành công`);
+        }
+      }
+    } catch (error) {
+      if (system !== undefined) {
+        system.log.record('soak.failure', {
+          seed,
+          round,
+          mode: kind,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        const path = await system.log.writeTo(outDir, `soak-${seed}-round${round}`);
+        console.error(`[chaos] soak thất bại (seed=${seed}, vòng ${round}); nhật ký: ${path}`);
+      }
+      console.error(`[chaos] chạy lại: ${input.rerun(round)}`);
+      throw error;
+    } finally {
+      await system?.stop();
+      input.onSystem?.(undefined);
+    }
+  }
 }

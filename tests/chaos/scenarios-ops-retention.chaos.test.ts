@@ -334,7 +334,7 @@ describe('S11 and S13: ops actions and pool recovery (in-process)', () => {
     s.log.record('s13.wallet-read', { statuses: readAttempts });
     console.info(`[S13] đọc ví sau khi giết mọi session: ${readAttempts.join(' -> ')}`);
     expect(readAttempts.at(-1)).toBe(200);
-    expect(readAttempts.length).toBeLessThanOrEqual(2);
+    expect(readAttempts).toEqual([200]); // đúng MỘT lần: pool kiểm tra kết nối khi lấy nên session chết được thay thầm lặng
 
     // Nạp tiền qua wallet → payment (đường tạo charge dùng pool payment vừa bị giết sạch).
     const topupStatuses: number[] = [];
@@ -346,7 +346,7 @@ describe('S11 and S13: ops actions and pool recovery (in-process)', () => {
     s.log.record('s13.topup', { statuses: topupStatuses });
     console.info(`[S13] nạp tiền sau khi giết mọi session: ${topupStatuses.join(' -> ')}`);
     expect(topupStatuses.at(-1)).toBe(202);
-    expect(topupStatuses.length).toBeLessThanOrEqual(2);
+    expect(topupStatuses).toEqual([202]);
 
     // Một đơn qua consumer + outbox (consumer dùng pool đã bị giết).
     const order = await s.sendOrder({ tenant: TENANT, customer, amount: 10_000 });
@@ -550,7 +550,7 @@ describe('S12: real retention cut in the middle of a batch (in-process)', () => 
     await s.restartWallet();
     await waitFor(() => s.plan.fired('s12-kill') === 1, { timeoutMs: 60_000, intervalMs: 50 });
 
-    // Lượt bị cắt: đúng lô 1 của outbox đã xóa (5 dòng), phần còn lại của outbox đủ tuổi còn nguyên; dòng trẻ không mất.
+    // Lưu ý: sau khi lô 2 của outbox_sent bị giết, lượt dọn vẫn chạy tiếp các chính sách sau (processed_messages, idempotency_keys)\n    // nên KHÔNG khẳng định gì về inbox/khóa idempotency tại điểm cắt, chỉ về outbox và các dòng trẻ.\n    // Lượt bị cắt: đúng lô 1 của outbox đã xóa (5 dòng), phần còn lại của outbox đủ tuổi còn nguyên; dòng trẻ không mất.
     const cut = await census(s);
     expect(cut.outboxEligible).toBe(before.outboxEligible - 5);
     expect(cut.outboxYoung).toBe(before.outboxYoung);
