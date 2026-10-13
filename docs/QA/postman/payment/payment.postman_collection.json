@@ -150,8 +150,8 @@
                   "} else {",
                   "  pm.collectionVariables.unset(key);",
                   "  pm.test(\"Charge kết thúc ở SUCCEEDED\", function () { pm.expect(j.status).to.eql(\"SUCCEEDED\"); });",
-                  "}",
-                  "pm.test(\"completedAt c\\u00f3 gi\\u00e1 tr\\u1ecb\", function () { const j = pm.response.json(); pm.expect(j.completedAt).to.be.ok; });"
+                  "  pm.test(\"completedAt c\\u00f3 gi\\u00e1 tr\\u1ecb\", function () { const j = pm.response.json(); pm.expect(j.completedAt).to.be.ok; });",
+                  "}"
                 ]
               }
             }
@@ -306,8 +306,8 @@
                   "} else {",
                   "  pm.collectionVariables.unset(key);",
                   "  pm.test(\"Charge kết thúc ở FAILED\", function () { pm.expect(j.status).to.eql(\"FAILED\"); });",
-                  "}",
-                  "pm.test(\"failureCode = card_declined\", function () { const j = pm.response.json(); pm.expect(j.failureCode).to.eql(\"card_declined\"); });"
+                  "  pm.test(\"failureCode = card_declined\", function () { const j = pm.response.json(); pm.expect(j.failureCode).to.eql(\"card_declined\"); });",
+                  "}"
                 ]
               }
             }
@@ -2999,8 +2999,8 @@
                       "} else {",
                       "  pm.collectionVariables.unset(key);",
                       "  pm.test(\"Charge kết thúc ở SUCCEEDED\", function () { pm.expect(j.status).to.eql(\"SUCCEEDED\"); });",
-                      "}",
-                      "pm.test(\"Hoàn tất sau ≥ ~2.5 s kể từ lúc tạo\", function () { const j = pm.response.json(); pm.expect(new Date(j.completedAt) - new Date(j.createdAt)).to.be.at.least(2500); });"
+                      "  pm.test(\"Hoàn tất sau ≥ ~2.5 s kể từ lúc tạo\", function () { const j = pm.response.json(); pm.expect(new Date(j.completedAt) - new Date(j.createdAt)).to.be.at.least(2500); });",
+                      "}"
                     ]
                   }
                 }
@@ -3575,6 +3575,550 @@
         }
       ],
       "description": "Negative và edge case của payment simulator."
+    },
+    {
+      "name": "EndPoints",
+      "item": [
+        {
+          "name": "Health",
+          "item": [
+            {
+              "name": "GET /health",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{payment_base_url}}/health",
+                  "host": [
+                    "{{payment_base_url}}"
+                  ],
+                  "path": [
+                    "health"
+                  ]
+                },
+                "description": "## Mục đích\nKiểm tra payment còn sống.\n\n## Nguồn\n- `services/payment/src/interface/http/health.route.ts:4`\n\n## Response\n`200` `{\"status\":\"ok\",\"service\":\"payment\"}`.\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 500 | INTERNAL | Lỗi không lường trước | services/payment/src/interface/http/errors.ts:54 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s \"$PAYMENT_BASE_URL/health\"\n```\n\n## Ghi chú test nhanh\n- Không cần header nào.\n"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [200]\", function () { pm.expect([200]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Charges",
+          "item": [
+            {
+              "name": "POST /charges",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{ep_key}}"
+                  },
+                  {
+                    "key": "x-simulate",
+                    "value": "delay=2"
+                  }
+                ],
+                "url": {
+                  "raw": "{{payment_base_url}}/charges",
+                  "host": [
+                    "{{payment_base_url}}"
+                  ],
+                  "path": [
+                    "charges"
+                  ]
+                },
+                "description": "## Mục đích\nTạo charge (cổng thanh toán giả lập); charge tự hoàn tất sau khi đến hạn và gửi webhook về wallet.\n\n## Nguồn\n- `services/payment/src/interface/http/charges.route.ts:19`\n- `services/payment/src/interface/http/charges.route.ts:13`\n- `services/payment/src/domain/charge.ts:6`\n- `services/payment/src/domain/metadata.ts:6`\n- `services/payment/src/domain/scenario.ts:25`\n- `services/payment/src/application/create-charge.ts:39`\n\n## Điều kiện / Header bắt buộc\n| Header | Bắt buộc | Ý nghĩa | Lỗi khi thiếu/sai |\n| --- | --- | --- | --- |\n| `Idempotency-Key` | Có | Khóa chống trùng, 1..255 ký tự, không khoảng trắng đầu/cuối | 400 MISSING_IDEMPOTENCY_KEY; 400 INVALID_IDEMPOTENCY_KEY |\n| `content-type` | Có (khi có body) | `application/json` | 400 INVALID_REQUEST nếu body không parse được |\n| `x-simulate` | Không | Kịch bản mô phỏng (xem enum). **Đang bật sẵn `delay=2`**: charge hoàn tất sau 2 giây (xóa header để hoàn tất ngay; các giá trị khác của enum có ở folder `Enum variants`) | 400 INVALID_SIMULATE |\n\n## Body\n| Trường | Kiểu | Bắt buộc | Giới hạn |\n| --- | --- | --- | --- |\n| `amount` | number | Có | Số nguyên (an toàn) ≥ 1, đơn vị nhỏ nhất |\n| `currency` | string | Có | Một trong enum Currency |\n| `reference` | string | Có | 1..200 ký tự (không toàn khoảng trắng) |\n| `metadata` | object | Không | Tối đa 10 khóa (`^[a-zA-Z][a-zA-Z0-9_]{0,39}$`), giá trị string ≤ 200 ký tự |\n\n## Enum cho phép\n**Currency** (nguồn: `packages/money/src/money.ts:3`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `VND` | Việt Nam đồng; số tiền tính bằng đồng |\n| `USD` | Đô la Mỹ; số tiền tính bằng cent |\n\n**X-Simulate: khóa và giá trị cho phép** (nguồn: `services/payment/src/domain/scenario.ts:25`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `fail=<code>` | Charge hoàn tất `FAILED` với `failureCode=<code>`; code khớp `^[a-z][a-z0-9_]{0,63}$` |\n| `delay=<giây>` | Hoãn hoàn tất N giây; số nguyên `1..3600` |\n| `webhook=drop` | Không gửi webhook (hành vi chính xác chưa xác minh) |\n| `webhook=duplicate` | Gửi webhook hai lần |\n| `response=timeout` | Giữ phản hồi `POST /charges` tới `RESPONSE_TIMEOUT_MS` (mặc định 30000 ms); charge vẫn được tạo |\n\n**Charge status** (nguồn: `services/payment/src/domain/charge.ts:8`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `PENDING` | Chờ đến hạn (`delay`) rồi hoàn tất |\n| `SUCCEEDED` | Thành công |\n| `FAILED` | Thất bại, có `failureCode` |\n\n## Response\n`202` `{chargeId, reference, amount, currency, status:\"PENDING\", metadata?, createdAt}`. Gửi lại cùng key và nội dung (cả `X-Simulate`) trả cùng charge.\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 400 | MISSING_IDEMPOTENCY_KEY | Thiếu hoặc rỗng header `Idempotency-Key` | services/payment/src/interface/http/charges.route.ts:23 |\n| 400 | INVALID_IDEMPOTENCY_KEY | Key có khoảng trắng đầu/cuối hoặc dài hơn 255 ký tự | services/payment/src/interface/http/charges.route.ts:29 |\n| 400 | INVALID_REQUEST | Body không phải JSON object; trường sai kiểu; số tiền/đồng tiền/reference/metadata không hợp lệ; JSON hỏng | services/payment/src/interface/http/errors.ts:39 |\n| 400 | INVALID_SIMULATE | Header `X-Simulate` sai (khóa lạ, khóa lặp, giá trị ngoài miền, token thiếu `=`) | services/payment/src/interface/http/errors.ts:37 |\n| 422 | IDEMPOTENCY_KEY_REUSED | Cùng `Idempotency-Key` nhưng khác nội dung (kể cả `X-Simulate`) | services/payment/src/interface/http/errors.ts:42 |\n| 500 | INTERNAL | Lỗi không lường trước | services/payment/src/interface/http/errors.ts:54 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s -X POST \"$PAYMENT_BASE_URL/charges\" -H \"idempotency-key: $(uuidgen)\" -H \"x-simulate: delay=2\" -H \"content-type: application/json\" -d '{\"amount\":150000,\"currency\":\"VND\",\"reference\":\"qa-1\"}'\n```\n\n## Ghi chú test nhanh\n- Charge không có `metadata.tenantId` làm wallet từ chối webhook (400) và payment gửi lại ~12 phút rồi `FAILED`; thêm `metadata.tenantId` nếu muốn wallet trả `UNKNOWN_TOPUP`, nhưng đối soát sẽ thấy `UNKNOWN_CHARGE`.\n- Request này lưu `ep_charge_id`.\n- Biên: `amount` 0/-5/100.5, `currency` `EUR`, `reference` rỗng/201 ký tự, `X-Simulate` sai (`delay=0`, `foo=bar`).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 150000,\n  \"currency\": \"VND\",\n  \"reference\": \"ep-{{ep_run}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [202]\", function () { pm.expect([202]).to.include(pm.response.code); });",
+                      "pm.test(\"Lưu ep_charge_id\", function () { pm.collectionVariables.set(\"ep_charge_id\", String(pm.response.json().chargeId)); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "GET /charges/:id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{payment_base_url}}/charges/{{ep_charge_id}}",
+                  "host": [
+                    "{{payment_base_url}}"
+                  ],
+                  "path": [
+                    "charges",
+                    "{{ep_charge_id}}"
+                  ]
+                },
+                "description": "## Mục đích\nXem charge theo id.\n\n## Nguồn\n- `services/payment/src/interface/http/charges.route.ts:69`\n- `services/payment/src/application/get-charge.ts:1`\n- `services/payment/src/application/views.ts:39`\n\n## Path / Query params\n| Tên | Kiểu | Bắt buộc | Giới hạn | Mặc định |\n| --- | --- | --- | --- | --- |\n| `id` | string (path) | Có | `chargeId` do `POST /charges` trả | `{{ep_charge_id}}` |\n\n## Enum cho phép\n**Charge status** (nguồn: `services/payment/src/domain/charge.ts:8`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `PENDING` | Chờ đến hạn (`delay`) rồi hoàn tất |\n| `SUCCEEDED` | Thành công |\n| `FAILED` | Thất bại, có `failureCode` |\n\n**Currency** (nguồn: `packages/money/src/money.ts:3`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `VND` | Việt Nam đồng; số tiền tính bằng đồng |\n| `USD` | Đô la Mỹ; số tiền tính bằng cent |\n\n## Response\n`200` `{chargeId, reference, amount, currency, status, failureCode?, metadata?, createdAt, completedAt?}`.\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 404 | CHARGE_NOT_FOUND | Không có charge với id đó | services/payment/src/interface/http/errors.ts:45 |\n| 500 | INTERNAL | Lỗi không lường trước | services/payment/src/interface/http/errors.ts:54 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s \"$PAYMENT_BASE_URL/charges/$CHARGE_ID\"\n```\n\n## Ghi chú test nhanh\n- Poll tới `SUCCEEDED`/`FAILED` (vài giây; `delay` làm chậm hơn).\n- Không cần header nào (không xác thực).\n"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [200]\", function () { pm.expect([200]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Settlements",
+          "item": [
+            {
+              "name": "GET /settlements",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{payment_base_url}}/settlements?date={{ep_today}}&limit=100",
+                  "host": [
+                    "{{payment_base_url}}"
+                  ],
+                  "path": [
+                    "settlements"
+                  ],
+                  "query": [
+                    {
+                      "key": "date",
+                      "value": "{{ep_today}}"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "100"
+                    }
+                  ]
+                },
+                "description": "## Mục đích\nSao kê các charge đã hoàn tất trong một ngày UTC, kèm tổng; dùng cho đối soát.\n\n## Nguồn\n- `services/payment/src/interface/http/settlements.route.ts:12`\n- `services/payment/src/application/get-settlement.ts:5`\n- `services/payment/src/application/get-settlement.ts:62`\n- `services/payment/src/application/get-settlement.ts:43`\n\n## Path / Query params\n| Tên | Kiểu | Bắt buộc | Giới hạn | Mặc định |\n| --- | --- | --- | --- | --- |\n| `date` | string (query) | Có | `YYYY-MM-DD` UTC, đúng lịch, không ở tương lai | (hôm nay UTC) |\n| `limit` | integer (query) | Không | 1..1000 | 500 |\n| `cursor` | string (query) | Không | Giá trị `nextCursor` (base64url JSON); sai → 400 | (trang đầu) |\n\n## Enum cho phép\n**Settlement item status (`status`)** (nguồn: `services/payment/src/application/get-settlement.ts:20`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `SUCCEEDED` | Charge thành công |\n| `FAILED` | Charge thất bại, có `failureCode` |\n\n**Currency** (nguồn: `packages/money/src/money.ts:3`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `VND` | Việt Nam đồng; số tiền tính bằng đồng |\n| `USD` | Đô la Mỹ; số tiền tính bằng cent |\n\n## Response\n`200` `{date, items:[{chargeId, reference, amount, currency, status, failureCode?, metadata?, completedAt}], nextCursor:string|null, totals:[...]}`. Không có charge `PENDING`. Cấu trúc chi tiết của `totals` chưa xác minh.\n\n## Mã lỗi\n| HTTP | error.code | Khi nào | Nguồn |\n| --- | --- | --- | --- |\n| 400 | INVALID_QUERY | `date`/`limit`/`cursor` của sao kê sai | services/payment/src/interface/http/errors.ts:47 |\n| 500 | INTERNAL | Lỗi không lường trước | services/payment/src/interface/http/errors.ts:54 |\n\n## Ví dụ gọi nhanh\n```bash\ncurl -s \"$PAYMENT_BASE_URL/settlements?date=2026-10-13&limit=100\"\n```\n\n## Ghi chú test nhanh\n- Tính theo `completedAt` (UTC), nên gần nửa đêm có thể lệch ngày.\n- Biên: thiếu `date`, `2026/10/13`, `2026-02-30`, ngày mai, `limit=0|1001|abc|1.5`, `cursor=abc` (đều 400 INVALID_QUERY).\n"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [200]\", function () { pm.expect([200]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Enum variants",
+          "item": [
+            {
+              "name": "POST /charges [currency=USD]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{ep_key}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{payment_base_url}}/charges",
+                  "host": [
+                    "{{payment_base_url}}"
+                  ],
+                  "path": [
+                    "charges"
+                  ]
+                },
+                "description": "## Mục đích\nCharge bằng USD (500 cent), không kịch bản.\n\n## Nguồn\n- `services/payment/src/interface/http/charges.route.ts:19`\n\n## Enum cho phép\n**Currency** (nguồn: `services/payment/src/domain/scenario.ts:25`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `VND` | Việt Nam đồng; số tiền tính bằng đồng |\n| `USD` | Đô la Mỹ; số tiền tính bằng cent |\n\n## Ghi chú test nhanh\n- Biến thể của endpoint chính cùng tên (xem Docs đầy đủ ở folder chính).\n- Charge không có `metadata.tenantId`: webhook về wallet bị từ chối và payment gửi lại ~12 phút (không đổi số dư).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 500,\n  \"currency\": \"USD\",\n  \"reference\": \"ep-{{ep_run}}-usd\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [202]\", function () { pm.expect([202]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "POST /charges [X-Simulate: fail=insufficient_funds]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{ep_key}}"
+                  },
+                  {
+                    "key": "x-simulate",
+                    "value": "fail=insufficient_funds"
+                  }
+                ],
+                "url": {
+                  "raw": "{{payment_base_url}}/charges",
+                  "host": [
+                    "{{payment_base_url}}"
+                  ],
+                  "path": [
+                    "charges"
+                  ]
+                },
+                "description": "## Mục đích\nCharge hoàn tất `FAILED` với `failureCode=insufficient_funds` (mã tuỳ chọn khớp `^[a-z][a-z0-9_]{0,63}$`).\n\n## Nguồn\n- `services/payment/src/interface/http/charges.route.ts:19`\n\n## Enum cho phép\n**X-Simulate** (nguồn: `services/payment/src/domain/scenario.ts:25`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `fail=<code>` | Charge hoàn tất `FAILED` với `failureCode=<code>`; code khớp `^[a-z][a-z0-9_]{0,63}$` |\n| `delay=<giây>` | Hoãn hoàn tất N giây; số nguyên `1..3600` |\n| `webhook=drop` | Không gửi webhook (hành vi chính xác chưa xác minh) |\n| `webhook=duplicate` | Gửi webhook hai lần |\n| `response=timeout` | Giữ phản hồi `POST /charges` tới `RESPONSE_TIMEOUT_MS` (mặc định 30000 ms); charge vẫn được tạo |\n\n## Ghi chú test nhanh\n- Biến thể của endpoint chính cùng tên (xem Docs đầy đủ ở folder chính).\n- Charge không có `metadata.tenantId`: webhook về wallet bị từ chối và payment gửi lại ~12 phút (không đổi số dư).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 150000,\n  \"currency\": \"VND\",\n  \"reference\": \"ep-{{ep_run}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [202]\", function () { pm.expect([202]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "POST /charges [X-Simulate: delay=5]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{ep_key}}"
+                  },
+                  {
+                    "key": "x-simulate",
+                    "value": "delay=5"
+                  }
+                ],
+                "url": {
+                  "raw": "{{payment_base_url}}/charges",
+                  "host": [
+                    "{{payment_base_url}}"
+                  ],
+                  "path": [
+                    "charges"
+                  ]
+                },
+                "description": "## Mục đích\nHoãn hoàn tất 5 giây (miền hợp lệ `1..3600`).\n\n## Nguồn\n- `services/payment/src/interface/http/charges.route.ts:19`\n\n## Enum cho phép\n**X-Simulate** (nguồn: `services/payment/src/domain/scenario.ts:25`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `fail=<code>` | Charge hoàn tất `FAILED` với `failureCode=<code>`; code khớp `^[a-z][a-z0-9_]{0,63}$` |\n| `delay=<giây>` | Hoãn hoàn tất N giây; số nguyên `1..3600` |\n| `webhook=drop` | Không gửi webhook (hành vi chính xác chưa xác minh) |\n| `webhook=duplicate` | Gửi webhook hai lần |\n| `response=timeout` | Giữ phản hồi `POST /charges` tới `RESPONSE_TIMEOUT_MS` (mặc định 30000 ms); charge vẫn được tạo |\n\n## Ghi chú test nhanh\n- Biến thể của endpoint chính cùng tên (xem Docs đầy đủ ở folder chính).\n- Charge không có `metadata.tenantId`: webhook về wallet bị từ chối và payment gửi lại ~12 phút (không đổi số dư).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 150000,\n  \"currency\": \"VND\",\n  \"reference\": \"ep-{{ep_run}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [202]\", function () { pm.expect([202]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "POST /charges [X-Simulate: webhook=duplicate]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{ep_key}}"
+                  },
+                  {
+                    "key": "x-simulate",
+                    "value": "webhook=duplicate"
+                  }
+                ],
+                "url": {
+                  "raw": "{{payment_base_url}}/charges",
+                  "host": [
+                    "{{payment_base_url}}"
+                  ],
+                  "path": [
+                    "charges"
+                  ]
+                },
+                "description": "## Mục đích\nWebhook gửi **hai** lần (kiểm khử trùng ở wallet).\n\n## Nguồn\n- `services/payment/src/interface/http/charges.route.ts:19`\n\n## Enum cho phép\n**X-Simulate** (nguồn: `services/payment/src/domain/scenario.ts:25`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `fail=<code>` | Charge hoàn tất `FAILED` với `failureCode=<code>`; code khớp `^[a-z][a-z0-9_]{0,63}$` |\n| `delay=<giây>` | Hoãn hoàn tất N giây; số nguyên `1..3600` |\n| `webhook=drop` | Không gửi webhook (hành vi chính xác chưa xác minh) |\n| `webhook=duplicate` | Gửi webhook hai lần |\n| `response=timeout` | Giữ phản hồi `POST /charges` tới `RESPONSE_TIMEOUT_MS` (mặc định 30000 ms); charge vẫn được tạo |\n\n## Ghi chú test nhanh\n- Biến thể của endpoint chính cùng tên (xem Docs đầy đủ ở folder chính).\n- Charge không có `metadata.tenantId`: webhook về wallet bị từ chối và payment gửi lại ~12 phút (không đổi số dư).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 150000,\n  \"currency\": \"VND\",\n  \"reference\": \"ep-{{ep_run}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [202]\", function () { pm.expect([202]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "POST /charges [X-Simulate: webhook=drop]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{ep_key}}"
+                  },
+                  {
+                    "key": "x-simulate",
+                    "value": "webhook=drop"
+                  }
+                ],
+                "url": {
+                  "raw": "{{payment_base_url}}/charges",
+                  "host": [
+                    "{{payment_base_url}}"
+                  ],
+                  "path": [
+                    "charges"
+                  ]
+                },
+                "description": "## Mục đích\nWebhook **không** được gửi (hành vi chính xác chưa xác minh).\n\n## Nguồn\n- `services/payment/src/interface/http/charges.route.ts:19`\n\n## Enum cho phép\n**X-Simulate** (nguồn: `services/payment/src/domain/scenario.ts:25`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `fail=<code>` | Charge hoàn tất `FAILED` với `failureCode=<code>`; code khớp `^[a-z][a-z0-9_]{0,63}$` |\n| `delay=<giây>` | Hoãn hoàn tất N giây; số nguyên `1..3600` |\n| `webhook=drop` | Không gửi webhook (hành vi chính xác chưa xác minh) |\n| `webhook=duplicate` | Gửi webhook hai lần |\n| `response=timeout` | Giữ phản hồi `POST /charges` tới `RESPONSE_TIMEOUT_MS` (mặc định 30000 ms); charge vẫn được tạo |\n\n## Ghi chú test nhanh\n- Biến thể của endpoint chính cùng tên (xem Docs đầy đủ ở folder chính).\n- Charge không có `metadata.tenantId`: webhook về wallet bị từ chối và payment gửi lại ~12 phút (không đổi số dư).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 150000,\n  \"currency\": \"VND\",\n  \"reference\": \"ep-{{ep_run}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [202]\", function () { pm.expect([202]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "POST /charges [X-Simulate: response=timeout]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{ep_key}}"
+                  },
+                  {
+                    "key": "x-simulate",
+                    "value": "response=timeout"
+                  }
+                ],
+                "url": {
+                  "raw": "{{payment_base_url}}/charges",
+                  "host": [
+                    "{{payment_base_url}}"
+                  ],
+                  "path": [
+                    "charges"
+                  ]
+                },
+                "description": "## Mục đích\nPhản hồi `202` bị giữ tới `RESPONSE_TIMEOUT_MS` (mặc định 30000 ms) nhưng charge **đã được tạo**; request này mất ~30 giây.\n\n## Nguồn\n- `services/payment/src/interface/http/charges.route.ts:19`\n\n## Enum cho phép\n**X-Simulate** (nguồn: `services/payment/src/domain/scenario.ts:25`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `fail=<code>` | Charge hoàn tất `FAILED` với `failureCode=<code>`; code khớp `^[a-z][a-z0-9_]{0,63}$` |\n| `delay=<giây>` | Hoãn hoàn tất N giây; số nguyên `1..3600` |\n| `webhook=drop` | Không gửi webhook (hành vi chính xác chưa xác minh) |\n| `webhook=duplicate` | Gửi webhook hai lần |\n| `response=timeout` | Giữ phản hồi `POST /charges` tới `RESPONSE_TIMEOUT_MS` (mặc định 30000 ms); charge vẫn được tạo |\n\n## Ghi chú test nhanh\n- Biến thể của endpoint chính cùng tên (xem Docs đầy đủ ở folder chính).\n- Charge không có `metadata.tenantId`: webhook về wallet bị từ chối và payment gửi lại ~12 phút (không đổi số dư).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 150000,\n  \"currency\": \"VND\",\n  \"reference\": \"ep-{{ep_run}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [202]\", function () { pm.expect([202]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "POST /charges [X-Simulate: fail=card_declined,delay=3,webhook=duplicate]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{ep_key}}"
+                  },
+                  {
+                    "key": "x-simulate",
+                    "value": "fail=card_declined,delay=3,webhook=duplicate"
+                  }
+                ],
+                "url": {
+                  "raw": "{{payment_base_url}}/charges",
+                  "host": [
+                    "{{payment_base_url}}"
+                  ],
+                  "path": [
+                    "charges"
+                  ]
+                },
+                "description": "## Mục đích\nKết hợp nhiều khóa bằng dấu phẩy (thứ tự không quan trọng; khóa lặp bị từ chối).\n\n## Nguồn\n- `services/payment/src/interface/http/charges.route.ts:19`\n\n## Enum cho phép\n**X-Simulate** (nguồn: `services/payment/src/domain/scenario.ts:25`)\n| Giá trị | Ý nghĩa |\n| --- | --- |\n| `fail=<code>` | Charge hoàn tất `FAILED` với `failureCode=<code>`; code khớp `^[a-z][a-z0-9_]{0,63}$` |\n| `delay=<giây>` | Hoãn hoàn tất N giây; số nguyên `1..3600` |\n| `webhook=drop` | Không gửi webhook (hành vi chính xác chưa xác minh) |\n| `webhook=duplicate` | Gửi webhook hai lần |\n| `response=timeout` | Giữ phản hồi `POST /charges` tới `RESPONSE_TIMEOUT_MS` (mặc định 30000 ms); charge vẫn được tạo |\n\n## Ghi chú test nhanh\n- Biến thể của endpoint chính cùng tên (xem Docs đầy đủ ở folder chính).\n- Charge không có `metadata.tenantId`: webhook về wallet bị từ chối và payment gửi lại ~12 phút (không đổi số dư).\n",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 150000,\n  \"currency\": \"VND\",\n  \"reference\": \"ep-{{ep_run}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status [202]\", function () { pm.expect([202]).to.include(pm.response.code); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "description": "Liệt kê mọi endpoint của payment (cổng thanh toán giả lập). Không có xác thực.",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get(\"ep_cust\")) { pm.collectionVariables.set(\"ep_cust\", \"qa-ep-\" + Date.now().toString(36)); }",
+              "pm.collectionVariables.set(\"ep_today\", new Date().toISOString().slice(0, 10));",
+              "pm.collectionVariables.set(\"ep_key\", pm.variables.replaceIn(\"{{$guid}}\"));",
+              "pm.collectionVariables.set(\"ep_idem\", pm.variables.replaceIn(\"{{$guid}}\"));",
+              "pm.collectionVariables.set(\"ep_run\", Date.now().toString(36));"
+            ]
+          }
+        }
+      ]
     }
   ]
 }
