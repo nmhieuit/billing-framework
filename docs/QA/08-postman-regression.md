@@ -1,7 +1,7 @@
 # Postman Regression (nhóm H)
 
 > **Giai đoạn 2, nhóm H.** Folder **`Regression`** trong bốn collection Postman: negative và edge case. Cùng tệp, environment, cách chạy và tác dụng phụ với [`07-postman-smoke.md`](07-postman-smoke.md); bản này chỉ liệt kê nội dung Regression.
-> **Đã kiểm tra:** JSON hợp lệ, schema collection v2.1.0, script qua `node --check`, biến định nghĩa trước khi dùng. **Chưa chạy** qua Postman/Newman với stack local.
+> **Đã kiểm tra:** JSON hợp lệ, schema collection v2.1.0, script qua `node --check`, biến định nghĩa trước khi dùng, và chạy Newman 6 trên mock (`postman/mock/server.cjs`) 2 lượt liên tiếp, 0 lỗi. **Chưa chạy** với service thật (xem `07-postman-smoke.md`).
 > **Quy tắc đặt kỳ vọng:** mã lỗi (`error.code`) được kiểm **chính xác** khi đã đọc được trong code. Khi mã chưa xác minh, request ghi rõ "(mã chưa xác minh)" và chỉ kiểm **4xx**.
 
 ## Environment và biến
@@ -63,17 +63,18 @@ Mỗi collection có folder **Setup** (dựng dữ liệu: ví, topup, charge, l
 | SETUP-W06 Topup A 2000 (second entry) | `POST /topups` | 202 |  |
 | SETUP-W07 Poll topup A2 | `GET /topups/{{topup_a2}}` | 200 | lặp tới trạng thái cuối |
 
-**Wallet / Wallets** (12 request)
+**Wallet / Wallets** (13 request)
 
 | Request | Gọi | Status | Mã lỗi |
 | --- | --- | --- | --- |
 | WLT-002 Re-create same currency returns 200 | `POST /wallets` | 200 |  |
 | WLT-003 Re-create with different currency | `POST /wallets` | 409 | WALLET_CURRENCY_CONFLICT |
-| WLT-004 Unsupported currency EUR (mã chưa xác minh) | `POST /wallets` | 4xx |  |
+| WLT-004 Unsupported currency EUR | `POST /wallets` | 400 | INVALID_REQUEST |
 | WLT-005 Body is array | `POST /wallets` | 400 | INVALID_REQUEST |
 | WLT-006a currency wrong type | `POST /wallets` | 400 | INVALID_REQUEST |
 | WLT-006b currency missing | `POST /wallets` | 400 | INVALID_REQUEST |
 | WLT-007 Missing tenant | `POST /wallets` | 400 | MISSING_TENANT |
+| WLT-011 Tenant id with uppercase (invalid format) is unknown | `POST /wallets` | 403 | UNKNOWN_TENANT |
 | WLT-008 Unknown tenant | `POST /wallets` | 403 | UNKNOWN_TENANT |
 | WLT-009 Missing customer | `POST /wallets` | 400 | MISSING_CUSTOMER |
 | WLT-010a Customer id invalid chars | `POST /wallets` | 400 | INVALID_REQUEST |
@@ -85,7 +86,7 @@ Mỗi collection có folder **Setup** (dựng dữ liệu: ví, topup, charge, l
 | Request | Gọi | Status | Mã lỗi |
 | --- | --- | --- | --- |
 | TOP-004 Topup not found | `GET /topups/does-not-exist` | 404 | TOPUP_NOT_FOUND |
-| TOP-005 Other customer cannot read topup (mã chưa xác minh) | `GET /topups/{{topup_a1}}` | 4xx |  |
+| TOP-005 Other customer cannot read topup (hidden as not found) | `GET /topups/{{topup_a1}}` | 404 | TOPUP_NOT_FOUND |
 | TOP-007 Amount 0 | `POST /topups` | 400 | INVALID_REQUEST |
 | TOP-008 Amount negative | `POST /topups` | 400 | INVALID_REQUEST |
 | TOP-009 Amount above cap (1e12 + 1) | `POST /topups` | 400 | INVALID_REQUEST |
@@ -131,7 +132,7 @@ Mỗi collection có folder **Setup** (dựng dữ liệu: ví, topup, charge, l
 | TEN-002 Topup of tenant A not visible in tenant B | `GET /topups/{{topup_a1}}` | 404 | TOPUP_NOT_FOUND |
 | TEN-003 Entries are not shared across tenants | `GET /wallet/entries` | 200 |  |
 
-**Wallet / Webhook (inbound)** (10 request)
+**Wallet / Webhook (inbound)** (16 request)
 
 | Request | Gọi | Status | Mã lỗi |
 | --- | --- | --- | --- |
@@ -145,6 +146,12 @@ Mỗi collection có folder **Setup** (dựng dữ liệu: ví, topup, charge, l
 | WHK-009b Unknown tenant in metadata | `POST /webhooks/payment` | 400 | INVALID_WEBHOOK |
 | WHK-010a First delivery of event | `POST /webhooks/payment` | 200 | outcome=UNKNOWN_TOPUP |
 | WHK-010b Same eventId again is a duplicate | `POST /webhooks/payment` | 200 | outcome=DUPLICATE |
+| WHK-003a Create a topup (5000 VND) | `POST /topups` | 202 |  |
+| WHK-003b Poll the topup until SUCCEEDED | `GET /topups/{{topup_whk}}` | 200 | lặp tới trạng thái cuối |
+| WHK-003c Wallet balance before the signed webhook | `GET /wallet` | 200 |  |
+| WHK-003d Find the real charge of this topup in payment settlements | `GET /settlements?date={{whk_today}}&limit=1000` | 200 |  |
+| WHK-003e Signed charge.succeeded for this topup: accepted (200) and ignored (already settled) | `POST /webhooks/payment` | 200 |  |
+| WHK-003f Wallet balance unchanged: no double credit | `GET /wallet` | 200 |  |
 
 ### Payment
 
@@ -369,7 +376,7 @@ Mỗi collection có folder **Setup** (dựng dữ liệu: ví, topup, charge, l
 | REC-015 Body is array | `POST /reconciliations` | 400 | INVALID_REQUEST |
 | REC-004 Re-run creates a new run | `POST /reconciliations` | 202 |  |
 | REC-016 Run not found | `GET /reconciliations/does-not-exist` | 404 | RECONCILIATION_NOT_FOUND |
-| REC-017 Run of tenant A is not visible to tenant B (mã chưa xác minh) | `GET /reconciliations/{{run_id}}` | 4xx |  |
+| REC-017 Run of tenant A is not visible to tenant B | `GET /reconciliations/{{run_id}}` | 404 | RECONCILIATION_NOT_FOUND |
 
 **Items: query validation** (11 request)
 

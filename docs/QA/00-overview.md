@@ -216,6 +216,9 @@ Postman chỉ chứa request cho endpoint ở mục 3. Endpoint nào chưa chắ
 | F. Retention và quan sát | Đã viết, chưa chạy thật | [`06-manual-retention-observability.md`](06-manual-retention-observability.md) |
 | G. Postman Smoke | Đã viết, chưa chạy thật | [`07-postman-smoke.md`](07-postman-smoke.md); `postman/*/*.postman_collection.json`, `postman/billing-local.postman_environment.json` |
 | H. Postman Regression | Đã viết, chưa chạy thật | [`08-postman-regression.md`](08-postman-regression.md) |
+| J. Postman EndPoints (liệt kê endpoint + enum) | Đã viết, chưa chạy thật | [`09-postman-endpoints.md`](09-postman-endpoints.md); folder `EndPoints` trong 4 collection và `postman/*/endpoints.folder.postman_collection.json` |
+| K. Chaos: rà soát code + test thủ công | Đã viết, chưa chạy thật (`pnpm test:chaos` chưa chạy: không có Docker; test công cụ chaos không cần Docker: 11 file/92 test xanh) | [`10-manual-chaos.md`](10-manual-chaos.md) |
+| L. Postman Chaos (tải nền + oracle) | Đã viết, chỉ chạy trên mock | [`11-postman-chaos.md`](11-postman-chaos.md); `postman/chaos/chaos.postman_collection.json` |
 | I. Tự động hóa và đo coverage | **Không làm** (theo yêu cầu) | |
 
 ### 7.4 Xác nhận bổ sung (lượt sau)

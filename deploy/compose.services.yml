@@ -65,6 +65,7 @@ services:
       WEBHOOK_URL: http://wallet:3001/webhooks/payment
       WEBHOOK_SECRET: ${LOCAL_WEBHOOK_SECRET:?set in deploy/.env}
       PORT: '3002'
+      WORKER_INTERVAL_MS: ${PAYMENT_WORKER_INTERVAL_MS:-500}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_SERVICE_NAME: payment
       RETENTION_DRY_RUN: 'true'
@@ -90,6 +91,7 @@ services:
       RABBITMQ_USER: billing_wallet
       RABBITMQ_PASSWORD: ${BILLING_WALLET_MQ_PASSWORD}
       PORT: '3001'
+      WORKER_INTERVAL_MS: ${WALLET_WORKER_INTERVAL_MS:-500}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_SERVICE_NAME: wallet
       RETENTION_DRY_RUN: 'true'
