@@ -1,0 +1,2136 @@
+{
+  "info": {
+    "name": "Billing / Reconciliations",
+    "description": "Collection Đối soát của wallet (local stack). Chỉ dành cho mạng vận hành; chỉ cần x-tenant-id. Cần payment đang chạy. Kỳ vọng suy ra từ code/runbook, chưa chạy thật: docs/QA/07-postman-smoke.md và 08-postman-regression.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Smoke",
+      "item": [
+        {
+          "name": "HLT-R01 Wallet health + init run",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{wallet_base_url}}/health",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const run = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);",
+                  "pm.collectionVariables.set(\"run\", run);",
+                  "pm.collectionVariables.set(\"today\", new Date().toISOString().slice(0, 10));",
+                  "pm.collectionVariables.set(\"tomorrow\", new Date(Date.now() + 86400000).toISOString().slice(0, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"status\", \"service\"], \"properties\": {\"status\": {\"const\": \"ok\"}, \"service\": {\"const\": \"wallet\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "REC-001a Start reconciliation for today (UTC)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/reconciliations",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "reconciliations"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"date\": \"{{today}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Cần payment đang chạy để lấy sao kê."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 202\", function () { pm.response.to.have.status(202); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"runId\", \"status\"], \"properties\": {\"runId\": {\"type\": \"string\"}, \"status\": {\"const\": \"RUNNING\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.collectionVariables.set(\"run_id\", String(pm.response.json().runId));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "REC-001b Poll run until COMPLETED",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "reconciliations",
+                "{{run_id}}"
+              ]
+            },
+            "description": "Lặp lại chính request này tới khi COMPLETED/FAILED. Cần Collection Runner/Newman."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"id\", \"day\", \"status\", \"triggeredBy\", \"failureReason\", \"gatewayTotals\", \"walletTotals\", \"itemCount\", \"startedAt\", \"finishedAt\"], \"properties\": {\"id\": {\"type\": \"string\"}, \"day\": {\"type\": \"string\"}, \"status\": {\"enum\": [\"RUNNING\", \"COMPLETED\", \"FAILED\"]}, \"triggeredBy\": {\"type\": \"string\"}, \"failureReason\": {\"type\": [\"string\", \"null\"]}, \"itemCount\": {\"type\": \"integer\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "const maxN = parseInt(pm.environment.get(\"poll_max_attempts\") || \"20\", 10);",
+                  "const waitMs = parseInt(pm.environment.get(\"poll_interval_ms\") || \"1000\", 10);",
+                  "const key = \"poll_n_\" + pm.info.requestName;",
+                  "let n = parseInt(pm.collectionVariables.get(key) || \"0\", 10);",
+                  "const j = pm.response.json();",
+                  "const done = [\"COMPLETED\",\"FAILED\"].includes(j.status);",
+                  "if (!done && n < maxN) {",
+                  "  pm.collectionVariables.set(key, String(n + 1));",
+                  "  setTimeout(function () {}, waitMs);",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.unset(key);",
+                  "  pm.test(\"Lượt đối soát kết thúc ở COMPLETED (FAILED nếu payment không với tới)\", function () { pm.expect(j.status).to.eql(\"COMPLETED\"); });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "REC-002 Get run",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "reconciliations",
+                "{{run_id}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"id\", \"day\", \"status\", \"triggeredBy\", \"failureReason\", \"gatewayTotals\", \"walletTotals\", \"itemCount\", \"startedAt\", \"finishedAt\"], \"properties\": {\"id\": {\"type\": \"string\"}, \"day\": {\"type\": \"string\"}, \"status\": {\"enum\": [\"RUNNING\", \"COMPLETED\", \"FAILED\"]}, \"triggeredBy\": {\"type\": \"string\"}, \"failureReason\": {\"type\": [\"string\", \"null\"]}, \"itemCount\": {\"type\": \"integer\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\".status = COMPLETED\", function () { const j = pm.response.json(); pm.expect(j.status).to.eql(\"COMPLETED\"); });",
+                  "pm.test(\".triggeredBy = MANUAL\", function () { const j = pm.response.json(); pm.expect(j.triggeredBy).to.eql(\"MANUAL\"); });",
+                  "pm.test(\"failureReason = null\", function () { const j = pm.response.json(); pm.expect(j.failureReason).to.eql(null); });",
+                  "pm.test(\"day = hôm nay (UTC)\", function () { pm.expect(pm.response.json().day).to.eql(pm.collectionVariables.get(\"today\")); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "REC-004 Re-run creates a new immutable run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/reconciliations",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "reconciliations"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"date\": \"{{today}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 202\", function () { pm.response.to.have.status(202); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"runId\", \"status\"], \"properties\": {\"runId\": {\"type\": \"string\"}, \"status\": {\"const\": \"RUNNING\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.collectionVariables.set(\"run_id2\", String(pm.response.json().runId));",
+                  "pm.test(\"runId khác lượt trước\", function () { pm.expect(pm.response.json().runId).to.not.eql(pm.collectionVariables.get(\"run_id\")); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "REC-003 List items of the run",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}/items",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "reconciliations",
+                "{{run_id}}",
+                "items"
+              ]
+            },
+            "description": "Các bước đóng ca phía sau chỉ chạy khi environment reconciliation_resolve_enabled = \"true\" VÀ có ca OPEN (đóng ca ghi dữ liệu thật)."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"items\", \"nextCursor\"], \"properties\": {\"items\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"required\": [\"id\", \"runId\", \"kind\", \"caseStatus\", \"detail\", \"action\", \"createdAt\"], \"properties\": {\"caseStatus\": {\"enum\": [\"OPEN\", \"RESOLVED\", \"IGNORED\"]}}}}, \"nextCursor\": {\"type\": [\"string\", \"null\"]}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "const resolveOn = pm.environment.get(\"reconciliation_resolve_enabled\") === \"true\";",
+                  "const open = pm.response.json().items.find(function (i) { return i.caseStatus === \"OPEN\"; });",
+                  "if (resolveOn && open) { pm.collectionVariables.set(\"item_id\", open.id); } else { postman.setNextRequest(null); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "RES-001 Resolve an open item (RESOLVED)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/reconciliation-items/{{item_id}}/resolve",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "reconciliation-items",
+                "{{item_id}}",
+                "resolve"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\": \"RESOLVED\", \"note\": \"qa smoke {{run}}\", \"resolvedBy\": \"qa.tester\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\".caseStatus = RESOLVED\", function () { const j = pm.response.json(); pm.expect(j.caseStatus).to.eql(\"RESOLVED\"); });",
+                  "pm.test(\".resolvedBy = qa.tester\", function () { const j = pm.response.json(); pm.expect(j.resolvedBy).to.eql(\"qa.tester\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "RES-003 Resolving again with the same values is idempotent",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/reconciliation-items/{{item_id}}/resolve",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "reconciliation-items",
+                "{{item_id}}",
+                "resolve"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\": \"RESOLVED\", \"note\": \"qa smoke {{run}}\", \"resolvedBy\": \"qa.tester\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\".caseStatus = RESOLVED\", function () { const j = pm.response.json(); pm.expect(j.caseStatus).to.eql(\"RESOLVED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "RES-004 Resolving with different values conflicts",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/reconciliation-items/{{item_id}}/resolve",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "reconciliation-items",
+                "{{item_id}}",
+                "resolve"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\": \"IGNORED\", \"note\": \"khác\", \"resolvedBy\": \"qa.tester\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 409\", function () { pm.response.to.have.status(409); });",
+                  "pm.test(\"error.code = RECONCILIATION_CONFLICT\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"RECONCILIATION_CONFLICT\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Happy path của đối soát: chạy tay, đọc lượt, liệt kê ca, (tùy chọn) đóng ca."
+    },
+    {
+      "name": "Regression",
+      "item": [
+        {
+          "name": "Setup",
+          "item": [
+            {
+              "name": "SETUP-R01 Health + init run",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{wallet_base_url}}/health",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "health"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const run = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);",
+                      "pm.collectionVariables.set(\"run\", run);",
+                      "pm.collectionVariables.set(\"today\", new Date().toISOString().slice(0, 10));",
+                      "pm.collectionVariables.set(\"tomorrow\", new Date(Date.now() + 86400000).toISOString().slice(0, 10));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"status\", \"service\"], \"properties\": {\"status\": {\"const\": \"ok\"}, \"service\": {\"const\": \"wallet\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "SETUP-R02 Start reconciliation for today",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"date\": \"{{today}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 202\", function () { pm.response.to.have.status(202); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"runId\", \"status\"], \"properties\": {\"runId\": {\"type\": \"string\"}, \"status\": {\"const\": \"RUNNING\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.collectionVariables.set(\"run_id\", String(pm.response.json().runId));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "SETUP-R03 Poll run until COMPLETED",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{run_id}}"
+                  ]
+                },
+                "description": "Lặp lại chính request này tới khi COMPLETED/FAILED. Cần Collection Runner/Newman."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"id\", \"day\", \"status\", \"triggeredBy\", \"failureReason\", \"gatewayTotals\", \"walletTotals\", \"itemCount\", \"startedAt\", \"finishedAt\"], \"properties\": {\"id\": {\"type\": \"string\"}, \"day\": {\"type\": \"string\"}, \"status\": {\"enum\": [\"RUNNING\", \"COMPLETED\", \"FAILED\"]}, \"triggeredBy\": {\"type\": \"string\"}, \"failureReason\": {\"type\": [\"string\", \"null\"]}, \"itemCount\": {\"type\": \"integer\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "const maxN = parseInt(pm.environment.get(\"poll_max_attempts\") || \"20\", 10);",
+                      "const waitMs = parseInt(pm.environment.get(\"poll_interval_ms\") || \"1000\", 10);",
+                      "const key = \"poll_n_\" + pm.info.requestName;",
+                      "let n = parseInt(pm.collectionVariables.get(key) || \"0\", 10);",
+                      "const j = pm.response.json();",
+                      "const done = [\"COMPLETED\",\"FAILED\"].includes(j.status);",
+                      "if (!done && n < maxN) {",
+                      "  pm.collectionVariables.set(key, String(n + 1));",
+                      "  setTimeout(function () {}, waitMs);",
+                      "  postman.setNextRequest(pm.info.requestName);",
+                      "} else {",
+                      "  pm.collectionVariables.unset(key);",
+                      "  pm.test(\"Lượt đối soát kết thúc ở COMPLETED (FAILED nếu payment không với tới)\", function () { pm.expect(j.status).to.eql(\"COMPLETED\"); });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Runs: validation",
+          "item": [
+            {
+              "name": "REC-010 Missing tenant",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"date\": \"{{today}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = MISSING_TENANT\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"MISSING_TENANT\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-011 Unknown tenant",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_unknown}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"date\": \"{{today}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 403\", function () { pm.response.to.have.status(403); });",
+                      "pm.test(\"error.code = UNKNOWN_TENANT\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"UNKNOWN_TENANT\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-012a date uses slashes",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"date\": \"2026/10/13\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-012b date dd-mm-yyyy",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"date\": \"13-10-2026\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-012c date missing",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-012d date is null",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"date\": null}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-013a date 2026-02-30",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"date\": \"2026-02-30\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-013b date month 13",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"date\": \"2026-13-01\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-014 date in the future",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"date\": \"{{tomorrow}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-015 Body is array",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "[]",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-004 Re-run creates a new run",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"date\": \"{{today}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 202\", function () { pm.response.to.have.status(202); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"runId\", \"status\"], \"properties\": {\"runId\": {\"type\": \"string\"}, \"status\": {\"const\": \"RUNNING\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.collectionVariables.set(\"run_id2\", String(pm.response.json().runId));",
+                      "pm.test(\"runId khác lượt trước\", function () { pm.expect(pm.response.json().runId).to.not.eql(pm.collectionVariables.get(\"run_id\")); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-016 Run not found",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/does-not-exist",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "does-not-exist"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 404\", function () { pm.response.to.have.status(404); });",
+                      "pm.test(\"error.code = RECONCILIATION_NOT_FOUND\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"RECONCILIATION_NOT_FOUND\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-017 Run of tenant A is not visible to tenant B (mã chưa xác minh)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id_other}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{run_id}}"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 4xx (mã cụ thể chưa xác minh)\", function () { pm.expect(pm.response.code).to.be.within(400, 499); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Items: query validation",
+          "item": [
+            {
+              "name": "REC-003 Items list shape",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}/items",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{run_id}}",
+                    "items"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"items\", \"nextCursor\"], \"properties\": {\"items\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"required\": [\"id\", \"runId\", \"kind\", \"caseStatus\", \"detail\", \"action\", \"createdAt\"], \"properties\": {\"caseStatus\": {\"enum\": [\"OPEN\", \"RESOLVED\", \"IGNORED\"]}}}}, \"nextCursor\": {\"type\": [\"string\", \"null\"]}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-018 caseStatus invalid",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}/items?caseStatus=DONE",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{run_id}}",
+                    "items"
+                  ],
+                  "query": [
+                    {
+                      "key": "caseStatus",
+                      "value": "DONE"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-019a limit=0",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}/items?limit=0",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{run_id}}",
+                    "items"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "0"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-019b limit=501",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}/items?limit=501",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{run_id}}",
+                    "items"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "501"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-019c limit=abc",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}/items?limit=abc",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{run_id}}",
+                    "items"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "abc"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-019d limit=1.5",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}/items?limit=1.5",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{run_id}}",
+                    "items"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "1.5"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-020a limit repeated",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}/items?limit=1&limit=2",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{run_id}}",
+                    "items"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "2"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-020b caseStatus repeated",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}/items?caseStatus=OPEN&caseStatus=OPEN",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{run_id}}",
+                    "items"
+                  ],
+                  "query": [
+                    {
+                      "key": "caseStatus",
+                      "value": "OPEN"
+                    },
+                    {
+                      "key": "caseStatus",
+                      "value": "OPEN"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-021 cursor invalid",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}/items?cursor=abc",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{run_id}}",
+                    "items"
+                  ],
+                  "query": [
+                    {
+                      "key": "cursor",
+                      "value": "abc"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REC-022 Items of a run that does not exist",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/does-not-exist/items",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "does-not-exist",
+                    "items"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 404\", function () { pm.response.to.have.status(404); });",
+                      "pm.test(\"error.code = RECONCILIATION_NOT_FOUND\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"RECONCILIATION_NOT_FOUND\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "RES-009 Filter by caseStatus returns only that status",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliations/{{run_id}}/items?caseStatus=OPEN",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliations",
+                    "{{run_id}}",
+                    "items"
+                  ],
+                  "query": [
+                    {
+                      "key": "caseStatus",
+                      "value": "OPEN"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "pm.test(\"Mọi item đều OPEN\", function () { pm.response.json().items.forEach(function (i) { pm.expect(i.caseStatus).to.eql(\"OPEN\"); }); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Resolve: validation",
+          "item": [
+            {
+              "name": "RES-005a status OPEN",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliation-items/nope/resolve",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliation-items",
+                    "nope",
+                    "resolve"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"status\": \"OPEN\", \"note\": \"n\", \"resolvedBy\": \"qa\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "RES-005b status DONE",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliation-items/nope/resolve",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliation-items",
+                    "nope",
+                    "resolve"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"status\": \"DONE\", \"note\": \"n\", \"resolvedBy\": \"qa\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "RES-005c status missing",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliation-items/nope/resolve",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliation-items",
+                    "nope",
+                    "resolve"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"note\": \"n\", \"resolvedBy\": \"qa\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "RES-006a note empty",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliation-items/nope/resolve",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliation-items",
+                    "nope",
+                    "resolve"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"status\": \"RESOLVED\", \"note\": \"\", \"resolvedBy\": \"qa\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "RES-006b note 501 chars",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliation-items/nope/resolve",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliation-items",
+                    "nope",
+                    "resolve"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"status\": \"RESOLVED\", \"note\": \"nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\", \"resolvedBy\": \"qa\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "RES-007a resolvedBy empty",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliation-items/nope/resolve",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliation-items",
+                    "nope",
+                    "resolve"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"status\": \"RESOLVED\", \"note\": \"n\", \"resolvedBy\": \"\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "RES-007b resolvedBy 65 chars",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliation-items/nope/resolve",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliation-items",
+                    "nope",
+                    "resolve"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"status\": \"RESOLVED\", \"note\": \"n\", \"resolvedBy\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_RECONCILIATION\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_RECONCILIATION\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "RES-008 Item not found",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliation-items/nope/resolve",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliation-items",
+                    "nope",
+                    "resolve"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"status\": \"RESOLVED\", \"note\": \"n\", \"resolvedBy\": \"qa\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 404\", function () { pm.response.to.have.status(404); });",
+                      "pm.test(\"error.code = RECONCILIATION_ITEM_NOT_FOUND\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"RECONCILIATION_ITEM_NOT_FOUND\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "RES-010 Body is array",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliation-items/nope/resolve",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliation-items",
+                    "nope",
+                    "resolve"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "[]",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "RES-011 Missing tenant",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/reconciliation-items/nope/resolve",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "reconciliation-items",
+                    "nope",
+                    "resolve"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"status\": \"RESOLVED\", \"note\": \"n\", \"resolvedBy\": \"qa\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = MISSING_TENANT\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"MISSING_TENANT\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "Validation chạy trước khi tra item nên dùng id giả; không ghi dữ liệu."
+        }
+      ],
+      "description": "Negative và edge case của đối soát (không ghi dữ liệu ngoài việc tạo lượt chạy)."
+    }
+  ]
+}

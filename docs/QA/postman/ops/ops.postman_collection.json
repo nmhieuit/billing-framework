@@ -1,0 +1,4819 @@
+{
+  "info": {
+    "name": "Billing / Ops",
+    "description": "Collection Ops tools của wallet (freeze, adjustment, reversal, nhật ký) cho local stack. Chỉ dành cho mạng vận hành; QA tự đặt header x-actor-*. Cần environment `billing-local`. Chạy theo thứ tự. Kỳ vọng suy ra từ code/docs, chưa chạy thật: docs/QA/07-postman-smoke.md và 08-postman-regression.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Smoke",
+      "item": [
+        {
+          "name": "SETUP-O01 Init run + create wallet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallets",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"currency\": \"VND\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const run = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);",
+                  "pm.collectionVariables.set(\"run\", run);",
+                  "pm.collectionVariables.set(\"cust\", \"qa-ops-smoke-\" + run + \"-a\");",
+                  "pm.collectionVariables.set(\"cust_b\", \"qa-ops-smoke-\" + run + \"-b\");",
+                  "pm.collectionVariables.set(\"cust_c\", \"qa-ops-smoke-\" + run + \"-c\");",
+                  "pm.collectionVariables.set(\"cust_none\", \"qa-ops-smoke-\" + run + \"-none\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "FRZ-001 Freeze wallet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-actor-id",
+                "value": "{{actor_id}}"
+              },
+              {
+                "key": "x-actor-role",
+                "value": "{{actor_role}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/freeze",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "ops",
+                "wallets",
+                "{{cust}}",
+                "freeze"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\": \"qa test\", \"idempotencyKey\": \"{{k_f1}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"k_f1\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"frozen\", \"changed\", \"frozenAt\", \"actionId\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"frozen\": {\"type\": \"boolean\"}, \"changed\": {\"type\": \"boolean\"}, \"frozenAt\": {\"type\": [\"string\", \"null\"]}, \"actionId\": {\"type\": [\"string\", \"null\"]}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\".frozen = True\", function () { const j = pm.response.json(); pm.expect(j.frozen).to.eql(true); });",
+                  "pm.test(\".changed = True\", function () { const j = pm.response.json(); pm.expect(j.changed).to.eql(true); });",
+                  "pm.collectionVariables.set(\"frz_action\", String(pm.response.json().actionId));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "FRZ-002 Freeze again is a no-op",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-actor-id",
+                "value": "{{actor_id}}"
+              },
+              {
+                "key": "x-actor-role",
+                "value": "{{actor_role}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/freeze",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "ops",
+                "wallets",
+                "{{cust}}",
+                "freeze"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\": \"qa test\", \"idempotencyKey\": \"{{k_f2}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"k_f2\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"frozen\", \"changed\", \"frozenAt\", \"actionId\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"frozen\": {\"type\": \"boolean\"}, \"changed\": {\"type\": \"boolean\"}, \"frozenAt\": {\"type\": [\"string\", \"null\"]}, \"actionId\": {\"type\": [\"string\", \"null\"]}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\".frozen = True\", function () { const j = pm.response.json(); pm.expect(j.frozen).to.eql(true); });",
+                  "pm.test(\".changed = False\", function () { const j = pm.response.json(); pm.expect(j.changed).to.eql(false); });",
+                  "pm.test(\"actionId = null (no-op)\", function () { const j = pm.response.json(); pm.expect(j.actionId).to.eql(null); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "FRZ-004 Unfreeze wallet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-actor-id",
+                "value": "{{actor_id}}"
+              },
+              {
+                "key": "x-actor-role",
+                "value": "{{actor_role}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/unfreeze",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "ops",
+                "wallets",
+                "{{cust}}",
+                "unfreeze"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\": \"qa test\", \"idempotencyKey\": \"{{k_f3}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"k_f3\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"frozen\", \"changed\", \"frozenAt\", \"actionId\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"frozen\": {\"type\": \"boolean\"}, \"changed\": {\"type\": \"boolean\"}, \"frozenAt\": {\"type\": [\"string\", \"null\"]}, \"actionId\": {\"type\": [\"string\", \"null\"]}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\".frozen = False\", function () { const j = pm.response.json(); pm.expect(j.frozen).to.eql(false); });",
+                  "pm.test(\".changed = True\", function () { const j = pm.response.json(); pm.expect(j.changed).to.eql(true); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ADJ-001 Adjust CREDIT 50000",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-actor-id",
+                "value": "{{actor_id}}"
+              },
+              {
+                "key": "x-actor-role",
+                "value": "{{actor_role}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "ops",
+                "wallets",
+                "{{cust}}",
+                "adjustments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"direction\": \"CREDIT\", \"amount\": 50000, \"currency\": \"VND\", \"reason\": \"qa adjust\", \"idempotencyKey\": \"{{k_a1}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"k_a1\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"transactionId\", \"actionId\"], \"properties\": {\"transactionId\": {\"type\": \"string\"}, \"actionId\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.collectionVariables.set(\"tx_credit\", String(pm.response.json().transactionId));",
+                  "pm.collectionVariables.set(\"tx_credit_action\", String(pm.response.json().actionId));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ADJ-001b Balance is 50000",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallet",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallet"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"balance = 50000\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(50000); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ADJ-004 Replay adjustment with same key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-actor-id",
+                "value": "{{actor_id}}"
+              },
+              {
+                "key": "x-actor-role",
+                "value": "{{actor_role}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "ops",
+                "wallets",
+                "{{cust}}",
+                "adjustments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"direction\": \"CREDIT\", \"amount\": 50000, \"currency\": \"VND\", \"reason\": \"qa adjust\", \"idempotencyKey\": \"{{k_a1}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.test(\"Cùng transactionId và actionId\", function () { const j = pm.response.json(); pm.expect(j.transactionId).to.eql(pm.collectionVariables.get(\"tx_credit\")); pm.expect(j.actionId).to.eql(pm.collectionVariables.get(\"tx_credit_action\")); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ADJ-004b Balance unchanged after replay",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallet",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallet"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"balance = 50000\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(50000); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ADJ-002 Adjust DEBIT 20000",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-actor-id",
+                "value": "{{actor_id}}"
+              },
+              {
+                "key": "x-actor-role",
+                "value": "{{actor_role}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "ops",
+                "wallets",
+                "{{cust}}",
+                "adjustments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"direction\": \"DEBIT\", \"amount\": 20000, \"currency\": \"VND\", \"reason\": \"qa adjust\", \"idempotencyKey\": \"{{k_a2}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"k_a2\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"transactionId\", \"actionId\"], \"properties\": {\"transactionId\": {\"type\": \"string\"}, \"actionId\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.collectionVariables.set(\"tx_debit\", String(pm.response.json().transactionId));",
+                  "pm.collectionVariables.set(\"tx_debit_action\", String(pm.response.json().actionId));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ADJ-002b Balance is 30000",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallet",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallet"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"balance = 30000\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(30000); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "REV-001 Reverse the DEBIT adjustment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-actor-id",
+                "value": "{{actor_id}}"
+              },
+              {
+                "key": "x-actor-role",
+                "value": "{{actor_role}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/ops/transactions/{{tx_debit}}/reversals",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "ops",
+                "transactions",
+                "{{tx_debit}}",
+                "reversals"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\": \"qa reverse\", \"idempotencyKey\": \"{{k_r1}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"k_r1\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"transactionId\", \"reversesTransactionId\", \"actionId\"], \"properties\": {\"transactionId\": {\"type\": \"string\"}, \"reversesTransactionId\": {\"type\": \"string\"}, \"actionId\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"reversesTransactionId = giao dịch DEBIT\", function () { pm.expect(pm.response.json().reversesTransactionId).to.eql(pm.collectionVariables.get(\"tx_debit\")); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "REV-001b Balance back to 50000",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallet",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallet"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"balance = 50000\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(50000); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "LED-ADJ Entries include adjustment and reversal keys",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-customer-id",
+                "value": "{{cust}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/wallet/entries?limit=100",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "wallet",
+                "entries"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"items\", \"nextCursor\"], \"properties\": {\"items\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"required\": [\"entryId\", \"transactionId\", \"businessKey\", \"amount\", \"createdAt\"], \"properties\": {\"entryId\": {\"type\": \"integer\"}, \"transactionId\": {\"type\": \"string\"}, \"businessKey\": {\"type\": \"string\"}, \"amount\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}}}, \"nextCursor\": {\"type\": [\"string\", \"null\"]}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"Có businessKey adjustment: và reversal:\", function () { const k = pm.response.json().items.map(function (e) { return e.businessKey; }); pm.expect(k.some(function (x) { return x.indexOf(\"adjustment:\") === 0; })).to.be.true; pm.expect(k.some(function (x) { return x.indexOf(\"reversal:\") === 0; })).to.be.true; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "LOG-001 List ops actions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenant_id}}"
+              },
+              {
+                "key": "x-actor-id",
+                "value": "{{actor_id}}"
+              },
+              {
+                "key": "x-actor-role",
+                "value": "{{actor_role}}"
+              }
+            ],
+            "url": {
+              "raw": "{{wallet_base_url}}/ops/actions?limit=20",
+              "host": [
+                "{{wallet_base_url}}"
+              ],
+              "path": [
+                "ops",
+                "actions"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "const schema = {\"type\": \"object\", \"required\": [\"items\", \"nextCursor\"], \"properties\": {\"items\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"required\": [\"id\", \"action\", \"actor\", \"reason\", \"target\", \"createdAt\"], \"properties\": {\"action\": {\"enum\": [\"FREEZE\", \"UNFREEZE\", \"ADJUST\", \"REVERSE\", \"REPLAY_PAID\"]}}, \"not\": {\"anyOf\": [{\"required\": [\"idempotencyKey\"]}, {\"required\": [\"fingerprint\"]}, {\"required\": [\"result\"]}]}}}, \"nextCursor\": {\"type\": [\"string\", \"null\"]}}};",
+                  "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                  "pm.test(\"Mới nhất trước và chứa thao tác vừa làm\", function () { const it = pm.response.json().items; pm.expect(it.length).to.be.at.least(1); pm.expect(it.map(function (x) { return x.id; })).to.include(pm.collectionVariables.get(\"frz_action\")); pm.expect(it[0].actor).to.eql(pm.environment.get(\"actor_id\")); });"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Happy path của ops tools: freeze/unfreeze, adjustment, reversal, nhật ký. (Replay-paid cần order đã trả qua RabbitMQ: xem 03-manual-order-payment.md.)"
+    },
+    {
+      "name": "Regression",
+      "item": [
+        {
+          "name": "Setup",
+          "item": [
+            {
+              "name": "SETUP-O01 Init run + create wallet A",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"VND\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const run = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);",
+                      "pm.collectionVariables.set(\"run\", run);",
+                      "pm.collectionVariables.set(\"cust\", \"qa-ops-reg-\" + run + \"-a\");",
+                      "pm.collectionVariables.set(\"cust_b\", \"qa-ops-reg-\" + run + \"-b\");",
+                      "pm.collectionVariables.set(\"cust_c\", \"qa-ops-reg-\" + run + \"-c\");",
+                      "pm.collectionVariables.set(\"cust_none\", \"qa-ops-reg-\" + run + \"-none\");"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "SETUP-O02 Create wallet B",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust_b}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"VND\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "SETUP-O03 Create wallet C",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust_c}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallets",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallets"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"currency\": \"VND\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Ops / Auth",
+          "item": [
+            {
+              "name": "OPS-001 Missing x-actor-id",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "OPS"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 401\", function () { pm.response.to.have.status(401); });",
+                      "pm.test(\"error.code = MISSING_ACTOR\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"MISSING_ACTOR\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "OPS-003a Role ADMIN",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "ADMIN"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 403\", function () { pm.response.to.have.status(403); });",
+                      "pm.test(\"error.code = FORBIDDEN_ROLE\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"FORBIDDEN_ROLE\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "OPS-003b Role lowercase ops",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "ops"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 403\", function () { pm.response.to.have.status(403); });",
+                      "pm.test(\"error.code = FORBIDDEN_ROLE\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"FORBIDDEN_ROLE\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "OPS-003c Role missing",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 403\", function () { pm.response.to.have.status(403); });",
+                      "pm.test(\"error.code = FORBIDDEN_ROLE\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"FORBIDDEN_ROLE\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "OPS-004 Role \"OPS, ADMIN\"",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "OPS, ADMIN"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 403\", function () { pm.response.to.have.status(403); });",
+                      "pm.test(\"error.code = FORBIDDEN_ROLE\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"FORBIDDEN_ROLE\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "OPS-005 Missing tenant",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = MISSING_TENANT\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"MISSING_TENANT\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "OPS-006 Unknown tenant",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_unknown}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 403\", function () { pm.response.to.have.status(403); });",
+                      "pm.test(\"error.code = UNKNOWN_TENANT\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"UNKNOWN_TENANT\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "OPS-007 Missing actor and tenant: actor checked first",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-actor-role",
+                    "value": "OPS"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 401\", function () { pm.response.to.have.status(401); });",
+                      "pm.test(\"error.code = MISSING_ACTOR\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"MISSING_ACTOR\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "OPS-009 Customer headers are not ops identity",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 401\", function () { pm.response.to.have.status(401); });",
+                      "pm.test(\"error.code = MISSING_ACTOR\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"MISSING_ACTOR\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Ops / Freeze",
+          "item": [
+            {
+              "name": "FRZ-001 Freeze wallet A",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "freeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa test\", \"idempotencyKey\": \"{{k_f1}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_f1\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"frozen\", \"changed\", \"frozenAt\", \"actionId\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"frozen\": {\"type\": \"boolean\"}, \"changed\": {\"type\": \"boolean\"}, \"frozenAt\": {\"type\": [\"string\", \"null\"]}, \"actionId\": {\"type\": [\"string\", \"null\"]}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\".frozen = True\", function () { const j = pm.response.json(); pm.expect(j.frozen).to.eql(true); });",
+                      "pm.test(\".changed = True\", function () { const j = pm.response.json(); pm.expect(j.changed).to.eql(true); });",
+                      "pm.collectionVariables.set(\"frz_action\", String(pm.response.json().actionId));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-002 Freeze again (new key): no-op",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "freeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa test\", \"idempotencyKey\": \"{{k_f2}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_f2\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"frozen\", \"changed\", \"frozenAt\", \"actionId\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"frozen\": {\"type\": \"boolean\"}, \"changed\": {\"type\": \"boolean\"}, \"frozenAt\": {\"type\": [\"string\", \"null\"]}, \"actionId\": {\"type\": [\"string\", \"null\"]}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\".frozen = True\", function () { const j = pm.response.json(); pm.expect(j.frozen).to.eql(true); });",
+                      "pm.test(\".changed = False\", function () { const j = pm.response.json(); pm.expect(j.changed).to.eql(false); });",
+                      "pm.test(\"actionId = null (no-op)\", function () { const j = pm.response.json(); pm.expect(j.actionId).to.eql(null); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-003 Replay freeze with same key returns first result",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "freeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa test\", \"idempotencyKey\": \"{{k_f1}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "pm.test(\".changed = True\", function () { const j = pm.response.json(); pm.expect(j.changed).to.eql(true); });",
+                      "pm.test(\"Cùng actionId\", function () { pm.expect(pm.response.json().actionId).to.eql(pm.collectionVariables.get(\"frz_action\")); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-010 Same key reused for another wallet",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust_b}}/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust_b}}",
+                    "freeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa\", \"idempotencyKey\": \"{{k_f1}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 409\", function () { pm.response.to.have.status(409); });",
+                      "pm.test(\"error.code = IDEMPOTENCY_CONFLICT\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"IDEMPOTENCY_CONFLICT\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-004 Unfreeze wallet A",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/unfreeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "unfreeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa test\", \"idempotencyKey\": \"{{k_f3}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_f3\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"frozen\", \"changed\", \"frozenAt\", \"actionId\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"frozen\": {\"type\": \"boolean\"}, \"changed\": {\"type\": \"boolean\"}, \"frozenAt\": {\"type\": [\"string\", \"null\"]}, \"actionId\": {\"type\": [\"string\", \"null\"]}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\".frozen = False\", function () { const j = pm.response.json(); pm.expect(j.frozen).to.eql(false); });",
+                      "pm.test(\".changed = True\", function () { const j = pm.response.json(); pm.expect(j.changed).to.eql(true); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-005 Unfreeze again: no-op",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/unfreeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "unfreeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa test\", \"idempotencyKey\": \"{{k_f4}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_f4\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"frozen\", \"changed\", \"frozenAt\", \"actionId\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"frozen\": {\"type\": \"boolean\"}, \"changed\": {\"type\": \"boolean\"}, \"frozenAt\": {\"type\": [\"string\", \"null\"]}, \"actionId\": {\"type\": [\"string\", \"null\"]}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\".frozen = False\", function () { const j = pm.response.json(); pm.expect(j.frozen).to.eql(false); });",
+                      "pm.test(\".changed = False\", function () { const j = pm.response.json(); pm.expect(j.changed).to.eql(false); });",
+                      "pm.test(\"actionId = null (no-op)\", function () { const j = pm.response.json(); pm.expect(j.actionId).to.eql(null); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-006 Wallet not found",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust_none}}/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust_none}}",
+                    "freeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa\", \"idempotencyKey\": \"{{k_fnone}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_fnone\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 404\", function () { pm.response.to.have.status(404); });",
+                      "pm.test(\"error.code = WALLET_NOT_FOUND\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"WALLET_NOT_FOUND\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-007 customerId invalid in path",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/bad!id/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "bad!id",
+                    "freeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa\", \"idempotencyKey\": \"{{k_fbad}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_fbad\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-008a Empty body",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "freeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_OPS_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_OPS_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-008b Only reason",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "freeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"x\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_OPS_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_OPS_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-008c Only idempotencyKey",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "freeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"idempotencyKey\": \"k\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_OPS_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_OPS_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-008d Blank reason",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "freeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"   \", \"idempotencyKey\": \"k\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_OPS_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_OPS_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-008e reason 501 chars",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "freeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\", \"idempotencyKey\": \"k\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_OPS_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_OPS_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-009 Body is array",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "freeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "[]",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "OPS-008a Freeze B with body actor \"hacker\" (ignored)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust_b}}/freeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust_b}}",
+                    "freeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa\", \"idempotencyKey\": \"{{k_fb}}\", \"actor\": \"hacker\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_fb\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"frozen\", \"changed\", \"frozenAt\", \"actionId\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"frozen\": {\"type\": \"boolean\"}, \"changed\": {\"type\": \"boolean\"}, \"frozenAt\": {\"type\": [\"string\", \"null\"]}, \"actionId\": {\"type\": [\"string\", \"null\"]}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.collectionVariables.set(\"frz_b_action\", String(pm.response.json().actionId));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "OPS-008b Action log shows header actor, not body actor",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions?limit=5",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "5"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "pm.test(\"actor lấy từ header\", function () { const a = pm.response.json().items.find(function (x) { return x.id === pm.collectionVariables.get(\"frz_b_action\"); }); pm.expect(a, \"action\").to.be.ok; pm.expect(a.actor).to.eql(pm.environment.get(\"actor_id\")); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Ops / Adjustments",
+          "item": [
+            {
+              "name": "ADJ-011 CREDIT 7000 on a frozen wallet B",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust_b}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust_b}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"CREDIT\", \"amount\": 7000, \"currency\": \"VND\", \"reason\": \"qa adjust\", \"idempotencyKey\": \"{{k_ab1}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_ab1\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"transactionId\", \"actionId\"], \"properties\": {\"transactionId\": {\"type\": \"string\"}, \"actionId\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.collectionVariables.set(\"tx_b_credit\", String(pm.response.json().transactionId));",
+                      "pm.collectionVariables.set(\"tx_b_credit_action\", String(pm.response.json().actionId));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-011b DEBIT 7000 on frozen wallet B",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust_b}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust_b}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"DEBIT\", \"amount\": 7000, \"currency\": \"VND\", \"reason\": \"qa adjust\", \"idempotencyKey\": \"{{k_ab2}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_ab2\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"transactionId\", \"actionId\"], \"properties\": {\"transactionId\": {\"type\": \"string\"}, \"actionId\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-011c Wallet B balance is 0",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust_b}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\"balance = 0\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(0); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REV-009 Reverse CREDIT after it was spent",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/transactions/{{tx_b_credit}}/reversals",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "transactions",
+                    "{{tx_b_credit}}",
+                    "reversals"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa\", \"idempotencyKey\": \"{{k_rb1}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_rb1\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 409\", function () { pm.response.to.have.status(409); });",
+                      "pm.test(\"error.code = INSUFFICIENT_FUNDS\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INSUFFICIENT_FUNDS\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "FRZ-004b Unfreeze wallet B",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust_b}}/unfreeze",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust_b}}",
+                    "unfreeze"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa test\", \"idempotencyKey\": \"{{k_f5}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_f5\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"frozen\", \"changed\", \"frozenAt\", \"actionId\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"frozen\": {\"type\": \"boolean\"}, \"changed\": {\"type\": \"boolean\"}, \"frozenAt\": {\"type\": [\"string\", \"null\"]}, \"actionId\": {\"type\": [\"string\", \"null\"]}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\".frozen = False\", function () { const j = pm.response.json(); pm.expect(j.frozen).to.eql(false); });",
+                      "pm.test(\".changed = True\", function () { const j = pm.response.json(); pm.expect(j.changed).to.eql(true); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-001 CREDIT 50000 on wallet A",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"CREDIT\", \"amount\": 50000, \"currency\": \"VND\", \"reason\": \"qa adjust\", \"idempotencyKey\": \"{{k_a1}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_a1\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"transactionId\", \"actionId\"], \"properties\": {\"transactionId\": {\"type\": \"string\"}, \"actionId\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.collectionVariables.set(\"tx_credit\", String(pm.response.json().transactionId));",
+                      "pm.collectionVariables.set(\"tx_credit_action\", String(pm.response.json().actionId));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-002 DEBIT 20000 on wallet A",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"DEBIT\", \"amount\": 20000, \"currency\": \"VND\", \"reason\": \"qa adjust\", \"idempotencyKey\": \"{{k_a2}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_a2\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"transactionId\", \"actionId\"], \"properties\": {\"transactionId\": {\"type\": \"string\"}, \"actionId\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.collectionVariables.set(\"tx_debit\", String(pm.response.json().transactionId));",
+                      "pm.collectionVariables.set(\"tx_debit_action\", String(pm.response.json().actionId));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-003 DEBIT 40000 exceeds balance (30000)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"DEBIT\", \"amount\": 40000, \"currency\": \"VND\", \"reason\": \"qa\", \"idempotencyKey\": \"{{k_a3}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_a3\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 409\", function () { pm.response.to.have.status(409); });",
+                      "pm.test(\"error.code = INSUFFICIENT_FUNDS\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INSUFFICIENT_FUNDS\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-003b Balance unchanged (30000)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\"balance = 30000\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(30000); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-004 Replay with same key and body",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"CREDIT\", \"amount\": 50000, \"currency\": \"VND\", \"reason\": \"qa adjust\", \"idempotencyKey\": \"{{k_a1}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                      "pm.test(\"Cùng transactionId\", function () { pm.expect(pm.response.json().transactionId).to.eql(pm.collectionVariables.get(\"tx_credit\")); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-005 Same key, different amount",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"CREDIT\", \"amount\": 60000, \"currency\": \"VND\", \"reason\": \"qa\", \"idempotencyKey\": \"{{k_a1}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 409\", function () { pm.response.to.have.status(409); });",
+                      "pm.test(\"error.code = IDEMPOTENCY_CONFLICT\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"IDEMPOTENCY_CONFLICT\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-006 Another actor, same key and params: first result, no new log",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "another.person"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"CREDIT\", \"amount\": 50000, \"currency\": \"VND\", \"reason\": \"different reason\", \"idempotencyKey\": \"{{k_a1}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                      "pm.test(\"Cùng transactionId\", function () { pm.expect(pm.response.json().transactionId).to.eql(pm.collectionVariables.get(\"tx_credit\")); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-007a direction invalid",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"UP\", \"amount\": 100, \"currency\": \"VND\", \"reason\": \"qa\", \"idempotencyKey\": \"{{k_av}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_av\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_OPS_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_OPS_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-007b direction missing",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 100, \"currency\": \"VND\", \"reason\": \"qa\", \"idempotencyKey\": \"{{k_av}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_av\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_OPS_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_OPS_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-008a amount 0",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"CREDIT\", \"amount\": 0, \"currency\": \"VND\", \"reason\": \"qa\", \"idempotencyKey\": \"{{k_av}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_av\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_OPS_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_OPS_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-008b amount negative",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"CREDIT\", \"amount\": -5, \"currency\": \"VND\", \"reason\": \"qa\", \"idempotencyKey\": \"{{k_av}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_av\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_OPS_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_OPS_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-008c amount decimal",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"CREDIT\", \"amount\": 10.5, \"currency\": \"VND\", \"reason\": \"qa\", \"idempotencyKey\": \"{{k_av}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_av\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_OPS_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_OPS_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-008d amount is string",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"CREDIT\", \"amount\": \"1000\", \"currency\": \"VND\", \"reason\": \"qa\", \"idempotencyKey\": \"{{k_av}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_av\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_OPS_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_OPS_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-009 Wrong currency (USD on VND wallet)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"CREDIT\", \"amount\": 100, \"currency\": \"USD\", \"reason\": \"qa\", \"idempotencyKey\": \"{{k_av}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_av\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 422\", function () { pm.response.to.have.status(422); });",
+                      "pm.test(\"error.code = INVALID_OPS_REQUEST\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_OPS_REQUEST\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-010 Wallet not found",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/wallets/{{cust_none}}/adjustments",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "wallets",
+                    "{{cust_none}}",
+                    "adjustments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"direction\": \"CREDIT\", \"amount\": 100, \"currency\": \"VND\", \"reason\": \"qa\", \"idempotencyKey\": \"{{k_av}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_av\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 404\", function () { pm.response.to.have.status(404); });",
+                      "pm.test(\"error.code = WALLET_NOT_FOUND\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"WALLET_NOT_FOUND\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ADJ-013 Wallet A balance is 30000 (replays and errors changed nothing)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\"balance = 30000\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(30000); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "Ví B (đóng băng): +7000 -7000 rồi đảo CREDIT bị từ chối. Ví A: +50000 -20000 = 30000; replay/lỗi không đổi số dư."
+        },
+        {
+          "name": "Ops / Reversals",
+          "item": [
+            {
+              "name": "REV-001 Reverse the DEBIT on wallet A",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/transactions/{{tx_debit}}/reversals",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "transactions",
+                    "{{tx_debit}}",
+                    "reversals"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa reverse\", \"idempotencyKey\": \"{{k_r1}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_r1\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"transactionId\", \"reversesTransactionId\", \"actionId\"], \"properties\": {\"transactionId\": {\"type\": \"string\"}, \"reversesTransactionId\": {\"type\": \"string\"}, \"actionId\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.collectionVariables.set(\"tx_rev\", String(pm.response.json().transactionId));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REV-001b Wallet A balance after reversal",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"customerId\", \"currency\", \"balance\", \"createdAt\"], \"properties\": {\"customerId\": {\"type\": \"string\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"balance\": {\"type\": \"integer\"}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\"balance = 50000\", function () { const j = pm.response.json(); pm.expect(j.balance).to.eql(50000); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REV-002 Reverse again (new key)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/transactions/{{tx_debit}}/reversals",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "transactions",
+                    "{{tx_debit}}",
+                    "reversals"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa\", \"idempotencyKey\": \"{{k_r2}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_r2\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 409\", function () { pm.response.to.have.status(409); });",
+                      "pm.test(\"error.code = ALREADY_REVERSED\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"ALREADY_REVERSED\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REV-003 Replay reversal with same key",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/transactions/{{tx_debit}}/reversals",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "transactions",
+                    "{{tx_debit}}",
+                    "reversals"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa reverse\", \"idempotencyKey\": \"{{k_r1}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 201\", function () { pm.response.to.have.status(201); });",
+                      "pm.test(\"Cùng transactionId\", function () { pm.expect(pm.response.json().transactionId).to.eql(pm.collectionVariables.get(\"tx_rev\")); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REV-007 Reverse a REVERSAL",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/transactions/{{tx_rev}}/reversals",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "transactions",
+                    "{{tx_rev}}",
+                    "reversals"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa\", \"idempotencyKey\": \"{{k_r3}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_r3\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 409\", function () { pm.response.to.have.status(409); });",
+                      "pm.test(\"error.code = REVERSAL_NOT_SUPPORTED\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"REVERSAL_NOT_SUPPORTED\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REV-008 Transaction not found",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/transactions/tx_doesnotexist/reversals",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "transactions",
+                    "tx_doesnotexist",
+                    "reversals"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa\", \"idempotencyKey\": \"{{k_r4}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_r4\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 404\", function () { pm.response.to.have.status(404); });",
+                      "pm.test(\"error.code = TRANSACTION_NOT_FOUND\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"TRANSACTION_NOT_FOUND\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REV-006a Topup for wallet C",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust_c}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "idempotency-key",
+                    "value": "{{k_tc}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"amount\": 1000}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_tc\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 202\", function () { pm.response.to.have.status(202); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"topupId\", \"status\", \"amount\", \"currency\", \"createdAt\"], \"properties\": {\"topupId\": {\"type\": \"string\"}, \"status\": {\"const\": \"REQUESTED\"}, \"amount\": {\"type\": \"integer\"}, \"currency\": {\"enum\": [\"VND\", \"USD\"]}, \"createdAt\": {\"type\": \"string\"}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\".amount = 1000\", function () { const j = pm.response.json(); pm.expect(j.amount).to.eql(1000); });",
+                      "pm.collectionVariables.set(\"topup_c\", String(pm.response.json().topupId));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REV-006b Poll topup C",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust_c}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/topups/{{topup_c}}",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "topups",
+                    "{{topup_c}}"
+                  ]
+                },
+                "description": "Lặp lại chính request này (tối đa poll_max_attempts lần, mỗi poll_interval_ms) tới khi SUCCEEDED/FAILED. Cần chạy bằng Collection Runner/Newman (dùng postman.setNextRequest)."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const maxN = parseInt(pm.environment.get(\"poll_max_attempts\") || \"20\", 10);",
+                      "const waitMs = parseInt(pm.environment.get(\"poll_interval_ms\") || \"1000\", 10);",
+                      "const key = \"poll_n_\" + pm.info.requestName;",
+                      "let n = parseInt(pm.collectionVariables.get(key) || \"0\", 10);",
+                      "const j = pm.response.json();",
+                      "const done = [\"SUCCEEDED\",\"FAILED\"].includes(j.status);",
+                      "if (!done && n < maxN) {",
+                      "  pm.collectionVariables.set(key, String(n + 1));",
+                      "  setTimeout(function () {}, waitMs);",
+                      "  postman.setNextRequest(pm.info.requestName);",
+                      "} else {",
+                      "  pm.collectionVariables.unset(key);",
+                      "  pm.test(\"Topup kết thúc ở SUCCEEDED (nếu FAILED/hết lượt chờ thì lỗi)\", function () { pm.expect(j.status).to.eql(\"SUCCEEDED\"); });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REV-006c Find the topup transaction id",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-customer-id",
+                    "value": "{{cust_c}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/wallet/entries?limit=10",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "wallet",
+                    "entries"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "pm.test(\"Có entry topup:\", function () { const e = pm.response.json().items.find(function (x) { return x.businessKey.indexOf(\"topup:\") === 0; }); pm.expect(e, \"topup entry\").to.be.ok; pm.collectionVariables.set(\"tx_topup_c\", e.transactionId); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "REV-006 Reverse a TOPUP transaction",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/transactions/{{tx_topup_c}}/reversals",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "transactions",
+                    "{{tx_topup_c}}",
+                    "reversals"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa\", \"idempotencyKey\": \"{{k_r5}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_r5\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 409\", function () { pm.response.to.have.status(409); });",
+                      "pm.test(\"error.code = REVERSAL_NOT_SUPPORTED\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"REVERSAL_NOT_SUPPORTED\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Ops / Replay",
+          "item": [
+            {
+              "name": "RPL-002 Replay for an order that was never paid",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  },
+                  {
+                    "key": "content-type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/orders/{{order_unknown}}/replay-paid",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "orders",
+                    "{{order_unknown}}",
+                    "replay-paid"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"reason\": \"qa\", \"idempotencyKey\": \"{{k_rp1}}\"}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"k_rp1\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                      "pm.collectionVariables.set(\"order_unknown\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 404\", function () { pm.response.to.have.status(404); });",
+                      "pm.test(\"error.code = ORDER_NOT_FOUND\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"ORDER_NOT_FOUND\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "Các trường hợp thành công của replay-paid cần order đã trả qua RabbitMQ (xem 03-manual-order-payment.md)."
+        },
+        {
+          "name": "Ops / Action log",
+          "item": [
+            {
+              "name": "LOG-005a limit=0",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions?limit=0",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "0"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LOG-005b limit=201",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions?limit=201",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "201"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LOG-005c limit=abc",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions?limit=abc",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "abc"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LOG-005d cursor=abc",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions?cursor=abc",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ],
+                  "query": [
+                    {
+                      "key": "cursor",
+                      "value": "abc"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LOG-005e cursor=0",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions?cursor=0",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ],
+                  "query": [
+                    {
+                      "key": "cursor",
+                      "value": "0"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LOG-005f limit repeated",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions?limit=1&limit=2",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "2"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 400\", function () { pm.response.to.have.status(400); });",
+                      "pm.test(\"error.code = INVALID_QUERY\", function () { const j = pm.response.json(); pm.expect(j).to.have.property(\"error\"); pm.expect(j.error.code).to.eql(\"INVALID_QUERY\"); pm.expect(j.error.message).to.be.a(\"string\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LOG-004a Page 1 (limit=1)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions?limit=1",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "1"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "const schema = {\"type\": \"object\", \"required\": [\"items\", \"nextCursor\"], \"properties\": {\"items\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"required\": [\"id\", \"action\", \"actor\", \"reason\", \"target\", \"createdAt\"], \"properties\": {\"action\": {\"enum\": [\"FREEZE\", \"UNFREEZE\", \"ADJUST\", \"REVERSE\", \"REPLAY_PAID\"]}}, \"not\": {\"anyOf\": [{\"required\": [\"idempotencyKey\"]}, {\"required\": [\"fingerprint\"]}, {\"required\": [\"result\"]}]}}}, \"nextCursor\": {\"type\": [\"string\", \"null\"]}}};",
+                      "pm.test(\"Response matches schema\", function () { pm.response.to.have.jsonSchema(schema); });",
+                      "pm.test(\"1 item, còn trang sau\", function () { const j = pm.response.json(); pm.expect(j.items.length).to.eql(1); pm.expect(j.nextCursor).to.be.a(\"string\"); pm.collectionVariables.set(\"log_cursor\", j.nextCursor); pm.collectionVariables.set(\"log_first\", j.items[0].id); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LOG-004b Page 2 via cursor (older)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions?limit=1&cursor={{log_cursor}}",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "1"
+                    },
+                    {
+                      "key": "cursor",
+                      "value": "{{log_cursor}}"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "pm.test(\"Không trùng trang 1\", function () { const j = pm.response.json(); pm.expect(j.items.length).to.eql(1); pm.expect(j.items[0].id).to.not.eql(pm.collectionVariables.get(\"log_first\")); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LOG-006 Other tenant does not see this tenant's actions",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-tenant-id",
+                    "value": "{{tenant_id_other}}"
+                  },
+                  {
+                    "key": "x-actor-id",
+                    "value": "{{actor_id}}"
+                  },
+                  {
+                    "key": "x-actor-role",
+                    "value": "{{actor_role}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{wallet_base_url}}/ops/actions?limit=200",
+                  "host": [
+                    "{{wallet_base_url}}"
+                  ],
+                  "path": [
+                    "ops",
+                    "actions"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "200"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                      "pm.test(\"Không có action của tenant kia\", function () { const ids = pm.response.json().items.map(function (x) { return x.id; }); pm.expect(ids).to.not.include(pm.collectionVariables.get(\"frz_action\")); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "description": "Negative và edge case của ops tools."
+    }
+  ]
+}
