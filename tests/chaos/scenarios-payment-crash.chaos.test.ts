@@ -224,6 +224,12 @@ describe('S6-S8: payment and webhook faults (in-process)', () => {
     const created = await s.topup(TENANT, 's6a', 50_000, 'k-s6a');
     expect(created.status).toBe(202);
     await waitFor(() => s.plan.fired('s6a-timeout') === 1, { timeoutMs: 30_000, intervalMs: 50 });
+    // Chờ topup tự chốt (charge muộn được tạo, webhook về) TRƯỚC khi gọi heal(): heal() đẩy nhanh retry của topup REQUESTED, nên nếu
+    // gọi sớm, wallet có thể gửi yêu cầu thứ ba (cùng khóa) trước khi yêu cầu trễ được chuyển tiếp và làm sai khẳng định "đúng hai yêu cầu".
+    await waitFor(async () => (await topupOf(s, 's6a')).status === 'SUCCEEDED', {
+      timeoutMs: 60_000,
+      intervalMs: 100,
+    });
     await s.heal();
 
     expect(s.plan.fired('s6a-503')).toBe(1);

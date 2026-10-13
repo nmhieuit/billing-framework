@@ -503,15 +503,19 @@ export async function createSystem(options: SystemOptions = {}): Promise<System 
           return true;
         },
       });
-      // Tương tự cho topup REQUESTED đang chờ retry theo backoff (hoặc lease 60s): gửi lại luôn an toàn vì khóa idempotency cố định
-      // (S9 cũng dựa vào đó). Nhờ vậy heal() không trả về khi một lần nạp sắp hoàn tất NGAY SAU đó, giữa lúc oracle đang đọc.
+      // Tương tự cho topup REQUESTED đang chờ retry theo backoff / lease của tiến trình đã chết: gửi lại luôn an toàn vì khóa
+      // idempotency cố định (S9 dựa vào đó). Nhờ vậy heal() không trả về khi một lần nạp sắp hoàn tất NGAY SAU đó, giữa lúc oracle
+      // đang đọc. CHỈ kéo các dòng cách hạn trong cửa sổ (5 s, 55 s]: lease mới (60 s) của một lần gửi đang bay phải được để yên (kéo
+      // nó về hạn khiến worker gửi lần thứ hai song song, xem S6a), còn backoff ngắn (<= 5 s) tự đến hạn ngay.
       list.push({
         name: 'đẩy nhanh retry của topup REQUESTED',
         check: async () => {
           for (const tenant of tenantNames) {
             await sql`
               update ${sql.id(`t_${tenant}`)}.topups set next_attempt_at = sysutcdatetime()
-              where status = 'REQUESTED' and next_attempt_at > sysutcdatetime()`.execute(
+              where status = 'REQUESTED'
+                and next_attempt_at > dateadd(second, 5, sysutcdatetime())
+                and next_attempt_at <= dateadd(second, 55, sysutcdatetime())`.execute(
               adminWallet,
             );
           }
