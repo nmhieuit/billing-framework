@@ -2,8 +2,8 @@
 
 > **Giai đoạn 2, nhóm G.** Bốn collection Postman v2.1 cho local stack, mỗi collection có folder **`Smoke`** (luồng E2E happy path) và **`Regression`** (xem [`08-postman-regression.md`](08-postman-regression.md)).
 > Tệp: `docs/QA/postman/{wallet,payment,ops,reconciliations}/<tên>.postman_collection.json` và `docs/QA/postman/billing-local.postman_environment.json`.
-> **Đã kiểm tra:** JSON hợp lệ (parse được), schema collection v2.1.0, mọi script `pm.test` qua `node --check` (không lỗi cú pháp), mọi biến `{{...}}` đều được định nghĩa trước khi dùng theo thứ tự chạy.
-> **Chưa kiểm tra:** chưa chạy thật qua Postman/Newman với stack local, nên mọi kỳ vọng suy ra từ code và tài liệu. Request nào lệch thực tế sẽ lộ ra ở lần chạy đầu: sửa test, không sửa dữ liệu.
+> **Đã kiểm tra:** JSON hợp lệ, schema collection v2.1.0, mọi script qua `node --check`, mọi biến `{{...}}` được định nghĩa trước khi dùng, và **chạy Newman 6 trên một mock server** (`postman/mock/server.cjs`, viết theo cách đọc code; chạy 2 lượt liên tiếp, 0 lỗi). Việc chạy này tìm ra và đã sửa 3 lỗi của chính collection (xem `09-postman-endpoints.md` mục 5).
+> **Chưa kiểm tra:** chưa chạy với **service thật** (container này không có Docker/SQL Server). Mock do tôi viết từ cùng cách hiểu code nên chỉ chứng minh script, chaining và thứ tự chạy đúng, **không** chứng minh service thật trả đúng như kỳ vọng. Request nào lệch thực tế sẽ lộ ra ở lần chạy đầu trên stack local.
 > Chỉ có request cho **endpoint xác minh được từ code** (`docs/QA/00-overview.md` mục 3). Không có request nào cho luồng RabbitMQ (không gọi được bằng HTTP): xem [`03-manual-order-payment.md`](03-manual-order-payment.md).
 
 ## Environment và biến
