@@ -1,0 +1,1803 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-14T02:13:50.130Z",
+  "machine": {
+    "label": "DESKTOP-MBR3422",
+    "cpus": 4,
+    "memoryGb": 31.9,
+    "node": "v22.20.0",
+    "os": "Windows_NT 10.0.22000 x64",
+    "sqlServerVersion": "Microsoft SQL Server 2022 (RTM-CU26) (KB5093420) - 16.0.4265.3 (X64)",
+    "gitSha": "ac664387dc357324755330b0988308d405399116"
+  },
+  "config": {
+    "concurrency": [
+      1,
+      4,
+      16,
+      64
+    ],
+    "durationSeconds": 20,
+    "warmupSeconds": 3,
+    "repeats": 3,
+    "customers": 2000,
+    "tenants": 1,
+    "e2eOrders": 200,
+    "e2eConcurrency": 16,
+    "machine": "DESKTOP-MBR3422",
+    "out": "tests/perf/.out",
+    "scenarios": null
+  },
+  "scenarios": [
+    {
+      "name": "pay-order",
+      "description": "Mỗi thao tác trả một order 1 000 VND cho một khách ngẫu nhiên: mọi lệnh cùng khóa tài khoản MERCHANT (điểm nóng).",
+      "levels": [
+        {
+          "concurrency": 1,
+          "repeats": [
+            {
+              "throughputPerSec": 30.6,
+              "ok": 612,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 612,
+                "mean": 32.59323349673195,
+                "p50": 27.904600000001665,
+                "p95": 60.255199999999604,
+                "p99": 108.05430000000342,
+                "max": 177.0399999999936
+              },
+              "waits": {},
+              "blocked": []
+            },
+            {
+              "throughputPerSec": 35.65,
+              "ok": 713,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 713,
+                "mean": 28.00592342216032,
+                "p50": 24.808499999999185,
+                "p95": 45.364199999996345,
+                "p99": 64.77490000000398,
+                "max": 99.59519999999611
+              },
+              "waits": {},
+              "blocked": []
+            },
+            {
+              "throughputPerSec": 31.25,
+              "ok": 625,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 625,
+                "mean": 31.928534080000013,
+                "p50": 27.702999999994063,
+                "p95": 56.6475999999966,
+                "p99": 78.99679999999353,
+                "max": 192.44049999999697
+              },
+              "waits": {},
+              "blocked": []
+            }
+          ],
+          "medianThroughputPerSec": 31.25,
+          "throughputRange": {
+            "min": 30.6,
+            "max": 35.65
+          },
+          "medianP95Ms": 56.6475999999966,
+          "medianP99Ms": 78.99679999999353
+        },
+        {
+          "concurrency": 4,
+          "repeats": [
+            {
+              "throughputPerSec": 44.3,
+              "ok": 886,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 886,
+                "mean": 90.13371659142233,
+                "p50": 77.44569999998203,
+                "p95": 167.5954999999958,
+                "p99": 244.97349999999278,
+                "max": 295.4594999999972
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 56409,
+                  "count": 1030
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 507,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 507
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 42.7,
+              "ok": 854,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 854,
+                "mean": 93.59461065573814,
+                "p50": 78.32819999998901,
+                "p95": 165.33249999998952,
+                "p99": 249.6876999999804,
+                "max": 308.17459999999846
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 30,
+                  "count": 2
+                },
+                "LCK_M_U": {
+                  "waitMs": 56481,
+                  "count": 967
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 513,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 513
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 31,
+              "ok": 620,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 620,
+                "mean": 128.3339791935492,
+                "p50": 97.92380000001867,
+                "p95": 312.2985000000044,
+                "p99": 505.3683000000019,
+                "max": 580.6185000000114
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 56897,
+                  "count": 764
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 494,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 494
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "medianThroughputPerSec": 42.7,
+          "throughputRange": {
+            "min": 31,
+            "max": 44.3
+          },
+          "medianP95Ms": 167.5954999999958,
+          "medianP99Ms": 249.6876999999804
+        },
+        {
+          "concurrency": 16,
+          "repeats": [
+            {
+              "throughputPerSec": 21.65,
+              "ok": 433,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 433,
+                "mean": 739.2584445727481,
+                "p50": 671.763100000011,
+                "p95": 1502.1607000000076,
+                "p99": 1654.49059999999,
+                "max": 1676.68299999999
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 332763,
+                  "count": 495
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 2686,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 2686
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 17.35,
+              "ok": 347,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 347,
+                "mean": 925.8986634005763,
+                "p50": 772.350299999991,
+                "p95": 2120.9032999999763,
+                "p99": 2440.09169999999,
+                "max": 2498.4167000000016
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 335147,
+                  "count": 399
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 2563,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 2563
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 19.95,
+              "ok": 399,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 399,
+                "mean": 816.5611380952382,
+                "p50": 715.8709999999846,
+                "p95": 1581.8266000000003,
+                "p99": 1968.117499999993,
+                "max": 2001.4084999999905
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 10,
+                  "count": 1
+                },
+                "LCK_M_U": {
+                  "waitMs": 335193,
+                  "count": 464
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 2678,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 2678
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "medianThroughputPerSec": 19.95,
+          "throughputRange": {
+            "min": 17.35,
+            "max": 21.65
+          },
+          "medianP95Ms": 1581.8266000000003,
+          "medianP99Ms": 1968.117499999993
+        },
+        {
+          "concurrency": 64,
+          "repeats": [
+            {
+              "throughputPerSec": 16.25,
+              "ok": 325,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 325,
+                "mean": 3980.1338076923057,
+                "p50": 4039.5157999999938,
+                "p95": 5827.0576,
+                "p99": 6106.757699999958,
+                "max": 6199.848499999964
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 176,
+                  "count": 2
+                },
+                "LCK_M_U": {
+                  "waitMs": 1540615,
+                  "count": 407
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 11414,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 11414
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_S",
+                  "statement": "select * from \"t_perf1\".\"accounts\" where \"id\" = @1",
+                  "count": 2,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (4967d3d1c561)",
+                      "count": 2
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 17.2,
+              "ok": 344,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 344,
+                "mean": 4015.554396511629,
+                "p50": 3940.815500000026,
+                "p95": 6291.603200000012,
+                "p99": 6541.46259999997,
+                "max": 6588.001199999999
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 1474393,
+                  "count": 419
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 11523,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 11523
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 42.05,
+              "ok": 841,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 841,
+                "mean": 1529.0406690844213,
+                "p50": 1485.8193999999785,
+                "p95": 2071.275399999984,
+                "p99": 2108.640700000047,
+                "max": 2202.7471999999834
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 12,
+                  "count": 1
+                },
+                "LCK_M_U": {
+                  "waitMs": 1475488,
+                  "count": 998
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 13113,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 13113
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "medianThroughputPerSec": 17.2,
+          "throughputRange": {
+            "min": 16.25,
+            "max": 42.05
+          },
+          "medianP95Ms": 5827.0576,
+          "medianP99Ms": 6106.757699999958
+        }
+      ],
+      "valid": true,
+      "notes": [
+        "kịch bản pay-order, mức 1, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 2590 thao tác",
+        "kịch bản pay-order, mức 1, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 2590 thao tác",
+        "kịch bản pay-order, mức 1, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 2590 thao tác",
+        "kịch bản pay-order, mức 4, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3458 thao tác",
+        "kịch bản pay-order, mức 4, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3458 thao tác",
+        "kịch bản pay-order, mức 4, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3458 thao tác",
+        "kịch bản pay-order, mức 16, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3482 thao tác",
+        "kịch bản pay-order, mức 16, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3482 thao tác",
+        "kịch bản pay-order, mức 16, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3482 thao tác",
+        "kịch bản pay-order, mức 64, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3578 thao tác",
+        "kịch bản pay-order, mức 64, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3578 thao tác",
+        "kịch bản pay-order, mức 64, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3578 thao tác",
+        "kịch bản pay-order, mức 1, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 684 thao tác đã bắt đầu): WRITELOG 832 ms/711 lần (TB 1.17 ms/lần, 1.04 lần/thao tác); SOS_SCHEDULER_YIELD 3 ms/43 lần (TB 0.07 ms/lần, 0.06 lần/thao tác)",
+        "kịch bản pay-order, mức 1, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 788 thao tác đã bắt đầu): WRITELOG 658 ms/795 lần (TB 0.83 ms/lần, 1.01 lần/thao tác); SOS_SCHEDULER_YIELD 20 ms/44 lần (TB 0.45 ms/lần, 0.06 lần/thao tác)",
+        "kịch bản pay-order, mức 1, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 732 thao tác đã bắt đầu): WRITELOG 671 ms/734 lần (TB 0.91 ms/lần, 1.00 lần/thao tác); SOS_SCHEDULER_YIELD 2 ms/43 lần (TB 0.05 ms/lần, 0.06 lần/thao tác)",
+        "kịch bản pay-order, mức 4, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 1031 thao tác đã bắt đầu): WRITELOG 882 ms/1033 lần (TB 0.85 ms/lần, 1.00 lần/thao tác); PAGELATCH_EX 0 ms/1 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 2 ms/1 lần (TB 2.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 47 ms/99 lần (TB 0.47 ms/lần, 0.10 lần/thao tác)",
+        "kịch bản pay-order, mức 4, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 968 thao tác đã bắt đầu): WRITELOG 910 ms/975 lần (TB 0.93 ms/lần, 1.01 lần/thao tác); PAGELATCH_SH 1 ms/2 lần (TB 0.50 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 41 ms/81 lần (TB 0.51 ms/lần, 0.08 lần/thao tác)",
+        "kịch bản pay-order, mức 4, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.4 s, 765 thao tác đã bắt đầu): WRITELOG 966 ms/772 lần (TB 1.25 ms/lần, 1.01 lần/thao tác); PAGELATCH_SH 0 ms/1 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 79 ms/131 lần (TB 0.60 ms/lần, 0.17 lần/thao tác)",
+        "kịch bản pay-order, mức 16, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.8 s, 496 thao tác đã bắt đầu): WRITELOG 1135 ms/519 lần (TB 2.19 ms/lần, 1.05 lần/thao tác); PAGEIOLATCH_EX 10 ms/1 lần (TB 10.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 232 ms/221 lần (TB 1.05 ms/lần, 0.45 lần/thao tác)",
+        "kịch bản pay-order, mức 16, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.5 s, 400 thao tác đã bắt đầu): WRITELOG 1135 ms/420 lần (TB 2.70 ms/lần, 1.05 lần/thao tác); PAGELATCH_EX 1 ms/5 lần (TB 0.20 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 276 ms/187 lần (TB 1.48 ms/lần, 0.47 lần/thao tác)",
+        "kịch bản pay-order, mức 16, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.6 s, 465 thao tác đã bắt đầu): WRITELOG 1150 ms/482 lần (TB 2.39 ms/lần, 1.04 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 152 ms/198 lần (TB 0.77 ms/lần, 0.43 lần/thao tác)",
+        "kịch bản pay-order, mức 64, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 29.3 s, 408 thao tác đã bắt đầu): WRITELOG 1496 ms/432 lần (TB 3.46 ms/lần, 1.06 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 1938 ms/361 lần (TB 5.37 ms/lần, 0.88 lần/thao tác)",
+        "kịch bản pay-order, mức 64, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 25.1 s, 420 thao tác đã bắt đầu): WRITELOG 1209 ms/449 lần (TB 2.69 ms/lần, 1.07 lần/thao tác); PAGELATCH_EX 4 ms/7 lần (TB 0.57 ms/lần, 0.02 lần/thao tác); PAGELATCH_SH 0 ms/7 lần (TB 0.00 ms/lần, 0.02 lần/thao tác); PAGEIOLATCH_SH 13 ms/2 lần (TB 6.50 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 725 ms/296 lần (TB 2.45 ms/lần, 0.70 lần/thao tác)",
+        "kịch bản pay-order, mức 64, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.5 s, 999 thao tác đã bắt đầu): WRITELOG 986 ms/1004 lần (TB 0.98 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 294 ms/178 lần (TB 1.65 ms/lần, 0.18 lần/thao tác)"
+      ]
+    },
+    {
+      "name": "topup-apply",
+      "description": "Mỗi thao tác áp kết quả charge.succeeded cho một topup PENDING chưa dùng (hàng đợi seed trước, ngoài cửa sổ đo).",
+      "levels": [
+        {
+          "concurrency": 1,
+          "repeats": [
+            {
+              "throughputPerSec": 33.25,
+              "ok": 665,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 665,
+                "mean": 30.066426315788913,
+                "p50": 25.3464999999851,
+                "p95": 56.414700000023004,
+                "p99": 98.68660000001546,
+                "max": 199.8464999999851
+              },
+              "waits": {},
+              "blocked": []
+            },
+            {
+              "throughputPerSec": 29.2,
+              "ok": 584,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 584,
+                "mean": 34.20281078766976,
+                "p50": 29.212799999979325,
+                "p95": 61.68900000001304,
+                "p99": 100.50880000001052,
+                "max": 188.22580000001471
+              },
+              "waits": {},
+              "blocked": []
+            },
+            {
+              "throughputPerSec": 30.75,
+              "ok": 615,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 615,
+                "mean": 32.52964536585358,
+                "p50": 29.301900000020396,
+                "p95": 51.95450000005076,
+                "p99": 77.55749999999534,
+                "max": 142.9765999999945
+              },
+              "waits": {},
+              "blocked": []
+            }
+          ],
+          "medianThroughputPerSec": 30.75,
+          "throughputRange": {
+            "min": 29.2,
+            "max": 33.25
+          },
+          "medianP95Ms": 56.414700000023004,
+          "medianP99Ms": 98.68660000001546
+        },
+        {
+          "concurrency": 4,
+          "repeats": [
+            {
+              "throughputPerSec": 41.2,
+              "ok": 824,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 824,
+                "mean": 96.96249259708495,
+                "p50": 88.32279999996535,
+                "p95": 146.50919999997132,
+                "p99": 209.1358000000473,
+                "max": 282.66599999996834
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 59920,
+                  "count": 948
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 514,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 514
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 40.9,
+              "ok": 818,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 818,
+                "mean": 97.72693814180663,
+                "p50": 88.8747999999905,
+                "p95": 146.89379999996163,
+                "p99": 175.40299999993294,
+                "max": 263.10900000005495
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 59766,
+                  "count": 945
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 509,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 509
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 23.9,
+              "ok": 478,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 478,
+                "mean": 165.94116631799224,
+                "p50": 134.2112999999663,
+                "p95": 295.58519999997225,
+                "p99": 662.3575999999885,
+                "max": 1257.457000000053
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 59013,
+                  "count": 578
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 466,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 466
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "medianThroughputPerSec": 40.9,
+          "throughputRange": {
+            "min": 23.9,
+            "max": 41.2
+          },
+          "medianP95Ms": 146.89379999996163,
+          "medianP99Ms": 209.1358000000473
+        },
+        {
+          "concurrency": 16,
+          "repeats": [
+            {
+              "throughputPerSec": 8.2,
+              "ok": 164,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 164,
+                "mean": 1862.8869378048814,
+                "p50": 1871.7395000000251,
+                "p95": 3593.220200000098,
+                "p99": 3918.3386000000173,
+                "max": 4026.054300000076
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 334725,
+                  "count": 222
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 2054,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 2054
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 19.3,
+              "ok": 386,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 386,
+                "mean": 801.659985233158,
+                "p50": 577.842799999984,
+                "p95": 3025.550699999789,
+                "p99": 3253.3662000000477,
+                "max": 3278.8564000001643
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 341005,
+                  "count": 474
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 2559,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 2559
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 25.75,
+              "ok": 515,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 515,
+                "mean": 681.7066384466035,
+                "p50": 437.1169000000227,
+                "p95": 1866.4229999999516,
+                "p99": 4248.710800000001,
+                "max": 4762.959700000007
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 332350,
+                  "count": 537
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 2475,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 2475
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "medianThroughputPerSec": 19.3,
+          "throughputRange": {
+            "min": 8.2,
+            "max": 25.75
+          },
+          "medianP95Ms": 3025.550699999789,
+          "medianP99Ms": 3918.3386000000173
+        },
+        {
+          "concurrency": 64,
+          "repeats": [
+            {
+              "throughputPerSec": 42.8,
+              "ok": 856,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 856,
+                "mean": 1630.523898598135,
+                "p50": 1344.5613999997731,
+                "p95": 3385.9200000001583,
+                "p99": 4103.7304999998305,
+                "max": 4245.072799999965
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 1443289,
+                  "count": 950
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 12293,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 12293
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 54.5,
+              "ok": 1090,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 1090,
+                "mean": 1165.7632492660548,
+                "p50": 1122.0845999999437,
+                "p95": 1620.5955999998841,
+                "p99": 1676.1115999999456,
+                "max": 1686.159900000086
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 1461037,
+                  "count": 1325
+                },
+                "LCK_M_X": {
+                  "waitMs": 6,
+                  "count": 2
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 13373,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 13373
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 57.1,
+              "ok": 1142,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 1142,
+                "mean": 1124.111541155865,
+                "p50": 1106.7080999999307,
+                "p95": 1431.86689999979,
+                "p99": 1590.7996999998577,
+                "max": 1621.8611999999266
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 1458986,
+                  "count": 1338
+                },
+                "LCK_M_IX": {
+                  "waitMs": 1,
+                  "count": 1
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 13343,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 13343
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "medianThroughputPerSec": 54.5,
+          "throughputRange": {
+            "min": 42.8,
+            "max": 57.1
+          },
+          "medianP95Ms": 1620.5955999998841,
+          "medianP99Ms": 1676.1115999999456
+        }
+      ],
+      "valid": true,
+      "notes": [
+        "kịch bản topup-apply, mức 1, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 28.6 s, cỡ hàng đợi tối đa 2590 thao tác",
+        "kịch bản topup-apply, mức 1, lần lặp 1: 1824 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản topup-apply, mức 1, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 25.0 s, cỡ hàng đợi tối đa 2590 thao tác",
+        "kịch bản topup-apply, mức 1, lần lặp 2: 1909 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản topup-apply, mức 1, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 21.9 s, cỡ hàng đợi tối đa 2590 thao tác",
+        "kịch bản topup-apply, mức 1, lần lặp 3: 1887 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản topup-apply, mức 4, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 32.0 s, cỡ hàng đợi tối đa 3458 thao tác",
+        "kịch bản topup-apply, mức 4, lần lặp 1: 2509 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản topup-apply, mức 4, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 33.4 s, cỡ hàng đợi tối đa 3458 thao tác",
+        "kịch bản topup-apply, mức 4, lần lặp 2: 2512 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản topup-apply, mức 4, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 43.3 s, cỡ hàng đợi tối đa 3458 thao tác",
+        "kịch bản topup-apply, mức 4, lần lặp 3: 2879 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản topup-apply, mức 16, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 202.4 s, cỡ hàng đợi tối đa 3482 thao tác",
+        "kịch bản topup-apply, mức 16, lần lặp 1: 3259 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản topup-apply, mức 16, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 270.9 s, cỡ hàng đợi tối đa 3482 thao tác",
+        "kịch bản topup-apply, mức 16, lần lặp 2: 3007 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản topup-apply, mức 16, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 83.9 s, cỡ hàng đợi tối đa 3482 thao tác",
+        "kịch bản topup-apply, mức 16, lần lặp 3: 2944 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản topup-apply, mức 64, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 57.4 s, cỡ hàng đợi tối đa 3578 thao tác",
+        "kịch bản topup-apply, mức 64, lần lặp 1: 2627 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản topup-apply, mức 64, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 28.5 s, cỡ hàng đợi tối đa 3578 thao tác",
+        "kịch bản topup-apply, mức 64, lần lặp 2: 2252 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản topup-apply, mức 64, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 31.8 s, cỡ hàng đợi tối đa 3578 thao tác",
+        "kịch bản topup-apply, mức 64, lần lặp 3: 2239 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản topup-apply, mức 1, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 766 thao tác đã bắt đầu): WRITELOG 778 ms/780 lần (TB 1.00 ms/lần, 1.02 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGEIOLATCH_SH 2 ms/2 lần (TB 1.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 42 ms/129 lần (TB 0.33 ms/lần, 0.17 lần/thao tác)",
+        "kịch bản topup-apply, mức 1, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 681 thao tác đã bắt đầu): WRITELOG 702 ms/688 lần (TB 1.02 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 1 ms/3 lần (TB 0.33 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 33 ms/59 lần (TB 0.56 ms/lần, 0.09 lần/thao tác)",
+        "kịch bản topup-apply, mức 1, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.2 s, 703 thao tác đã bắt đầu): WRITELOG 678 ms/716 lần (TB 0.95 ms/lần, 1.02 lần/thao tác); PAGELATCH_EX 4 ms/3 lần (TB 1.33 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 17 ms/115 lần (TB 0.15 ms/lần, 0.16 lần/thao tác)",
+        "kịch bản topup-apply, mức 4, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 949 thao tác đã bắt đầu): WRITELOG 846 ms/954 lần (TB 0.89 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 0 ms/4 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 102 ms/175 lần (TB 0.58 ms/lần, 0.18 lần/thao tác)",
+        "kịch bản topup-apply, mức 4, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.2 s, 946 thao tác đã bắt đầu): WRITELOG 846 ms/946 lần (TB 0.89 ms/lần, 1.00 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/4 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGEIOLATCH_SH 0 ms/1 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 50 ms/117 lần (TB 0.43 ms/lần, 0.12 lần/thao tác)",
+        "kịch bản topup-apply, mức 4, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.9 s, 579 thao tác đã bắt đầu): WRITELOG 1021 ms/582 lần (TB 1.75 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 0 ms/4 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/4 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 480 ms/479 lần (TB 1.00 ms/lần, 0.83 lần/thao tác)",
+        "kịch bản topup-apply, mức 16, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.9 s, 223 thao tác đã bắt đầu): WRITELOG 1196 ms/232 lần (TB 5.16 ms/lần, 1.04 lần/thao tác); PAGELATCH_EX 12 ms/6 lần (TB 2.00 ms/lần, 0.03 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 1675 ms/703 lần (TB 2.38 ms/lần, 3.15 lần/thao tác)",
+        "kịch bản topup-apply, mức 16, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.5 s, 475 thao tác đã bắt đầu): WRITELOG 1092 ms/480 lần (TB 2.27 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 638 ms/313 lần (TB 2.04 ms/lần, 0.66 lần/thao tác)",
+        "kịch bản topup-apply, mức 16, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.9 s, 538 thao tác đã bắt đầu): WRITELOG 1023 ms/546 lần (TB 1.87 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 0 ms/4 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/4 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 1117 ms/262 lần (TB 4.26 ms/lần, 0.49 lần/thao tác)",
+        "kịch bản topup-apply, mức 64, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.1 s, 951 thao tác đã bắt đầu): WRITELOG 1036 ms/958 lần (TB 1.08 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 62 ms/4 lần (TB 15.50 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 88 ms/5 lần (TB 17.60 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 487 ms/215 lần (TB 2.27 ms/lần, 0.23 lần/thao tác)",
+        "kịch bản topup-apply, mức 64, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.1 s, 1326 thao tác đã bắt đầu): WRITELOG 1080 ms/1455 lần (TB 0.74 ms/lần, 1.10 lần/thao tác); PAGELATCH_EX 0 ms/1 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 58 ms/104 lần (TB 0.56 ms/lần, 0.08 lần/thao tác)",
+        "kịch bản topup-apply, mức 64, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.2 s, 1339 thao tác đã bắt đầu): WRITELOG 960 ms/1340 lần (TB 0.72 ms/lần, 1.00 lần/thao tác); PAGELATCH_EX 0 ms/2 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 73 ms/124 lần (TB 0.59 ms/lần, 0.09 lần/thao tác)"
+      ]
+    },
+    {
+      "name": "mixed",
+      "description": "Hỗn hợp: 70% trả order, 15% áp nạp tiền, 10% điều chỉnh CREDIT ví, 5% đảo một giao dịch ORDER_PAYMENT đã tạo trong lượt (chưa có thì trả order thay).",
+      "levels": [
+        {
+          "concurrency": 1,
+          "repeats": [
+            {
+              "throughputPerSec": 37.1,
+              "ok": 742,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 742,
+                "mean": 26.947785309974652,
+                "p50": 23.938399999868125,
+                "p95": 45.01480000000447,
+                "p99": 65.812099999981,
+                "max": 139.5856999999378
+              },
+              "waits": {},
+              "blocked": []
+            },
+            {
+              "throughputPerSec": 36.5,
+              "ok": 730,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 730,
+                "mean": 27.364286712325203,
+                "p50": 24.32080000010319,
+                "p95": 46.48439999995753,
+                "p99": 74.77149999979883,
+                "max": 108.2253999998793
+              },
+              "waits": {},
+              "blocked": []
+            },
+            {
+              "throughputPerSec": 38.7,
+              "ok": 774,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 774,
+                "mean": 25.819792635659134,
+                "p50": 23.915000000037253,
+                "p95": 38.26309999986552,
+                "p99": 49.24179999995977,
+                "max": 128.17090000002645
+              },
+              "waits": {},
+              "blocked": []
+            }
+          ],
+          "medianThroughputPerSec": 37.1,
+          "throughputRange": {
+            "min": 36.5,
+            "max": 38.7
+          },
+          "medianP95Ms": 45.01480000000447,
+          "medianP99Ms": 65.812099999981
+        },
+        {
+          "concurrency": 4,
+          "repeats": [
+            {
+              "throughputPerSec": 60.9,
+              "ok": 1218,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 1218,
+                "mean": 65.46159564860605,
+                "p50": 62.336200000019744,
+                "p95": 118.84269999992102,
+                "p99": 177.93299999996088,
+                "max": 267.4257000000216
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 1715,
+                  "count": 80
+                },
+                "LCK_M_U": {
+                  "waitMs": 44196,
+                  "count": 1091
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 413,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 409
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 4
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_S",
+                  "statement": "select \"e\".\"account_id\", \"e\".\"amount\", \"a\".\"currency\" from \"t_perf1\".\"ledger_entries\" as \"e\" inner join \"t_perf1\".\"accou",
+                  "count": 18,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 18
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 48.1,
+              "ok": 962,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 962,
+                "mean": 82.97116216215966,
+                "p50": 87.41709999996237,
+                "p95": 132.93499999982305,
+                "p99": 171.77710000006482,
+                "max": 229.6803999999538
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 1586,
+                  "count": 57
+                },
+                "LCK_M_U": {
+                  "waitMs": 47344,
+                  "count": 867
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 401,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 399
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (4334da4a7f50)",
+                      "count": 2
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_S",
+                  "statement": "select \"e\".\"account_id\", \"e\".\"amount\", \"a\".\"currency\" from \"t_perf1\".\"ledger_entries\" as \"e\" inner join \"t_perf1\".\"accou",
+                  "count": 13,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 13
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 47.7,
+              "ok": 954,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 954,
+                "mean": 83.72054119496406,
+                "p50": 85.50300000002608,
+                "p95": 136.97879999992438,
+                "p99": 187.8703000000678,
+                "max": 217.88280000002123
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 1742,
+                  "count": 57
+                },
+                "LCK_M_U": {
+                  "waitMs": 47240,
+                  "count": 875
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 420,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 414
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 4
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (4334da4a7f50)",
+                      "count": 2
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_S",
+                  "statement": "select \"e\".\"account_id\", \"e\".\"amount\", \"a\".\"currency\" from \"t_perf1\".\"ledger_entries\" as \"e\" inner join \"t_perf1\".\"accou",
+                  "count": 11,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 11
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "medianThroughputPerSec": 48.1,
+          "throughputRange": {
+            "min": 47.7,
+            "max": 60.9
+          },
+          "medianP95Ms": 132.93499999982305,
+          "medianP99Ms": 177.93299999996088
+        },
+        {
+          "concurrency": 16,
+          "repeats": [
+            {
+              "throughputPerSec": 49.35,
+              "ok": 987,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 987,
+                "mean": 324.96529554204614,
+                "p50": 371.27839999995194,
+                "p95": 600.0459999998566,
+                "p99": 767.6822000001557,
+                "max": 1046.2927999999374
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 15204,
+                  "count": 47
+                },
+                "LCK_M_U": {
+                  "waitMs": 310937,
+                  "count": 909
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 2856,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 2846
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 8
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (4334da4a7f50)",
+                      "count": 2
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_S",
+                  "statement": "select \"e\".\"account_id\", \"e\".\"amount\", \"a\".\"currency\" from \"t_perf1\".\"ledger_entries\" as \"e\" inner join \"t_perf1\".\"accou",
+                  "count": 142,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 142
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 47.55,
+              "ok": 951,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 951,
+                "mean": 337.1598656151464,
+                "p50": 365.44369999994524,
+                "p95": 694.4024000000209,
+                "p99": 923.1759999999776,
+                "max": 1193.81380000012
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 26409,
+                  "count": 74
+                },
+                "LCK_M_U": {
+                  "waitMs": 300725,
+                  "count": 877
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 2754,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 2748
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 5
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (4334da4a7f50)",
+                      "count": 1
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_S",
+                  "statement": "select \"e\".\"account_id\", \"e\".\"amount\", \"a\".\"currency\" from \"t_perf1\".\"ledger_entries\" as \"e\" inner join \"t_perf1\".\"accou",
+                  "count": 238,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 238
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 49.35,
+              "ok": 987,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 987,
+                "mean": 323.5663497467089,
+                "p50": 366.01820000004955,
+                "p95": 618.3989999999758,
+                "p99": 733.688199999975,
+                "max": 1035.1587999998592
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 16143,
+                  "count": 51
+                },
+                "LCK_M_U": {
+                  "waitMs": 310719,
+                  "count": 906
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 2848,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 2842
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 5
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (4334da4a7f50)",
+                      "count": 1
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_S",
+                  "statement": "select \"e\".\"account_id\", \"e\".\"amount\", \"a\".\"currency\" from \"t_perf1\".\"ledger_entries\" as \"e\" inner join \"t_perf1\".\"accou",
+                  "count": 147,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 147
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_S",
+                  "statement": "select * from \"t_perf1\".\"accounts\" where \"id\" = @1",
+                  "count": 1,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (4bec9ff9538c)",
+                      "count": 1
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "medianThroughputPerSec": 49.35,
+          "throughputRange": {
+            "min": 47.55,
+            "max": 49.35
+          },
+          "medianP95Ms": 618.3989999999758,
+          "medianP99Ms": 767.6822000001557
+        },
+        {
+          "concurrency": 64,
+          "repeats": [
+            {
+              "throughputPerSec": 46.3,
+              "ok": 926,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 926,
+                "mean": 1388.998566630662,
+                "p50": 1584.370399999898,
+                "p95": 2985.621700000018,
+                "p99": 3644.3597999999765,
+                "max": 3953.879600000102
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 95701,
+                  "count": 58
+                },
+                "LCK_M_U": {
+                  "waitMs": 1361705,
+                  "count": 891
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 12260,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 12174
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 79
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (4334da4a7f50)",
+                      "count": 7
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_S",
+                  "statement": "select \"e\".\"account_id\", \"e\".\"amount\", \"a\".\"currency\" from \"t_perf1\".\"ledger_entries\" as \"e\" inner join \"t_perf1\".\"accou",
+                  "count": 861,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 861
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 40.4,
+              "ok": 808,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 808,
+                "mean": 1592.8232269801965,
+                "p50": 1719.3551000000443,
+                "p95": 4027.8929999999236,
+                "p99": 4995.258900000015,
+                "max": 5907.464900000021
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 78328,
+                  "count": 36
+                },
+                "LCK_M_U": {
+                  "waitMs": 1386122,
+                  "count": 776
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 12015,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 11940
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 52
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (4334da4a7f50)",
+                      "count": 23
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_S",
+                  "statement": "select \"e\".\"account_id\", \"e\".\"amount\", \"a\".\"currency\" from \"t_perf1\".\"ledger_entries\" as \"e\" inner join \"t_perf1\".\"accou",
+                  "count": 656,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 656
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "throughputPerSec": 38.55,
+              "ok": 771,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 771,
+                "mean": 1645.870884435797,
+                "p50": 1829.3858000000473,
+                "p95": 3461.4931000000797,
+                "p99": 4818.414199999999,
+                "max": 5820.416999999899
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 80035,
+                  "count": 42
+                },
+                "LCK_M_U": {
+                  "waitMs": 1401675,
+                  "count": 777
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 12312,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 12286
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (49950b0e6a67)",
+                      "count": 18
+                    },
+                    {
+                      "resource": "KEY: 5:72057594045857792 (4334da4a7f50)",
+                      "count": 8
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_S",
+                  "statement": "select \"e\".\"account_id\", \"e\".\"amount\", \"a\".\"currency\" from \"t_perf1\".\"ledger_entries\" as \"e\" inner join \"t_perf1\".\"accou",
+                  "count": 700,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 700
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "medianThroughputPerSec": 40.4,
+          "throughputRange": {
+            "min": 38.55,
+            "max": 46.3
+          },
+          "medianP95Ms": 3461.4931000000797,
+          "medianP99Ms": 4818.414199999999
+        }
+      ],
+      "valid": true,
+      "notes": [
+        "kịch bản mixed, mức 1, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 4.6 s, cỡ hàng đợi tối đa 2590 thao tác",
+        "kịch bản mixed, mức 1, lần lặp 1: thao tác thực tế (cả khởi động và xả): trả order 578 (68.3%, trong đó 0 trả thay cho đảo), nạp 151 (17.8%), điều chỉnh 83 (9.8%), đảo 34 (4.0%); 317 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản mixed, mức 1, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 3.2 s, cỡ hàng đợi tối đa 2590 thao tác",
+        "kịch bản mixed, mức 1, lần lặp 2: thao tác thực tế (cả khởi động và xả): trả order 585 (68.8%, trong đó 0 trả thay cho đảo), nạp 131 (15.4%), điều chỉnh 94 (11.1%), đảo 40 (4.7%); 337 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản mixed, mức 1, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 3.7 s, cỡ hàng đợi tối đa 2590 thao tác",
+        "kịch bản mixed, mức 1, lần lặp 3: thao tác thực tế (cả khởi động và xả): trả order 645 (72.4%, trong đó 0 trả thay cho đảo), nạp 129 (14.5%), điều chỉnh 75 (8.4%), đảo 42 (4.7%); 339 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản mixed, mức 4, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 4.7 s, cỡ hàng đợi tối đa 3458 thao tác",
+        "kịch bản mixed, mức 4, lần lặp 1: thao tác thực tế (cả khởi động và xả): trả order 984 (69.8%, trong đó 0 trả thay cho đảo), nạp 201 (14.3%), điều chỉnh 144 (10.2%), đảo 80 (5.7%); 426 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản mixed, mức 4, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 5.4 s, cỡ hàng đợi tối đa 3458 thao tác",
+        "kịch bản mixed, mức 4, lần lặp 2: thao tác thực tế (cả khởi động và xả): trả order 787 (70.3%, trong đó 1 trả thay cho đảo), nạp 171 (15.3%), điều chỉnh 105 (9.4%), đảo 57 (5.1%); 456 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản mixed, mức 4, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 4.6 s, cỡ hàng đợi tối đa 3458 thao tác",
+        "kịch bản mixed, mức 4, lần lặp 3: thao tác thực tế (cả khởi động và xả): trả order 783 (70.6%, trong đó 1 trả thay cho đảo), nạp 170 (15.3%), điều chỉnh 95 (8.6%), đảo 61 (5.5%); 457 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản mixed, mức 16, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 5.0 s, cỡ hàng đợi tối đa 3482 thao tác",
+        "kịch bản mixed, mức 16, lần lặp 1: thao tác thực tế (cả khởi động và xả): trả order 816 (71.1%, trong đó 1 trả thay cho đảo), nạp 177 (15.4%), điều chỉnh 109 (9.5%), đảo 45 (3.9%); 466 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản mixed, mức 16, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 4.9 s, cỡ hàng đợi tối đa 3482 thao tác",
+        "kịch bản mixed, mức 16, lần lặp 2: thao tác thực tế (cả khởi động và xả): trả order 765 (68.6%, trong đó 1 trả thay cho đảo), nạp 166 (14.9%), điều chỉnh 107 (9.6%), đảo 77 (6.9%); 477 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản mixed, mức 16, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 4.9 s, cỡ hàng đợi tối đa 3482 thao tác",
+        "kịch bản mixed, mức 16, lần lặp 3: thao tác thực tế (cả khởi động và xả): trả order 812 (70.9%, trong đó 0 trả thay cho đảo), nạp 164 (14.3%), điều chỉnh 119 (10.4%), đảo 51 (4.5%); 479 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản mixed, mức 64, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 5.2 s, cỡ hàng đợi tối đa 3578 thao tác",
+        "kịch bản mixed, mức 64, lần lặp 1: thao tác thực tế (cả khởi động và xả): trả order 773 (70.0%, trong đó 2 trả thay cho đảo), nạp 183 (16.6%), điều chỉnh 87 (7.9%), đảo 61 (5.5%); 526 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản mixed, mức 64, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 5.8 s, cỡ hàng đợi tối đa 3578 thao tác",
+        "kịch bản mixed, mức 64, lần lặp 2: thao tác thực tế (cả khởi động và xả): trả order 691 (67.9%, trong đó 3 trả thay cho đảo), nạp 191 (18.8%), điều chỉnh 99 (9.7%), đảo 36 (3.5%); 518 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản mixed, mức 64, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 6.6 s, cỡ hàng đợi tối đa 3578 thao tác",
+        "kịch bản mixed, mức 64, lần lặp 3: thao tác thực tế (cả khởi động và xả): trả order 696 (71.8%, trong đó 6 trả thay cho đảo), nạp 137 (14.1%), điều chỉnh 93 (9.6%), đảo 43 (4.4%); 572 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+        "kịch bản mixed, mức 1, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 846 thao tác đã bắt đầu): WRITELOG 692 ms/866 lần (TB 0.80 ms/lần, 1.02 lần/thao tác); SOS_SCHEDULER_YIELD 5 ms/44 lần (TB 0.11 ms/lần, 0.05 lần/thao tác)",
+        "kịch bản mixed, mức 1, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 850 thao tác đã bắt đầu): WRITELOG 660 ms/853 lần (TB 0.77 ms/lần, 1.00 lần/thao tác); PAGELATCH_EX 1 ms/6 lần (TB 0.17 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/6 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 15 ms/53 lần (TB 0.28 ms/lần, 0.06 lần/thao tác)",
+        "kịch bản mixed, mức 1, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.2 s, 891 thao tác đã bắt đầu): WRITELOG 606 ms/891 lần (TB 0.68 ms/lần, 1.00 lần/thao tác); SOS_SCHEDULER_YIELD 1 ms/41 lần (TB 0.02 ms/lần, 0.05 lần/thao tác)",
+        "kịch bản mixed, mức 4, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.2 s, 1409 thao tác đã bắt đầu): WRITELOG 2453 ms/1499 lần (TB 1.64 ms/lần, 1.06 lần/thao tác); PAGELATCH_EX 0 ms/6 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 1 ms/5 lần (TB 0.20 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 43 ms/92 lần (TB 0.47 ms/lần, 0.07 lần/thao tác)",
+        "kịch bản mixed, mức 4, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.2 s, 1120 thao tác đã bắt đầu): WRITELOG 2852 ms/1267 lần (TB 2.25 ms/lần, 1.13 lần/thao tác); PAGELATCH_EX 7 ms/2 lần (TB 3.50 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 2 ms/1 lần (TB 2.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 24 ms/51 lần (TB 0.47 ms/lần, 0.05 lần/thao tác)",
+        "kịch bản mixed, mức 4, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.2 s, 1109 thao tác đã bắt đầu): WRITELOG 3571 ms/1329 lần (TB 2.69 ms/lần, 1.20 lần/thao tác); PAGELATCH_EX 0 ms/4 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/2 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 21 ms/62 lần (TB 0.34 ms/lần, 0.06 lần/thao tác)",
+        "kịch bản mixed, mức 16, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.5 s, 1147 thao tác đã bắt đầu): WRITELOG 3494 ms/1357 lần (TB 2.57 ms/lần, 1.18 lần/thao tác); PAGELATCH_EX 1 ms/3 lần (TB 0.33 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 21 ms/66 lần (TB 0.32 ms/lần, 0.06 lần/thao tác)",
+        "kịch bản mixed, mức 16, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.5 s, 1115 thao tác đã bắt đầu): WRITELOG 2851 ms/1264 lần (TB 2.26 ms/lần, 1.13 lần/thao tác); PAGELATCH_EX 0 ms/4 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 44 ms/86 lần (TB 0.51 ms/lần, 0.08 lần/thao tác)",
+        "kịch bản mixed, mức 16, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.5 s, 1146 thao tác đã bắt đầu): WRITELOG 2984 ms/1311 lần (TB 2.28 ms/lần, 1.14 lần/thao tác); PAGELATCH_EX 3 ms/7 lần (TB 0.43 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 6 ms/7 lần (TB 0.86 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 27 ms/71 lần (TB 0.38 ms/lần, 0.06 lần/thao tác)",
+        "kịch bản mixed, mức 64, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.7 s, 1104 thao tác đã bắt đầu): WRITELOG 3689 ms/1315 lần (TB 2.81 ms/lần, 1.19 lần/thao tác); PAGELATCH_EX 2 ms/2 lần (TB 1.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 4 ms/7 lần (TB 0.57 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 157 ms/136 lần (TB 1.15 ms/lần, 0.12 lần/thao tác)",
+        "kịch bản mixed, mức 64, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.7 s, 1017 thao tác đã bắt đầu): WRITELOG 2328 ms/1101 lần (TB 2.11 ms/lần, 1.08 lần/thao tác); PAGELATCH_EX 1 ms/4 lần (TB 0.25 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 154 ms/157 lần (TB 0.98 ms/lần, 0.15 lần/thao tác)",
+        "kịch bản mixed, mức 64, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 25.3 s, 969 thao tác đã bắt đầu): WRITELOG 2909 ms/1225 lần (TB 2.37 ms/lần, 1.26 lần/thao tác); PAGELATCH_EX 3 ms/5 lần (TB 0.60 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 1 ms/3 lần (TB 0.33 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 292 ms/218 lần (TB 1.34 ms/lần, 0.22 lần/thao tác)"
+      ]
+    }
+  ],
+  "e2e": {
+    "orders": 200,
+    "concurrency": 16,
+    "throughputPerSec": 13.966006753528072,
+    "p50Ms": 1095.0833999998868,
+    "p95Ms": 1431.184899999993,
+    "p99Ms": 1486.5490999999456,
+    "invariantsOk": true
+  },
+  "valid": true,
+  "notes": [
+    "kịch bản pay-order, mức 1, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 2590 thao tác",
+    "kịch bản pay-order, mức 1, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 2590 thao tác",
+    "kịch bản pay-order, mức 1, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 2590 thao tác",
+    "kịch bản pay-order, mức 4, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3458 thao tác",
+    "kịch bản pay-order, mức 4, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3458 thao tác",
+    "kịch bản pay-order, mức 4, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3458 thao tác",
+    "kịch bản pay-order, mức 16, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3482 thao tác",
+    "kịch bản pay-order, mức 16, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3482 thao tác",
+    "kịch bản pay-order, mức 16, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3482 thao tác",
+    "kịch bản pay-order, mức 64, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3578 thao tác",
+    "kịch bản pay-order, mức 64, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3578 thao tác",
+    "kịch bản pay-order, mức 64, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3578 thao tác",
+    "kịch bản pay-order, mức 1, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 684 thao tác đã bắt đầu): WRITELOG 832 ms/711 lần (TB 1.17 ms/lần, 1.04 lần/thao tác); SOS_SCHEDULER_YIELD 3 ms/43 lần (TB 0.07 ms/lần, 0.06 lần/thao tác)",
+    "kịch bản pay-order, mức 1, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 788 thao tác đã bắt đầu): WRITELOG 658 ms/795 lần (TB 0.83 ms/lần, 1.01 lần/thao tác); SOS_SCHEDULER_YIELD 20 ms/44 lần (TB 0.45 ms/lần, 0.06 lần/thao tác)",
+    "kịch bản pay-order, mức 1, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 732 thao tác đã bắt đầu): WRITELOG 671 ms/734 lần (TB 0.91 ms/lần, 1.00 lần/thao tác); SOS_SCHEDULER_YIELD 2 ms/43 lần (TB 0.05 ms/lần, 0.06 lần/thao tác)",
+    "kịch bản pay-order, mức 4, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 1031 thao tác đã bắt đầu): WRITELOG 882 ms/1033 lần (TB 0.85 ms/lần, 1.00 lần/thao tác); PAGELATCH_EX 0 ms/1 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 2 ms/1 lần (TB 2.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 47 ms/99 lần (TB 0.47 ms/lần, 0.10 lần/thao tác)",
+    "kịch bản pay-order, mức 4, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 968 thao tác đã bắt đầu): WRITELOG 910 ms/975 lần (TB 0.93 ms/lần, 1.01 lần/thao tác); PAGELATCH_SH 1 ms/2 lần (TB 0.50 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 41 ms/81 lần (TB 0.51 ms/lần, 0.08 lần/thao tác)",
+    "kịch bản pay-order, mức 4, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.4 s, 765 thao tác đã bắt đầu): WRITELOG 966 ms/772 lần (TB 1.25 ms/lần, 1.01 lần/thao tác); PAGELATCH_SH 0 ms/1 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 79 ms/131 lần (TB 0.60 ms/lần, 0.17 lần/thao tác)",
+    "kịch bản pay-order, mức 16, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.8 s, 496 thao tác đã bắt đầu): WRITELOG 1135 ms/519 lần (TB 2.19 ms/lần, 1.05 lần/thao tác); PAGEIOLATCH_EX 10 ms/1 lần (TB 10.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 232 ms/221 lần (TB 1.05 ms/lần, 0.45 lần/thao tác)",
+    "kịch bản pay-order, mức 16, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.5 s, 400 thao tác đã bắt đầu): WRITELOG 1135 ms/420 lần (TB 2.70 ms/lần, 1.05 lần/thao tác); PAGELATCH_EX 1 ms/5 lần (TB 0.20 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 276 ms/187 lần (TB 1.48 ms/lần, 0.47 lần/thao tác)",
+    "kịch bản pay-order, mức 16, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.6 s, 465 thao tác đã bắt đầu): WRITELOG 1150 ms/482 lần (TB 2.39 ms/lần, 1.04 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 152 ms/198 lần (TB 0.77 ms/lần, 0.43 lần/thao tác)",
+    "kịch bản pay-order, mức 64, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 29.3 s, 408 thao tác đã bắt đầu): WRITELOG 1496 ms/432 lần (TB 3.46 ms/lần, 1.06 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 1938 ms/361 lần (TB 5.37 ms/lần, 0.88 lần/thao tác)",
+    "kịch bản pay-order, mức 64, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 25.1 s, 420 thao tác đã bắt đầu): WRITELOG 1209 ms/449 lần (TB 2.69 ms/lần, 1.07 lần/thao tác); PAGELATCH_EX 4 ms/7 lần (TB 0.57 ms/lần, 0.02 lần/thao tác); PAGELATCH_SH 0 ms/7 lần (TB 0.00 ms/lần, 0.02 lần/thao tác); PAGEIOLATCH_SH 13 ms/2 lần (TB 6.50 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 725 ms/296 lần (TB 2.45 ms/lần, 0.70 lần/thao tác)",
+    "kịch bản pay-order, mức 64, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.5 s, 999 thao tác đã bắt đầu): WRITELOG 986 ms/1004 lần (TB 0.98 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 294 ms/178 lần (TB 1.65 ms/lần, 0.18 lần/thao tác)",
+    "kịch bản topup-apply, mức 1, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 28.6 s, cỡ hàng đợi tối đa 2590 thao tác",
+    "kịch bản topup-apply, mức 1, lần lặp 1: 1824 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản topup-apply, mức 1, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 25.0 s, cỡ hàng đợi tối đa 2590 thao tác",
+    "kịch bản topup-apply, mức 1, lần lặp 2: 1909 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản topup-apply, mức 1, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 21.9 s, cỡ hàng đợi tối đa 2590 thao tác",
+    "kịch bản topup-apply, mức 1, lần lặp 3: 1887 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản topup-apply, mức 4, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 32.0 s, cỡ hàng đợi tối đa 3458 thao tác",
+    "kịch bản topup-apply, mức 4, lần lặp 1: 2509 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản topup-apply, mức 4, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 33.4 s, cỡ hàng đợi tối đa 3458 thao tác",
+    "kịch bản topup-apply, mức 4, lần lặp 2: 2512 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản topup-apply, mức 4, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 43.3 s, cỡ hàng đợi tối đa 3458 thao tác",
+    "kịch bản topup-apply, mức 4, lần lặp 3: 2879 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản topup-apply, mức 16, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 202.4 s, cỡ hàng đợi tối đa 3482 thao tác",
+    "kịch bản topup-apply, mức 16, lần lặp 1: 3259 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản topup-apply, mức 16, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 270.9 s, cỡ hàng đợi tối đa 3482 thao tác",
+    "kịch bản topup-apply, mức 16, lần lặp 2: 3007 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản topup-apply, mức 16, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 83.9 s, cỡ hàng đợi tối đa 3482 thao tác",
+    "kịch bản topup-apply, mức 16, lần lặp 3: 2944 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản topup-apply, mức 64, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 57.4 s, cỡ hàng đợi tối đa 3578 thao tác",
+    "kịch bản topup-apply, mức 64, lần lặp 1: 2627 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản topup-apply, mức 64, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 28.5 s, cỡ hàng đợi tối đa 3578 thao tác",
+    "kịch bản topup-apply, mức 64, lần lặp 2: 2252 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản topup-apply, mức 64, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 31.8 s, cỡ hàng đợi tối đa 3578 thao tác",
+    "kịch bản topup-apply, mức 64, lần lặp 3: 2239 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản topup-apply, mức 1, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 766 thao tác đã bắt đầu): WRITELOG 778 ms/780 lần (TB 1.00 ms/lần, 1.02 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGEIOLATCH_SH 2 ms/2 lần (TB 1.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 42 ms/129 lần (TB 0.33 ms/lần, 0.17 lần/thao tác)",
+    "kịch bản topup-apply, mức 1, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 681 thao tác đã bắt đầu): WRITELOG 702 ms/688 lần (TB 1.02 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 1 ms/3 lần (TB 0.33 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 33 ms/59 lần (TB 0.56 ms/lần, 0.09 lần/thao tác)",
+    "kịch bản topup-apply, mức 1, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.2 s, 703 thao tác đã bắt đầu): WRITELOG 678 ms/716 lần (TB 0.95 ms/lần, 1.02 lần/thao tác); PAGELATCH_EX 4 ms/3 lần (TB 1.33 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 17 ms/115 lần (TB 0.15 ms/lần, 0.16 lần/thao tác)",
+    "kịch bản topup-apply, mức 4, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 949 thao tác đã bắt đầu): WRITELOG 846 ms/954 lần (TB 0.89 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 0 ms/4 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 102 ms/175 lần (TB 0.58 ms/lần, 0.18 lần/thao tác)",
+    "kịch bản topup-apply, mức 4, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.2 s, 946 thao tác đã bắt đầu): WRITELOG 846 ms/946 lần (TB 0.89 ms/lần, 1.00 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/4 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGEIOLATCH_SH 0 ms/1 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 50 ms/117 lần (TB 0.43 ms/lần, 0.12 lần/thao tác)",
+    "kịch bản topup-apply, mức 4, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.9 s, 579 thao tác đã bắt đầu): WRITELOG 1021 ms/582 lần (TB 1.75 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 0 ms/4 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/4 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 480 ms/479 lần (TB 1.00 ms/lần, 0.83 lần/thao tác)",
+    "kịch bản topup-apply, mức 16, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.9 s, 223 thao tác đã bắt đầu): WRITELOG 1196 ms/232 lần (TB 5.16 ms/lần, 1.04 lần/thao tác); PAGELATCH_EX 12 ms/6 lần (TB 2.00 ms/lần, 0.03 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 1675 ms/703 lần (TB 2.38 ms/lần, 3.15 lần/thao tác)",
+    "kịch bản topup-apply, mức 16, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.5 s, 475 thao tác đã bắt đầu): WRITELOG 1092 ms/480 lần (TB 2.27 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 638 ms/313 lần (TB 2.04 ms/lần, 0.66 lần/thao tác)",
+    "kịch bản topup-apply, mức 16, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.9 s, 538 thao tác đã bắt đầu): WRITELOG 1023 ms/546 lần (TB 1.87 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 0 ms/4 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/4 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 1117 ms/262 lần (TB 4.26 ms/lần, 0.49 lần/thao tác)",
+    "kịch bản topup-apply, mức 64, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.1 s, 951 thao tác đã bắt đầu): WRITELOG 1036 ms/958 lần (TB 1.08 ms/lần, 1.01 lần/thao tác); PAGELATCH_EX 62 ms/4 lần (TB 15.50 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 88 ms/5 lần (TB 17.60 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 487 ms/215 lần (TB 2.27 ms/lần, 0.23 lần/thao tác)",
+    "kịch bản topup-apply, mức 64, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.1 s, 1326 thao tác đã bắt đầu): WRITELOG 1080 ms/1455 lần (TB 0.74 ms/lần, 1.10 lần/thao tác); PAGELATCH_EX 0 ms/1 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 58 ms/104 lần (TB 0.56 ms/lần, 0.08 lần/thao tác)",
+    "kịch bản topup-apply, mức 64, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.2 s, 1339 thao tác đã bắt đầu): WRITELOG 960 ms/1340 lần (TB 0.72 ms/lần, 1.00 lần/thao tác); PAGELATCH_EX 0 ms/2 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 73 ms/124 lần (TB 0.59 ms/lần, 0.09 lần/thao tác)",
+    "kịch bản mixed, mức 1, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 4.6 s, cỡ hàng đợi tối đa 2590 thao tác",
+    "kịch bản mixed, mức 1, lần lặp 1: thao tác thực tế (cả khởi động và xả): trả order 578 (68.3%, trong đó 0 trả thay cho đảo), nạp 151 (17.8%), điều chỉnh 83 (9.8%), đảo 34 (4.0%); 317 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản mixed, mức 1, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 3.2 s, cỡ hàng đợi tối đa 2590 thao tác",
+    "kịch bản mixed, mức 1, lần lặp 2: thao tác thực tế (cả khởi động và xả): trả order 585 (68.8%, trong đó 0 trả thay cho đảo), nạp 131 (15.4%), điều chỉnh 94 (11.1%), đảo 40 (4.7%); 337 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản mixed, mức 1, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 3.7 s, cỡ hàng đợi tối đa 2590 thao tác",
+    "kịch bản mixed, mức 1, lần lặp 3: thao tác thực tế (cả khởi động và xả): trả order 645 (72.4%, trong đó 0 trả thay cho đảo), nạp 129 (14.5%), điều chỉnh 75 (8.4%), đảo 42 (4.7%); 339 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản mixed, mức 4, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 4.7 s, cỡ hàng đợi tối đa 3458 thao tác",
+    "kịch bản mixed, mức 4, lần lặp 1: thao tác thực tế (cả khởi động và xả): trả order 984 (69.8%, trong đó 0 trả thay cho đảo), nạp 201 (14.3%), điều chỉnh 144 (10.2%), đảo 80 (5.7%); 426 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản mixed, mức 4, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 5.4 s, cỡ hàng đợi tối đa 3458 thao tác",
+    "kịch bản mixed, mức 4, lần lặp 2: thao tác thực tế (cả khởi động và xả): trả order 787 (70.3%, trong đó 1 trả thay cho đảo), nạp 171 (15.3%), điều chỉnh 105 (9.4%), đảo 57 (5.1%); 456 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản mixed, mức 4, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 4.6 s, cỡ hàng đợi tối đa 3458 thao tác",
+    "kịch bản mixed, mức 4, lần lặp 3: thao tác thực tế (cả khởi động và xả): trả order 783 (70.6%, trong đó 1 trả thay cho đảo), nạp 170 (15.3%), điều chỉnh 95 (8.6%), đảo 61 (5.5%); 457 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản mixed, mức 16, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 5.0 s, cỡ hàng đợi tối đa 3482 thao tác",
+    "kịch bản mixed, mức 16, lần lặp 1: thao tác thực tế (cả khởi động và xả): trả order 816 (71.1%, trong đó 1 trả thay cho đảo), nạp 177 (15.4%), điều chỉnh 109 (9.5%), đảo 45 (3.9%); 466 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản mixed, mức 16, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 4.9 s, cỡ hàng đợi tối đa 3482 thao tác",
+    "kịch bản mixed, mức 16, lần lặp 2: thao tác thực tế (cả khởi động và xả): trả order 765 (68.6%, trong đó 1 trả thay cho đảo), nạp 166 (14.9%), điều chỉnh 107 (9.6%), đảo 77 (6.9%); 477 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản mixed, mức 16, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 4.9 s, cỡ hàng đợi tối đa 3482 thao tác",
+    "kịch bản mixed, mức 16, lần lặp 3: thao tác thực tế (cả khởi động và xả): trả order 812 (70.9%, trong đó 0 trả thay cho đảo), nạp 164 (14.3%), điều chỉnh 119 (10.4%), đảo 51 (4.5%); 479 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản mixed, mức 64, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 5.2 s, cỡ hàng đợi tối đa 3578 thao tác",
+    "kịch bản mixed, mức 64, lần lặp 1: thao tác thực tế (cả khởi động và xả): trả order 773 (70.0%, trong đó 2 trả thay cho đảo), nạp 183 (16.6%), điều chỉnh 87 (7.9%), đảo 61 (5.5%); 526 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản mixed, mức 64, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 5.8 s, cỡ hàng đợi tối đa 3578 thao tác",
+    "kịch bản mixed, mức 64, lần lặp 2: thao tác thực tế (cả khởi động và xả): trả order 691 (67.9%, trong đó 3 trả thay cho đảo), nạp 191 (18.8%), điều chỉnh 99 (9.7%), đảo 36 (3.5%); 518 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản mixed, mức 64, lần lặp 3: chuẩn bị (seed, NGOÀI cửa sổ đo) 6.6 s, cỡ hàng đợi tối đa 3578 thao tác",
+    "kịch bản mixed, mức 64, lần lặp 3: thao tác thực tế (cả khởi động và xả): trả order 696 (71.8%, trong đó 6 trả thay cho đảo), nạp 137 (14.1%), điều chỉnh 93 (9.6%), đảo 43 (4.4%); 572 topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)",
+    "kịch bản mixed, mức 1, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 846 thao tác đã bắt đầu): WRITELOG 692 ms/866 lần (TB 0.80 ms/lần, 1.02 lần/thao tác); SOS_SCHEDULER_YIELD 5 ms/44 lần (TB 0.11 ms/lần, 0.05 lần/thao tác)",
+    "kịch bản mixed, mức 1, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.1 s, 850 thao tác đã bắt đầu): WRITELOG 660 ms/853 lần (TB 0.77 ms/lần, 1.00 lần/thao tác); PAGELATCH_EX 1 ms/6 lần (TB 0.17 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 0 ms/6 lần (TB 0.00 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 15 ms/53 lần (TB 0.28 ms/lần, 0.06 lần/thao tác)",
+    "kịch bản mixed, mức 1, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.2 s, 891 thao tác đã bắt đầu): WRITELOG 606 ms/891 lần (TB 0.68 ms/lần, 1.00 lần/thao tác); SOS_SCHEDULER_YIELD 1 ms/41 lần (TB 0.02 ms/lần, 0.05 lần/thao tác)",
+    "kịch bản mixed, mức 4, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.2 s, 1409 thao tác đã bắt đầu): WRITELOG 2453 ms/1499 lần (TB 1.64 ms/lần, 1.06 lần/thao tác); PAGELATCH_EX 0 ms/6 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 1 ms/5 lần (TB 0.20 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 43 ms/92 lần (TB 0.47 ms/lần, 0.07 lần/thao tác)",
+    "kịch bản mixed, mức 4, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.2 s, 1120 thao tác đã bắt đầu): WRITELOG 2852 ms/1267 lần (TB 2.25 ms/lần, 1.13 lần/thao tác); PAGELATCH_EX 7 ms/2 lần (TB 3.50 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 2 ms/1 lần (TB 2.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 24 ms/51 lần (TB 0.47 ms/lần, 0.05 lần/thao tác)",
+    "kịch bản mixed, mức 4, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.2 s, 1109 thao tác đã bắt đầu): WRITELOG 3571 ms/1329 lần (TB 2.69 ms/lần, 1.20 lần/thao tác); PAGELATCH_EX 0 ms/4 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/2 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 21 ms/62 lần (TB 0.34 ms/lần, 0.06 lần/thao tác)",
+    "kịch bản mixed, mức 16, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.5 s, 1147 thao tác đã bắt đầu): WRITELOG 3494 ms/1357 lần (TB 2.57 ms/lần, 1.18 lần/thao tác); PAGELATCH_EX 1 ms/3 lần (TB 0.33 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 21 ms/66 lần (TB 0.32 ms/lần, 0.06 lần/thao tác)",
+    "kịch bản mixed, mức 16, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.5 s, 1115 thao tác đã bắt đầu): WRITELOG 2851 ms/1264 lần (TB 2.26 ms/lần, 1.13 lần/thao tác); PAGELATCH_EX 0 ms/4 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 44 ms/86 lần (TB 0.51 ms/lần, 0.08 lần/thao tác)",
+    "kịch bản mixed, mức 16, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 23.5 s, 1146 thao tác đã bắt đầu): WRITELOG 2984 ms/1311 lần (TB 2.28 ms/lần, 1.14 lần/thao tác); PAGELATCH_EX 3 ms/7 lần (TB 0.43 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 6 ms/7 lần (TB 0.86 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 27 ms/71 lần (TB 0.38 ms/lần, 0.06 lần/thao tác)",
+    "kịch bản mixed, mức 64, lần lặp 1: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.7 s, 1104 thao tác đã bắt đầu): WRITELOG 3689 ms/1315 lần (TB 2.81 ms/lần, 1.19 lần/thao tác); PAGELATCH_EX 2 ms/2 lần (TB 1.00 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 4 ms/7 lần (TB 0.57 ms/lần, 0.01 lần/thao tác); SOS_SCHEDULER_YIELD 157 ms/136 lần (TB 1.15 ms/lần, 0.12 lần/thao tác)",
+    "kịch bản mixed, mức 64, lần lặp 2: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 24.7 s, 1017 thao tác đã bắt đầu): WRITELOG 2328 ms/1101 lần (TB 2.11 ms/lần, 1.08 lần/thao tác); PAGELATCH_EX 1 ms/4 lần (TB 0.25 ms/lần, 0.00 lần/thao tác); PAGELATCH_SH 0 ms/3 lần (TB 0.00 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 154 ms/157 lần (TB 0.98 ms/lần, 0.15 lần/thao tác)",
+    "kịch bản mixed, mức 64, lần lặp 3: chờ ngoài khóa (khởi động + đo + xả + kiểm sổ cái, 25.3 s, 969 thao tác đã bắt đầu): WRITELOG 2909 ms/1225 lần (TB 2.37 ms/lần, 1.26 lần/thao tác); PAGELATCH_EX 3 ms/5 lần (TB 0.60 ms/lần, 0.01 lần/thao tác); PAGELATCH_SH 1 ms/3 lần (TB 0.33 ms/lần, 0.00 lần/thao tác); SOS_SCHEDULER_YIELD 292 ms/218 lần (TB 1.34 ms/lần, 0.22 lần/thao tác)",
+    "khóa dòng tài khoản hệ thống perf1/system:ADJUSTMENT:USD = KEY: 5:72057594045857792 (18c56277a536)",
+    "khóa dòng tài khoản hệ thống perf1/system:ADJUSTMENT:VND = KEY: 5:72057594045857792 (4334da4a7f50)",
+    "khóa dòng tài khoản hệ thống perf1/system:GATEWAY:USD = KEY: 5:72057594045857792 (1264b333b001)",
+    "khóa dòng tài khoản hệ thống perf1/system:GATEWAY:VND = KEY: 5:72057594045857792 (49950b0e6a67)",
+    "khóa dòng tài khoản hệ thống perf1/system:MERCHANT:USD = KEY: 5:72057594045857792 (e3f62b1d6c1b)",
+    "khóa dòng tài khoản hệ thống perf1/system:MERCHANT:VND = KEY: 5:72057594045857792 (b8079320b67d)",
+    "ma trận: tổng thời gian chạy (gồm seed, chuẩn bị, đầu-cuối) 31.6 phút"
+  ]
+}

@@ -1,7 +1,7 @@
 # Bước 6e — Điểm nóng MERCHANT: thiết kế (Pha A: bộ đo và baseline)
 
 **Ngày:** 2026-10-14
-**Trạng thái:** Bản thiết kế, chờ duyệt
+**Trạng thái:** Pha A đã triển khai (bộ đo `tests/perf`, baseline và phân tích: [`docs/perf/merchant-hotspot.vi.md`](../../perf/merchant-hotspot.vi.md)); chờ người dùng chốt ngưỡng trước Pha B
 **Phạm vi:** Bước cuối của Bước 6 (vận hành). Chia hai pha. **Pha A (spec này):** bộ đo tải tái lập được, chạy đo trần hiện tại và commit baseline; dừng để người dùng chốt ngưỡng. **Pha B (chu kỳ riêng sau Pha A):** vá điểm nóng nếu số đo cho thấy cần, với spec và kế hoạch ngắn riêng dựa trên số liệu thật. Dựa trên sổ cái kép (ADR-0002), trả order (`2026-10-10-order-payment-integration-design.md`), công cụ ops (ADR-0013) và bộ chaos (ADR-0014).
 
 ## 1. Bối cảnh và giả thuyết
@@ -21,7 +21,7 @@ Giả thuyết (chưa kiểm chứng, Pha A sẽ trả lời bằng số đo):
 | 2 | Mức được vá (Pha B) | Bậc 1 không đổi dữ liệu (đổi thứ tự khóa toàn hệ thống: ví khách trước, tài khoản hệ thống sau; khóa MERCHANT muộn nhất có thể; thu ngắn đoạn giữ khóa). Bậc 2 (chia nhỏ số dư MERCHANT thành nhiều dòng con) chỉ làm khi số đo cho thấy bậc 1 chưa đủ **và** người dùng duyệt lại |
 | 3 | Mức đo | Mức use case trên SQL Server thật (testcontainers) + một lần đo đầu-cuối qua harness chaos (không gây lỗi) |
 | 4 | Lưu kết quả | Lệnh riêng `corepack pnpm test:perf`; báo cáo JSON + Markdown và baseline commit trong `docs/perf/`; không dùng làm cổng CI |
-| 5 | Kiểm đúng đắn | Sau mỗi lượt đo chạy `assertSystemInvariants`; số dư hoặc sổ cái sai thì kết quả đo không hợp lệ |
+| 5 | Kiểm đúng đắn | Sau mỗi lượt đo chạy `assertSystemInvariants`; số dư hoặc sổ cái sai thì kết quả đo không hợp lệ. **Lệch khi triển khai:** ở mức use case, mỗi lượt được kiểm bằng `tests/perf/support/validity.ts` (sổ cái cân, số dư khớp dòng sổ cái, hiệu số đếm giao dịch khớp số thao tác thành công) thay vì `assertSystemInvariants`, vì oracle đầy đủ cần payment, broker và đối soát; phần đầu-cuối vẫn chạy oracle đầy đủ |
 | 6 | Pha A không đổi code production | Chỉ thêm `tests/perf/**`, script, tài liệu |
 
 ## 3. Bộ đo (`tests/perf/`)
