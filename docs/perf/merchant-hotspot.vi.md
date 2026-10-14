@@ -225,8 +225,10 @@ khoảng 3–4 lượt đi-về (inbox, tìm order đã trả, đọc ví), sau 
 - Chiều ngược lại (lượt 1, có tải nền ~2,5 lõi): tổng chờ `LCK_M_U` ở mức 16 vẫn 332–335 s mỗi lượt (y như lượt 2, vì trong vòng kín
   hầu hết luồng luôn chờ) trong khi thông lượng rơi xuống 17–22/s, tức thời gian giữ suy ra ≈ 45–57 ms, **gấp ~2,5–3 lần**. Đoạn giữ khóa
   rất nhạy với môi trường: mọi trễ thêm của CPU host, Docker Desktop hay Node khi đang giữ khóa đều kéo dài nó.
-- CPU của Node và của SQL Server **không** được đo trong hai lượt baseline; phép đo bổ sung (mục
-  [Đo bổ sung](#đo-bổ-sung-mở-rộng-theo-số-tenant)) đo trực tiếp CPU Node, trễ vòng lặp sự kiện và CPU container SQL.
+- CPU của Node và của SQL Server **không** được đo trong hai lượt baseline. Phép đo bổ sung
+  ([Đo bổ sung](#đo-bổ-sung-mở-rộng-theo-số-tenant)) đo trực tiếp: với 1 tenant, Node dùng 38–45% một lõi và trễ vòng lặp p50 ≤ 0,5 ms
+  (bộ sinh tải không bão hòa), còn container SQL dùng ~51–59% một lõi, tức ~10–13 ms CPU mỗi thao tác (cận trên). Thêm tenant (thêm dòng
+  MERCHANT) chỉ tăng thông lượng tổng 1,2–1,7 lần: có một giới hạn dùng chung của máy ngay phía trên giới hạn của dòng.
 
 ### 2. Độ trễ đuôi
 
@@ -262,7 +264,7 @@ chậm) được nhân lên cho cả hàng đợi.
 
 | | Giả thuyết | Kết luận | Bằng chứng |
 | - | ---------- | -------- | ---------- |
-| H1 | Thông lượng trả order bị chặn trên bởi thời gian giữ khóa dòng MERCHANT; thứ tự khóa (MERCHANT trước) kéo dài thời gian giữ | **ĐÚNG phần "hệ thống tuần tự hóa trên dòng MERCHANT"** (1 tenant); thành phần của thời gian giữ ~19 ms (suy ra, không đo) và phần do thứ tự khóa: **chưa đo** | Bằng chứng độc lập: 100% mẫu `LCK_M_U` trên một khóa `KEY (b8079320b67d)` = MERCHANT; khoảng N − 2 luồng luôn đang chờ; chờ mỗi thao tác ≈ (N − 1) × thời gian phục vụ; thông lượng phẳng từ mức 4 tới 64. Thời gian giữ ~19 ms chỉ là 1 / thông lượng, không phải bằng chứng riêng. Vì MERCHANT bị khóa trước, đoạn giữ gồm cả lượt khóa ví và mọi câu lệnh sau đó (~8–9 lượt đi-về theo code), nhưng bộ đo không đo thời gian từng câu lệnh. Xem thêm [Đo bổ sung](#đo-bổ-sung-mở-rộng-theo-số-tenant) về việc dòng MERCHANT có phải giới hạn duy nhất không |
+| H1 | Thông lượng trả order bị chặn trên bởi thời gian giữ khóa dòng MERCHANT; thứ tự khóa (MERCHANT trước) kéo dài thời gian giữ | **ĐÚNG phần "hệ thống tuần tự hóa trên dòng MERCHANT"** (1 tenant); thành phần của thời gian giữ ~19 ms (suy ra, không đo) và phần do thứ tự khóa: **chưa đo** | Bằng chứng độc lập: 100% mẫu `LCK_M_U` trên một khóa `KEY (b8079320b67d)` = MERCHANT; khoảng N − 2 luồng luôn đang chờ; chờ mỗi thao tác ≈ (N − 1) × thời gian phục vụ; thông lượng phẳng từ mức 4 tới 64. Thời gian giữ ~19 ms chỉ là 1 / thông lượng, không phải bằng chứng riêng. Vì MERCHANT bị khóa trước, đoạn giữ gồm cả lượt khóa ví và mọi câu lệnh sau đó (~8–9 lượt đi-về theo code), nhưng bộ đo không đo thời gian từng câu lệnh. Đo bổ sung theo số tenant: dòng MERCHANT là giới hạn đang chặn ở 1 tenant (thêm dòng thì thông lượng tổng tăng 19–67%), nhưng **không** phải giới hạn duy nhất: máy có một giới hạn dùng chung chỉ cao hơn ~1,2–1,7 lần ([Đo bổ sung](#đo-bổ-sung-mở-rộng-theo-số-tenant)) |
 | H2 | Kiểm khóa ngoại `ledger_entries → accounts` xếp hàng trên dòng MERCHANT dù khóa muộn | **CHƯA KẾT LUẬN** | 0 mẫu `insert into ledger_entries` bị chặn trong mọi kịch bản: với thứ tự hiện tại, transaction đã giữ khóa MERCHANT trước khi chèn nên kiểm khóa ngoại không phải chờ ai; giả thuyết nói về thiết kế sau khi đổi thứ tự, không quan sát được nếu không đổi code. Chỉ dấu liên quan: lệnh **đọc** dòng MERCHANT (`findTransaction`, `LCK_M_S`, 2 786 mẫu, 1,6–2,2 s mỗi lần ở mức 64) có xếp hàng sau người giữ khóa, nên một lệnh cần khóa `S` trên dòng MERCHANT (như kiểm khóa ngoại) nhiều khả năng cũng sẽ xếp hàng; Pha B phải đo lại sau khi đổi thứ tự |
 | H3 | Ở nhiều luồng, `LCK_M_*` và p99 tăng nhanh hơn thông lượng | **ĐÚNG** | 4 → 64 luồng: thông lượng −1% (50,5 → 49,8), tổng chờ `LCK_M_U` ×26 (57 s → 1 460 s mỗi lượt), p99 ×11,6 (180 → 2 087 ms); 1 → 64 luồng: thông lượng ×1,32, p99 ×38. Lưu ý: mức tăng ×26 của tổng chờ là hệ quả cơ học của vòng kín (tổng chờ ≈ số luồng đang chờ × độ dài khoảng đo), **không** phải phát hiện độc lập; bằng chứng thực chất là thông lượng phẳng trong khi p99 tăng tuyến tính theo số luồng. Dạng tăng là của một hàng đợi đơn (luật Little), không phải sụp đổ: không deadlock, không timeout khi máy rảnh |
 
@@ -301,10 +303,65 @@ ghi log của máy chịu được nhiều commit hơn mức `pay-order` đang d
   còn nhiễu. Nên đo lại khi máy rảnh hẳn (đóng Postman, cửa sổ Docker Desktop, dừng tải nền) trước khi dùng `topup-apply` làm mốc.
 - Vòng kín, không phải tốc độ đến cố định: độ trễ ở mức cao chủ yếu là thời gian xếp hàng do chính bộ đo tạo ra; không nói được độ trễ
   ở một tốc độ đến cụ thể (đó là việc của đo kiểu mở ở Pha B nếu cần).
-- Một tenant, một đồng tiền (VND): mỗi (tenant, đồng tiền) có dòng MERCHANT riêng nên trần đo được là **trần của một tenant**; nhiều tenant
-  chưa đo.
+- Baseline là một tenant, một đồng tiền (VND): trần đo được là **trần của một dòng MERCHANT**. Nhiều tenant chỉ được đo bổ sung cho
+  `pay-order` ở mức 16 và 64 (mục riêng), và mức 64 với 4 tenant không ổn định.
 - Bộ đo use case gọi thẳng use case, không qua broker/HTTP; đầu-cuối chỉ một cấu hình (200 đơn, 16 luồng) và không có bảng chờ khóa.
 - Không đo thời gian từng câu lệnh trong đoạn giữ khóa; các con số lượt đi-về lấy từ đọc code.
+
+## Đo bổ sung: mở rộng theo số tenant
+
+**Câu hỏi:** trần ~50/s là của **dòng** MERCHANT, hay của bộ sinh tải / CPU / mạng của máy? Mỗi tenant có dòng `system:MERCHANT:VND`
+riêng (schema riêng, cùng database), nên nếu trần là theo dòng thì thông lượng tổng phải tăng gần tuyến tính theo số tenant.
+
+**Cách đo:** chỉ `pay-order`, mức 16 và 64, 2 lần lặp, 2 000 khách chia đều cho các tenant, `PERF_TENANTS` = 1 (đối chứng, cùng buổi),
+rồi 2, rồi 4 (`PERF_SCENARIOS=pay-order PERF_CONCURRENCY=16,64 PERF_REPEATS=2`). Mỗi lượt ghi thêm (trường `resources`): CPU của tiến
+trình Node (`process.cpuUsage`, phần trăm của một lõi), trễ vòng lặp sự kiện (`monitorEventLoopDelay`, đã trừ chu kỳ 10 ms) và CPU
+container SQL Server testcontainers (`docker stats`, phần trăm của một lõi, ~4 mẫu mỗi lượt; gồm cả bộ lấy mẫu chờ khóa và tác vụ nền).
+Máy kiểm trước khi đo: chỉ stack `billing-local` khi nghỉ và giao diện Docker Desktop (~0,1–0,7 lõi, có một đợt ~1,3 lõi lúc 10:30 trong lượt
+`t2`). Vì `t4` mức 64 bất thường, `t4` được **chạy lại một lần** (11:04–11:08, kiểm tải trước khi chạy: rảnh; không ghi nhật ký tải
+trong lúc chạy lại). Số liệu gốc: [`t1`](tenants-scaling-DESKTOP-MBR3422-2026-10-14-t1.json),
+[`t2`](tenants-scaling-DESKTOP-MBR3422-2026-10-14-t2.json), [`t4`](tenants-scaling-DESKTOP-MBR3422-2026-10-14-t4.json),
+[`t4` chạy lại](tenants-scaling-DESKTOP-MBR3422-2026-10-14-t4-rerun.json). Mọi lượt hợp lệ (sổ cái, đếm khớp).
+
+| Tenant | Mức | Thông lượng tổng/s, trung vị (min–max) | Mỗi dòng MERCHANT/s | p99 (ms) | CPU Node (% một lõi) | Trễ vòng lặp p50 / p99 (ms) | CPU SQL TB (% một lõi) |
+| ------ | --- | -------------------------------------- | ------------------- | -------- | -------------------- | --------------------------- | ---------------------- |
+| 1 | 16 | 50,2 (49,0–51,4) | 50 | 845 | 44–45 | 0,4–0,5 / 7,5–7,6 | 58–59 |
+| 1 | 64 | 51,2 (50,4–52,0) | 51 | 1 814 | 38 | 0,4–0,5 / 6,8–8,1 | 51–53 |
+| 2 | 16 | 59,9 (59,0–60,8) | ~30 | 752 | 48–51 | 0,3 / 6,9–7,6 | 66–77 |
+| 2 | 64 | 69,4 (65,1–73,8) | ~35 | 2 101 | 52–56 | 0,3 / 6,8–7,6 | 76–77 |
+| 4 | 16 | 71,0 (68,5–73,6) | ~18 | 783 | 57 | 0,3 / 7,4–8,6 | 85–98 |
+| 4 (chạy lại) | 16 | 83,9 (74,3–93,6) | ~21 | 565 | 51–63 | 0,2–0,3 / 5,5–9,9 | 76–84 |
+| 4 | 64 | 34,6 (19,0–50,3) ⚠ | – | 5 394 | 33–51 | 0,5–1,7 / 9,5–13,2 | 67–82 |
+| 4 (chạy lại) | 64 | 7,7 (2,3–13,2) ⚠ 38 timeout | – | 14 513 | 12–39 | 3,4–5,7 / 14,4–30,3 | 50–57 |
+
+Đối chứng `t1` khớp baseline (50,2 / 51,2 so với 52,8 / 49,8 ở lượt 2). Với 2 và 4 tenant, mẫu chờ khóa chia thành 2 và 4 nhóm, mỗi nhóm
+trên dòng `system:MERCHANT:VND` của một schema (cùng hash `b8079320b67d`, khác `hobt`): mỗi dòng có hàng đợi riêng như dự kiến.
+
+**Kết luận:**
+
+- **Thông lượng tổng KHÔNG tăng tuyến tính theo số dòng.** Ở mức 16: ×1,19 với 2 tenant và ×1,41–1,67 với 4 tenant (lý tưởng ×2 và ×4).
+  Mỗi dòng MERCHANT chỉ còn ~30/s (2 tenant) và ~18–21/s (4 tenant), dù với 4 tenant mỗi dòng chỉ có ~4 luồng, mức mà một dòng đơn lẻ đạt
+  ~50/s (baseline mức 4). Tức là thời gian giữ khóa mỗi dòng **dài ra** khi nhiều dòng cùng hoạt động: có một giới hạn **dùng chung** thứ
+  hai, trên máy này nằm quanh **~60–90 thao tác/s tổng** ở 16 luồng.
+- Với 1 tenant, dòng MERCHANT **là** giới hạn đang chặn (thêm dòng thì thông lượng tổng tăng 19–67%), nhưng giới hạn dùng chung chỉ cao hơn
+  nó ~1,2–1,7 lần trên máy này.
+- **Bộ sinh tải (vòng lặp sự kiện Node) không phải giới hạn:** ở các lượt bình thường, CPU Node 38–63% của một lõi và trễ vòng lặp p50
+  ≤ 0,5 ms, p99 ≤ 10 ms, gần như không đổi từ 50 lên ~90 thao tác/s.
+- **CPU của SQL Server tăng theo thông lượng:** ~51–59% một lõi (1 tenant) → 66–77% (2) → 76–98% (4), tức ~10–13 ms CPU của container SQL
+  cho mỗi thao tác (con số này gồm cả bộ lấy mẫu chờ khóa 10 lần/giây và tác vụ nền nên là cận trên). Cỡ đó so được với thời gian giữ suy
+  ra ~19 ms, nên rất có thể một phần đáng kể của đoạn giữ khóa là CPU thực thi câu lệnh trong VM Docker chứ không chỉ đi-về mạng; nhưng
+  CPU trung bình của SQL vẫn dưới ~1 lõi trên 4 lõi của máy và CPU toàn máy (VM WSL2, lớp mạng Docker) **không** đo được, nên giới hạn dùng
+  chung **chưa xác định** là CPU SQL, CPU máy hay lớp mạng/VM.
+- **Mức 64 với 4 tenant không ổn định**, lặp lại ở hai lần chạy: 50,3 rồi 19,0/s; lần chạy lại 2,3/s (38 timeout) và 13,2/s. Khi sụp,
+  Node gần như rảnh (CPU 12–39%, trễ vòng lặp p50 3–6 ms), CPU SQL giảm (50–57%), mọi mẫu bị chặn vẫn là `LCK_M_U` trên 4 dòng MERCHANT
+  nhưng mỗi lần chờ kéo dài ~5–11 s. Nguyên nhân chưa xác định; với 1 tenant và 64 luồng hiện tượng này không xảy ra.
+- Bất thường của số đo: ở các lượt này, tổng `LCK_M_U` của `sys.dm_os_wait_stats` có lúc vượt số luồng × độ dài khoảng đo (vd `t1` mức
+  16: 476–478 s trong ~23,3 s với 16 luồng; `t4` mức 64: 4 550 s trong 24 s), điều không thể nếu mỗi luồng chỉ chờ một khóa một lúc. Vì vậy
+  con số "số luồng đang chờ" suy từ tổng chờ (bảng baseline) chỉ nên coi là gần đúng; bằng chứng xếp hàng dựa trên **mẫu** câu lệnh bị chặn
+  vẫn giữ nguyên.
+- **Hệ quả cho ước lượng bậc 1:** ước lượng thô 150–250/s trước đây **không còn giá trị trên máy này**: ngay cả với 4 dòng MERCHANT độc lập
+  (tương đương đoạn giữ khóa mỗi dòng ngắn đi nhiều) máy chỉ cho ~70–90 thao tác/s ở 16 luồng. Mọi số đo của bậc 1 trên máy dev này sẽ bị
+  giới hạn dùng chung chặn ở khoảng ×1,2–1,7 so với hiện tại, không phản ánh được lợi ích trên phần cứng khác.
 
 ## Điểm dừng — quyết định cho Pha B
 
@@ -317,6 +374,8 @@ ghi log của máy chịu được nhiều commit hơn mức `pay-order` đang d
 - 100% chờ `LCK_M_U` nằm trên **một** khóa (`system:MERCHANT:VND` / `system:GATEWAY:VND`), tại câu lệnh `lockMany`; không có chờ trên
   kiểm khóa ngoại `ledger_entries` với thứ tự khóa hiện tại; chờ trên dòng ví gần như không có.
 - Đầu-cuối: 14 đơn/s ở 16 luồng, thấp hơn trần MERCHANT ~3,8 lần.
+- Đo bổ sung: 2 / 4 dòng MERCHANT (tenant) cho thông lượng tổng ~60 / ~70–90 thao tác/s ở 16 luồng (×1,2 / ×1,4–1,7, không tuyến tính);
+  bộ sinh tải không bão hòa (Node ≤ 63% một lõi, trễ vòng lặp p50 ≤ 0,5 ms); 64 luồng × 4 tenant thì sụp (timeout).
 
 **Hướng vá bậc 1 phù hợp với số đo** (chưa làm; cần spec/kế hoạch riêng của Pha B và đo lại bằng chính bộ đo này):
 
@@ -331,9 +390,14 @@ ghi log của máy chịu được nhiều commit hơn mức `pay-order` đang d
 
 **Bậc 2 (chia nhỏ số dư MERCHANT) có thể cần không?** Số đo cho thấy hệ thống tuần tự hoàn toàn trên một dòng (khoảng N − 2 luồng luôn chờ),
 nên mọi vá bậc 1 chỉ dời trần lên tới 1 / (thời gian giữ còn lại), không bỏ được trần. Bao nhiêu thì đủ phụ thuộc thời gian giữ sau bậc 1,
-Pha A **không** đo được con số này. Một ước lượng thô chỉ để định hướng (giả định, không phải số đo): ~9 lượt đi-về trong 18,9 ms là ~2 ms
-mỗi lượt; nếu đoạn giữ còn 2–3 lượt đi-về thì trần cỡ 150–250/s trên máy này. Bậc 2 chỉ có ý nghĩa nếu ngưỡng cần đạt cao hơn mức đó **và**
-số đo sau bậc 1 xác nhận. Với nhiều tenant, mỗi tenant có MERCHANT riêng nên trần là theo tenant.
+Pha A **không** đo được con số này. Ước lượng thô trước đây (150–250/s) **đã bị phép đo bổ sung bác bỏ trên máy này**: chia tải ra 4 dòng
+MERCHANT độc lập (một dạng "bậc 2" lý tưởng) chỉ đưa thông lượng tổng lên ~70–90/s ở 16 luồng, vì một giới hạn dùng chung của máy (chưa
+xác định: CPU SQL trong VM, CPU máy hay lớp mạng Docker) chặn ngay phía trên. Hệ quả:
+
+- Trên máy dev này, **cả bậc 1 lẫn bậc 2** đều chỉ có thể cho thấy mức tăng tối đa cỡ ×1,2–1,7; số đo ở đây không đủ để biết bậc 1 hay bậc 2
+  đáng làm trên phần cứng thật.
+- Cùng bộ đo, chạy với `PERF_TENANTS` > 1 là cách rẻ để đo giới hạn dùng chung đó trên một máy khác trước khi quyết định.
+- Ở mức 64 luồng với 4 dòng, hệ thống sụp (timeout); trước khi tăng song song (bậc 2 hoặc nhiều tenant thật) cần hiểu hiện tượng này.
 
 **Lưu ý cho bộ đo ở Pha B:** hàng đợi topup của `topup-apply`/`mixed` được cấp theo `TOTAL_OPS_PER_SEC = 120` (× `SAFETY_FACTOR` 1,25 ≈
 150 thao tác/s) trong `tests/perf/support/runner.ts`. Nếu vá bậc 1 đẩy thông lượng lên gần hoặc vượt mức đó, hai kịch bản này sẽ dừng với
@@ -346,8 +410,10 @@ lỗi "hàng đợi topup cạn" (cố ý, không đo sai): khi đó phải nân
 2. Ngưỡng độ trễ chấp nhận được (p95/p99 của một lần trả order) ở mức tải đó là bao nhiêu? Trên trần, p99 tăng ~19 ms cho mỗi luồng đồng
    thời thêm vào.
 3. Nạp tiền (GATEWAY, trần cùng cỡ) có cùng ngưỡng không, hay chỉ trả order là ưu tiên?
-4. Có cần đo trên phần cứng giống production (hoặc SQL Server không qua Docker Desktop) trước khi chốt, vì số tuyệt đối ở đây phụ thuộc
-   độ trễ đi-về của máy dev?
-5. Nếu cần vá: đồng ý phạm vi bậc 1 (đổi thứ tự khóa toàn hệ thống + khóa MERCHANT muộn nhất + bỏ đọc khóa `S` trước khi khóa) cho Pha B,
+4. Có cần đo trên phần cứng giống production (hoặc SQL Server không qua Docker Desktop) trước khi chốt? Đo bổ sung cho thấy máy dev có
+   một giới hạn dùng chung chỉ cao hơn trần MERCHANT ~1,2–1,7 lần, nên **mọi** vá ở Pha B đo trên máy này sẽ bị giới hạn đó che; nếu đồng
+   ý, chạy lại `pay-order` với `PERF_TENANTS=1,2,4` trên máy đó trước.
+5. Có cần điều tra hiện tượng sụp ở 64 luồng × 4 tenant (timeout, mỗi lần chờ khóa 5–11 s) trước Pha B không, hay ngoài phạm vi?
+6. Nếu cần vá: đồng ý phạm vi bậc 1 (đổi thứ tự khóa toàn hệ thống + khóa MERCHANT muộn nhất + bỏ đọc khóa `S` trước khi khóa) cho Pha B,
    với điều kiện dừng là đạt ngưỡng ở câu 1–2 trên chính bộ đo này?
-6. Có cần đo lại `topup-apply` khi máy rảnh hẳn (mức 4 và 16 của baseline còn nhiễu) trước Pha B không?
+7. Có cần đo lại `topup-apply` khi máy rảnh hẳn (mức 4 và 16 của baseline còn nhiễu) trước Pha B không?

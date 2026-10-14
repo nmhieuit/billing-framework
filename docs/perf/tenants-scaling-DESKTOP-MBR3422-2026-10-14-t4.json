@@ -1,0 +1,456 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-14T03:36:23.879Z",
+  "machine": {
+    "label": "DESKTOP-MBR3422",
+    "cpus": 4,
+    "memoryGb": 31.9,
+    "node": "v22.20.0",
+    "os": "Windows_NT 10.0.22000 x64",
+    "sqlServerVersion": "Microsoft SQL Server 2022 (RTM-CU26) (KB5093420) - 16.0.4265.3 (X64)",
+    "gitSha": "11413dceef92cf0af2f6f983f93cf6a84392310d"
+  },
+  "config": {
+    "concurrency": [
+      16,
+      64
+    ],
+    "durationSeconds": 20,
+    "warmupSeconds": 3,
+    "repeats": 2,
+    "customers": 2000,
+    "tenants": 4,
+    "e2eOrders": 200,
+    "e2eConcurrency": 16,
+    "machine": "DESKTOP-MBR3422",
+    "out": "tests/perf/.out/tenants-t4",
+    "scenarios": [
+      "pay-order"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "pay-order",
+      "description": "Mỗi thao tác trả một order 1 000 VND cho một khách ngẫu nhiên: mọi lệnh cùng khóa tài khoản MERCHANT (điểm nóng).",
+      "levels": [
+        {
+          "concurrency": 16,
+          "repeats": [
+            {
+              "throughputPerSec": 73.6,
+              "ok": 1472,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 1472,
+                "mean": 217.60848702445642,
+                "p50": 167.83950000000186,
+                "p95": 536.3696000000054,
+                "p99": 784.2859000000026,
+                "max": 1496.6034
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 182,
+                  "count": 1
+                },
+                "LCK_M_U": {
+                  "waitMs": 817250,
+                  "count": 1496
+                },
+                "LCK_M_X": {
+                  "waitMs": 54,
+                  "count": 2
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf2\".\"account",
+                  "count": 665,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594047823872 (b8079320b67d)",
+                      "count": 665
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf4\".\"account",
+                  "count": 519,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594051756032 (b8079320b67d)",
+                      "count": 519
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf3\".\"account",
+                  "count": 489,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594049789952 (b8079320b67d)",
+                      "count": 489
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 288,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 288
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_S",
+                  "statement": "select * from \"t_perf2\".\"accounts\" where \"id\" = @1",
+                  "count": 1,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594047823872 (7024de4ea7c3)",
+                      "count": 1
+                    }
+                  ]
+                }
+              ],
+              "resources": {
+                "wallSeconds": 23.2823931,
+                "nodeCpuSeconds": 13.266,
+                "nodeCpuPercent": 56.978678879878544,
+                "eventLoopDelayMs": {
+                  "p50": 0.3219189999999994,
+                  "p99": 8.579455,
+                  "max": 13.019518999999999
+                },
+                "sqlCpuPercent": {
+                  "mean": 97.74,
+                  "max": 102.68,
+                  "samples": 4
+                }
+              }
+            },
+            {
+              "throughputPerSec": 68.5,
+              "ok": 1370,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 1370,
+                "mean": 233.09151072992685,
+                "p50": 184.83780000000843,
+                "p95": 564.3366000000096,
+                "p99": 781.257500000007,
+                "max": 1108.9549999999872
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 60,
+                  "count": 1
+                },
+                "LCK_M_U": {
+                  "waitMs": 829307,
+                  "count": 1378
+                },
+                "LCK_M_X": {
+                  "waitMs": 26,
+                  "count": 1
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 591,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 591
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf3\".\"account",
+                  "count": 586,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594049789952 (b8079320b67d)",
+                      "count": 586
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf4\".\"account",
+                  "count": 487,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594051756032 (b8079320b67d)",
+                      "count": 487
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf2\".\"account",
+                  "count": 303,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594047823872 (b8079320b67d)",
+                      "count": 303
+                    }
+                  ]
+                }
+              ],
+              "resources": {
+                "wallSeconds": 23.113149600000003,
+                "nodeCpuSeconds": 13.157,
+                "nodeCpuPercent": 56.92430598034981,
+                "eventLoopDelayMs": {
+                  "p50": 0.3383029999999998,
+                  "p99": 7.3834230000000005,
+                  "max": 14.330238999999999
+                },
+                "sqlCpuPercent": {
+                  "mean": 85.405,
+                  "max": 116.3,
+                  "samples": 4
+                }
+              }
+            }
+          ],
+          "medianThroughputPerSec": 71.05,
+          "throughputRange": {
+            "min": 68.5,
+            "max": 73.6
+          },
+          "medianP95Ms": 550.3531000000075,
+          "medianP99Ms": 782.7717000000048
+        },
+        {
+          "concurrency": 64,
+          "repeats": [
+            {
+              "throughputPerSec": 50.25,
+              "ok": 1005,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 1005,
+                "mean": 1279.145149054725,
+                "p50": 1157.073000000004,
+                "p95": 2742.051900000006,
+                "p99": 2963.3214000000007,
+                "max": 3345.2623999999923
+              },
+              "waits": {
+                "LCK_M_S": {
+                  "waitMs": 161,
+                  "count": 2
+                },
+                "LCK_M_U": {
+                  "waitMs": 4549579,
+                  "count": 1134
+                },
+                "LCK_M_X": {
+                  "waitMs": 23,
+                  "count": 1
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf4\".\"account",
+                  "count": 4263,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594051756032 (b8079320b67d)",
+                      "count": 4263
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 2655,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 2655
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf3\".\"account",
+                  "count": 1541,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594049789952 (b8079320b67d)",
+                      "count": 1541
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf2\".\"account",
+                  "count": 938,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594047823872 (b8079320b67d)",
+                      "count": 938
+                    }
+                  ]
+                }
+              ],
+              "resources": {
+                "wallSeconds": 24.0251848,
+                "nodeCpuSeconds": 12.172,
+                "nodeCpuPercent": 50.663502076371124,
+                "eventLoopDelayMs": {
+                  "p50": 0.5103349999999995,
+                  "p99": 9.480575000000002,
+                  "max": 17.869183
+                },
+                "sqlCpuPercent": {
+                  "mean": 82.1725,
+                  "max": 106.47,
+                  "samples": 4
+                }
+              }
+            },
+            {
+              "throughputPerSec": 19,
+              "ok": 380,
+              "errors": {
+                "deadlock": 0,
+                "timeout": 0,
+                "other": 0
+              },
+              "latency": {
+                "count": 380,
+                "mean": 3142.477761578947,
+                "p50": 2860.67300000001,
+                "p95": 6887.972800000003,
+                "p99": 7825.111799999999,
+                "max": 8103.081000000006
+              },
+              "waits": {
+                "LCK_M_U": {
+                  "waitMs": 4897365,
+                  "count": 551
+                }
+              },
+              "blocked": [
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf2\".\"account",
+                  "count": 2809,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594047823872 (b8079320b67d)",
+                      "count": 2809
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf1\".\"account",
+                  "count": 2000,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594045857792 (b8079320b67d)",
+                      "count": 2000
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf3\".\"account",
+                  "count": 1781,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594049789952 (b8079320b67d)",
+                      "count": 1781
+                    }
+                  ]
+                },
+                {
+                  "waitType": "LCK_M_U",
+                  "statement": "select id, kind, customer_id, currency, balance, created_at, frozen_at, frozen_by, frozen_reason from \"t_perf4\".\"account",
+                  "count": 583,
+                  "resources": [
+                    {
+                      "resource": "KEY: 5:72057594051756032 (b8079320b67d)",
+                      "count": 583
+                    }
+                  ]
+                }
+              ],
+              "resources": {
+                "wallSeconds": 27.029558099999996,
+                "nodeCpuSeconds": 8.875,
+                "nodeCpuPercent": 32.83442506594291,
+                "eventLoopDelayMs": {
+                  "p50": 1.7063670000000002,
+                  "p99": 13.232510999999999,
+                  "max": 27.191679
+                },
+                "sqlCpuPercent": {
+                  "mean": 67.3475,
+                  "max": 93.33,
+                  "samples": 4
+                }
+              }
+            }
+          ],
+          "medianThroughputPerSec": 34.625,
+          "throughputRange": {
+            "min": 19,
+            "max": 50.25
+          },
+          "medianP95Ms": 4815.0123500000045,
+          "medianP99Ms": 5394.2166
+        }
+      ],
+      "valid": true,
+      "notes": [
+        "kịch bản pay-order, mức 16, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3482 thao tác",
+        "kịch bản pay-order, mức 16, lần lặp 1: tài nguyên (khởi động + đo, 23.3 s): CPU Node 13.3 s (57.0% một lõi); trễ vòng lặp sự kiện p50 0.3 / p99 8.6 / tối đa 13.0 ms; CPU container SQL TB 97.7% / tối đa 102.7% một lõi (4 mẫu docker stats)",
+        "kịch bản pay-order, mức 16, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3482 thao tác",
+        "kịch bản pay-order, mức 16, lần lặp 2: tài nguyên (khởi động + đo, 23.1 s): CPU Node 13.2 s (56.9% một lõi); trễ vòng lặp sự kiện p50 0.3 / p99 7.4 / tối đa 14.3 ms; CPU container SQL TB 85.4% / tối đa 116.3% một lõi (4 mẫu docker stats)",
+        "kịch bản pay-order, mức 64, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3578 thao tác",
+        "kịch bản pay-order, mức 64, lần lặp 1: tài nguyên (khởi động + đo, 24.0 s): CPU Node 12.2 s (50.7% một lõi); trễ vòng lặp sự kiện p50 0.5 / p99 9.5 / tối đa 17.9 ms; CPU container SQL TB 82.2% / tối đa 106.5% một lõi (4 mẫu docker stats)",
+        "kịch bản pay-order, mức 64, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3578 thao tác",
+        "kịch bản pay-order, mức 64, lần lặp 2: tài nguyên (khởi động + đo, 27.0 s): CPU Node 8.9 s (32.8% một lõi); trễ vòng lặp sự kiện p50 1.7 / p99 13.2 / tối đa 27.2 ms; CPU container SQL TB 67.3% / tối đa 93.3% một lõi (4 mẫu docker stats)"
+      ]
+    }
+  ],
+  "valid": true,
+  "notes": [
+    "kịch bản pay-order, mức 16, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3482 thao tác",
+    "kịch bản pay-order, mức 16, lần lặp 1: tài nguyên (khởi động + đo, 23.3 s): CPU Node 13.3 s (57.0% một lõi); trễ vòng lặp sự kiện p50 0.3 / p99 8.6 / tối đa 13.0 ms; CPU container SQL TB 97.7% / tối đa 102.7% một lõi (4 mẫu docker stats)",
+    "kịch bản pay-order, mức 16, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3482 thao tác",
+    "kịch bản pay-order, mức 16, lần lặp 2: tài nguyên (khởi động + đo, 23.1 s): CPU Node 13.2 s (56.9% một lõi); trễ vòng lặp sự kiện p50 0.3 / p99 7.4 / tối đa 14.3 ms; CPU container SQL TB 85.4% / tối đa 116.3% một lõi (4 mẫu docker stats)",
+    "kịch bản pay-order, mức 64, lần lặp 1: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3578 thao tác",
+    "kịch bản pay-order, mức 64, lần lặp 1: tài nguyên (khởi động + đo, 24.0 s): CPU Node 12.2 s (50.7% một lõi); trễ vòng lặp sự kiện p50 0.5 / p99 9.5 / tối đa 17.9 ms; CPU container SQL TB 82.2% / tối đa 106.5% một lõi (4 mẫu docker stats)",
+    "kịch bản pay-order, mức 64, lần lặp 2: chuẩn bị (seed, NGOÀI cửa sổ đo) 0.0 s, cỡ hàng đợi tối đa 3578 thao tác",
+    "kịch bản pay-order, mức 64, lần lặp 2: tài nguyên (khởi động + đo, 27.0 s): CPU Node 8.9 s (32.8% một lõi); trễ vòng lặp sự kiện p50 1.7 / p99 13.2 / tối đa 27.2 ms; CPU container SQL TB 67.3% / tối đa 93.3% một lõi (4 mẫu docker stats)"
+  ]
+}
