@@ -9,6 +9,7 @@ export default defineConfig({
       '**/*.integration.test.ts',
       '**/*.chaos.test.ts',
       '**/*.soak.test.ts',
+      '**/*.perf.test.ts',
     ],
     coverage: {
       provider: 'v8',

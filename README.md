@@ -76,6 +76,20 @@ Hướng dẫn chạy một kịch bản, đọc nhật ký lỗi (`tests/chaos/
 [`docs/ops/chaos-testing.vi.md`](docs/ops/chaos-testing.vi.md); quyết định: [ADR-0014](docs/adr/0014-chaos-tests-in-process-and-child.vi.md);
 kết quả và ghi chú vận hành: [`docs/ops/chaos-findings.vi.md`](docs/ops/chaos-findings.vi.md).
 
+## Đo hiệu năng
+
+Bộ đo tải vòng kín ở mức use case (trả order, nạp tiền, hỗn hợp) và đầu-cuối trên SQL Server/RabbitMQ của testcontainers (**không** dùng
+stack `billing-local`), ghi báo cáo JSON + Markdown vào `tests/perf/.out/`. Cần Docker và máy rảnh; không nằm trong `test`, `test:integration`
+hay CI. Luôn lọc theo tệp:
+
+```bash
+corepack pnpm test:perf matrix       # ma trận đầy đủ (mức 1/4/16/64 × 3 lần lặp + đầu-cuối), 30–50 phút; chỉnh bằng PERF_*
+corepack pnpm test:perf pay-order    # một kịch bản (cũng: topup-apply, mixed, e2e, canary)
+```
+
+Cách chạy, biến `PERF_*`, cách đọc báo cáo, baseline và phân tích điểm nóng MERCHANT:
+[`docs/perf/merchant-hotspot.vi.md`](docs/perf/merchant-hotspot.vi.md).
+
 ## Hạ tầng dùng chung với ecommerce
 
 Billing dùng chung nền tảng (SQL Server, RabbitMQ, K8s, CI, observability, Vault) nhưng cô lập dữ liệu:
