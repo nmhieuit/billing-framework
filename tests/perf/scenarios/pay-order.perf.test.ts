@@ -22,7 +22,6 @@ describe.skipIf(!enabled)('kịch bản pay-order', () => {
 
   it('đo qua mọi mức đồng thời và ghi báo cáo một phần', async () => {
     const report = await runAndReport(env, config, payOrderScenario);
-    expect(report.notes.filter((n) => !n.includes('sampler'))).toEqual([]);
     expect(report.valid).toBe(true);
   });
 });

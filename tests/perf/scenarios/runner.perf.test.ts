@@ -7,6 +7,7 @@ import { loadPerfConfig, type PerfConfig } from '../support/config.js';
 import { runE2e } from '../support/e2e.js';
 import { createPerfEnv, type PerfEnv } from '../support/perf-env.js';
 import type { LedgerCounts } from '../support/validity.js';
+import { storage } from '../support/settle.js';
 import { BlockedSampler } from '../support/wait-stats.js';
 import type { PerfReport } from '../support/report.js';
 import {
@@ -95,6 +96,7 @@ describe('runner: smoke 2 giây mỗi kịch bản use case', () => {
         `[smoke] ${name} @2 luồng: ${repeat.throughputPerSec.toFixed(1)} ops/s, ok=${repeat.ok}, p95=${repeat.latency.p95.toFixed(1)} ms, lỗi=${JSON.stringify(repeat.errors)}`,
       );
 
+      console.log(`[smoke] ghi chú ${name}:\n${(result.notes ?? []).join('\n')}`);
       const machine = describeRunMachine(config, await readSqlServerVersion(env.admin));
       const report = collectReport([result], undefined, config, machine);
       expect(report.valid).toBe(true);
@@ -141,6 +143,30 @@ describe('runner: lượt đo vô hiệu', () => {
     );
   });
 
+  it('mixed đối chiếu cả giao dịch ADJUSTMENT: đếm lệch thì bị bắt', async () => {
+    const tampered = wrap(mixedScenario, (prepared) => ({
+      verify: (result, before, after) =>
+        prepared.verify(result, before, {
+          ...after,
+          adjustmentTransactions: after.adjustmentTransactions + 1,
+        }),
+    }));
+    await expect(runScenario(env, config, tampered)).rejects.toThrow(
+      /kịch bản mixed.*giao dịch ADJUSTMENT/s,
+    );
+  });
+
+  it('pay-order phát hiện ADJUSTMENT bất ngờ (không kịch bản nào ngoài mixed được điều chỉnh)', async () => {
+    const tampered = wrap(payOrderScenario, (prepared) => ({
+      verify: (result, before, after) =>
+        prepared.verify(result, before, {
+          ...after,
+          adjustmentTransactions: after.adjustmentTransactions + 1,
+        }),
+    }));
+    await expect(runScenario(env, config, tampered)).rejects.toThrow(/giao dịch ADJUSTMENT/);
+  });
+
   it('làm hỏng số dư giữa lượt đo (qua admin) → checkLedger bắt và ném lỗi', async () => {
     // Môi trường riêng vì số dư hỏng không được lây sang các test khác.
     const own = await createPerfEnv({ tenants: 1 });
@@ -185,6 +211,20 @@ describe('runner: lượt đo vô hiệu', () => {
     const started = vi.spyOn(BlockedSampler.prototype, 'start');
     const stopped = vi.spyOn(BlockedSampler.prototype, 'stop');
     try {
+      // Sampler phải chạy TRƯỚC thao tác đầu tiên và thực sự lấy được mẫu trong lượt 2 giây.
+      let startedBeforeFirstTask: boolean | undefined;
+      const ordered = wrap(payOrderScenario, (prepared) => ({
+        task: async (context) => {
+          startedBeforeFirstTask ??= started.mock.calls.length > 0;
+          await prepared.task(context);
+        },
+      }));
+      await runScenario(env, config, ordered);
+      expect(startedBeforeFirstTask).toBe(true);
+      expect(stopped.mock.contexts[0]).toBeInstanceOf(BlockedSampler);
+      expect((stopped.mock.contexts[0] as BlockedSampler).sampleCount).toBeGreaterThan(0);
+      stopped.mockClear();
+      started.mockClear();
       await runScenario(env, config, payOrderScenario);
       const broken = wrap(payOrderScenario, () => ({ verify: () => ['giả lập'] }));
       await expect(runScenario(env, config, broken)).rejects.toThrow(/vô hiệu/);
@@ -202,7 +242,44 @@ describe('runner: lượt đo vô hiệu', () => {
       prepare: (e: PerfEnv, c: PerfConfig, plan: Parameters<ScenarioDefinition['prepare']>[2]) =>
         topupApplyScenario.prepare(e, c, { ...plan, maxOps: 3 }),
     };
-    await expect(runScenario(env, config, starved)).rejects.toThrow(/hàng đợi topup cạn/);
+    // Thông báo phải nêu quy tắc cấp phát, mức đồng thời và lần lặp.
+    await expect(runScenario(env, config, starved)).rejects.toThrow(
+      /hàng đợi topup cạn.*cận tĩnh estimateMaxOps = 3.*mức đồng thời 2, lần lặp 1/s,
+    );
+  });
+
+  it('settle (CHECKPOINT + UPDATE STATISTICS) chạy sau prepare và TRƯỚC thao tác đầu tiên; cỡ hàng đợi bằng nhau giữa các lần lặp', async () => {
+    const order: string[] = [];
+    const sizes: number[] = [];
+    const originalSettle = storage.settle.bind(storage);
+    const settle = vi.spyOn(storage, 'settle').mockImplementation(async (e) => {
+      order.push('settle');
+      await originalSettle(e);
+    });
+    try {
+      const traced: ScenarioDefinition = {
+        ...topupApplyScenario,
+        async prepare(e, c, plan) {
+          sizes.push(plan.maxOps);
+          const prepared = await topupApplyScenario.prepare(e, c, plan);
+          order.push('prepare');
+          return {
+            ...prepared,
+            task: async (context) => {
+              if (order[order.length - 1] !== 'task') order.push('task');
+              await prepared.task(context);
+            },
+          };
+        },
+      };
+      await runScenario(env, { ...config, repeats: 2 }, traced);
+      // Mỗi lần lặp: prepare → settle → task. Lần lặp 2 lặp lại đúng trình tự.
+      expect(order).toEqual(['prepare', 'settle', 'task', 'prepare', 'settle', 'task']);
+      expect(sizes).toHaveLength(2);
+      expect(sizes[1]).toBe(sizes[0]);
+    } finally {
+      settle.mockRestore();
+    }
   });
 
   it('không có thao tác thành công → lượt vô hiệu: valid=false kèm ghi chú, báo cáo vẫn dựng được (n/a)', async () => {
@@ -237,8 +314,15 @@ describe('runner: mixed ghi nhận đủ loại thao tác', () => {
       },
     }));
     // 4 giây (~vài trăm lệnh) để xác suất không có lệnh đảo (5%) gần như bằng 0.
-    await runScenario(env, { ...config, durationSeconds: 4 }, spy);
+    const result = await runScenario(env, { ...config, durationSeconds: 4 }, spy);
     const { before, after } = seen[0]!;
+    expect(after.adjustmentTransactions).toBeGreaterThan(before.adjustmentTransactions);
+    // Ghi chú nêu số thao tác thực tế để người đọc kiểm tra tỷ lệ 70/15/10/5, và nhắc topup PENDING tích lũy.
+    const notes = (result.notes ?? []).join('\n');
+    expect(notes).toMatch(
+      /thao tác thực tế.*trả order \d+ \(\d+\.\d%.*nạp \d+.*điều chỉnh \d+.*đảo \d+/,
+    );
+    expect(notes).toMatch(/topup PENDING chưa dùng còn lại.*tích lũy/);
     expect(after.orderPayments).toBeGreaterThan(before.orderPayments);
     expect(after.topupTransactions).toBeGreaterThan(before.topupTransactions);
     expect(after.reversalTransactions).toBeGreaterThan(before.reversalTransactions);

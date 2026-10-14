@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { DriverResult } from './load-driver.js';
 import type { PerfEnv } from './perf-env.js';
-import { CURRENCY, type PreparedScenario, type ScenarioDefinition } from './runner.js';
+import {
+  CURRENCY,
+  type PreparedScenario,
+  type ScenarioDefinition,
+  type ScenarioPlan,
+} from './runner.js';
 import { seedPendingTopups, type SeededCustomer, type SeededTopup } from './seed.js';
 import type { LedgerCounts } from './validity.js';
 
@@ -26,9 +31,18 @@ interface Tally {
   applied: number;
   adjusted: number;
   reversed: number;
+  /** Số lần mixed rơi vào nhánh đảo nhưng chưa có giao dịch để đảo nên trả order thay (đã nằm trong paid). */
+  fallbackPays: number;
 }
 
-const newTally = (): Tally => ({ paid: 0, applied: 0, adjusted: 0, reversed: 0 });
+const newTally = (): Tally => ({ paid: 0, applied: 0, adjusted: 0, reversed: 0, fallbackPays: 0 });
+
+/** Một dòng ghi chú về số thao tác THỰC TẾ, để người đọc kiểm tra tỷ lệ 70/15/10/5 của mixed. */
+function tallyNote(tally: Tally): string {
+  const total = tally.paid + tally.applied + tally.adjusted + tally.reversed;
+  const share = (n: number): string => (total === 0 ? 'n/a' : `${((n / total) * 100).toFixed(1)}%`);
+  return `thao tác thực tế (cả khởi động và xả): trả order ${tally.paid} (${share(tally.paid)}, trong đó ${tally.fallbackPays} trả thay cho đảo), nạp ${tally.applied} (${share(tally.applied)}), điều chỉnh ${tally.adjusted} (${share(tally.adjusted)}), đảo ${tally.reversed} (${share(tally.reversed)})`;
+}
 
 /** Trả một order mới; chỉ PAID là thành công, REJECTED/REPLAYED/DUPLICATE là lỗi 'other'. Trả id giao dịch ví. */
 async function payOnce(
@@ -60,20 +74,39 @@ class TopupQueue {
   private next = 0;
   exhausted = false;
 
-  constructor(private readonly topups: readonly SeededTopup[]) {}
+  /** `sizing`: mô tả quy tắc cấp phát (cận tĩnh estimateMaxOps), mức đồng thời, lần lặp, để lỗi cạn tự giải thích. */
+  constructor(
+    private readonly topups: readonly SeededTopup[],
+    private readonly sizing: string,
+  ) {}
+
+  exhaustedProblem(): string {
+    return `hàng đợi topup cạn giữa lượt đo, kết quả đo không đầy đủ (${this.sizing})`;
+  }
+
+  remaining(): number {
+    return this.topups.length - this.next;
+  }
 
   take(): SeededTopup {
     const topup = this.topups[this.next];
     if (topup === undefined) {
       this.exhausted = true;
       throw new Error(
-        `hàng đợi topup đã cạn sau ${this.topups.length} lần áp: tăng PER_WORKER_OPS_PER_SEC/TOTAL_OPS_PER_SEC trong runner.ts`,
+        `hàng đợi topup đã cạn sau ${this.topups.length} lần áp (${this.sizing}): tăng PER_WORKER_OPS_PER_SEC/TOTAL_OPS_PER_SEC trong runner.ts`,
       );
     }
     this.next += 1;
     return topup;
   }
 }
+
+const sizingOf = (plan: ScenarioPlan, count: number): string =>
+  `quy tắc: cận tĩnh estimateMaxOps = ${plan.maxOps} thao tác, hàng đợi ${count}; mức đồng thời ${plan.concurrency}, lần lặp ${plan.repeat}`;
+
+/** Số topup còn lại chưa dùng: PENDING tích lũy trong DB qua các lần lặp (vô hại cho checkLedger và cho phép đo). */
+const unusedNote = (queue: TopupQueue): string =>
+  `${queue.remaining()} topup PENDING chưa dùng còn lại trong DB (tích lũy qua các lần lặp, vô hại)`;
 
 async function applyOnce(env: PerfEnv, queue: TopupQueue, tally: Tally): Promise<void> {
   const topup = queue.take();
@@ -95,6 +128,47 @@ const delta = (before: number, after: number): number => after - before;
 function expectEqual(problems: string[], what: string, actual: number, expected: number): void {
   if (actual !== expected)
     problems.push(`${what}: sổ cái tăng ${actual}, thao tác thành công ${expected}`);
+}
+
+/** Kịch bản không điều chỉnh/đảo thì các loại đó phải không tăng. */
+function checkNone(
+  problems: string[],
+  before: LedgerCounts,
+  after: LedgerCounts,
+  kinds: Array<'topup' | 'reversal' | 'adjustment' | 'orderPayment'>,
+): void {
+  if (kinds.includes('topup')) {
+    expectEqual(
+      problems,
+      'giao dịch TOPUP',
+      delta(before.topupTransactions, after.topupTransactions),
+      0,
+    );
+  }
+  if (kinds.includes('reversal')) {
+    expectEqual(
+      problems,
+      'giao dịch REVERSAL',
+      delta(before.reversalTransactions, after.reversalTransactions),
+      0,
+    );
+  }
+  if (kinds.includes('adjustment')) {
+    expectEqual(
+      problems,
+      'giao dịch ADJUSTMENT',
+      delta(before.adjustmentTransactions, after.adjustmentTransactions),
+      0,
+    );
+  }
+  if (kinds.includes('orderPayment')) {
+    expectEqual(
+      problems,
+      'giao dịch ORDER_PAYMENT',
+      delta(before.orderPaymentTransactions, after.orderPaymentTransactions),
+      0,
+    );
+  }
 }
 
 function checkPayments(
@@ -130,18 +204,7 @@ export const payOrderScenario: ScenarioDefinition = {
       verify(_result: DriverResult, before, after) {
         const problems: string[] = [];
         checkPayments(problems, tally, before, after);
-        expectEqual(
-          problems,
-          'giao dịch TOPUP',
-          delta(before.topupTransactions, after.topupTransactions),
-          0,
-        );
-        expectEqual(
-          problems,
-          'giao dịch REVERSAL',
-          delta(before.reversalTransactions, after.reversalTransactions),
-          0,
-        );
+        checkNone(problems, before, after, ['topup', 'reversal', 'adjustment']);
         return problems;
       },
     });
@@ -154,38 +217,26 @@ export const topupApplyScenario: ScenarioDefinition = {
     'Mỗi thao tác áp kết quả charge.succeeded cho một topup PENDING chưa dùng (hàng đợi seed trước, ngoài cửa sổ đo).',
   async prepare(env, _config, plan): Promise<PreparedScenario> {
     // Seed ngoài cửa sổ đo: toàn bộ chi phí này nằm trong prepare().
-    const queue = new TopupQueue(
-      await seedPendingTopups(env, {
-        count: plan.maxOps,
-        customers: [...plan.customers],
-        amount: TOPUP_AMOUNT,
-      }),
-    );
+    const topups = await seedPendingTopups(env, {
+      count: plan.maxOps,
+      customers: [...plan.customers],
+      amount: TOPUP_AMOUNT,
+    });
+    const queue = new TopupQueue(topups, sizingOf(plan, topups.length));
     const tally = newTally();
     return {
       task: () => applyOnce(env, queue, tally),
+      summary: () => unusedNote(queue),
       verify(_result, before, after) {
         const problems: string[] = [];
-        if (queue.exhausted)
-          problems.push('hàng đợi topup cạn giữa lượt đo (kết quả đo không đầy đủ)');
+        if (queue.exhausted) problems.push(queue.exhaustedProblem());
         expectEqual(
           problems,
           'giao dịch TOPUP',
           delta(before.topupTransactions, after.topupTransactions),
           tally.applied,
         );
-        expectEqual(
-          problems,
-          'giao dịch ORDER_PAYMENT',
-          delta(before.orderPaymentTransactions, after.orderPaymentTransactions),
-          0,
-        );
-        expectEqual(
-          problems,
-          'giao dịch REVERSAL',
-          delta(before.reversalTransactions, after.reversalTransactions),
-          0,
-        );
+        checkNone(problems, before, after, ['orderPayment', 'reversal', 'adjustment']);
         return problems;
       },
     };
@@ -197,17 +248,17 @@ export const mixedScenario: ScenarioDefinition = {
   description:
     'Hỗn hợp: 70% trả order, 15% áp nạp tiền, 10% điều chỉnh CREDIT ví, 5% đảo một giao dịch ORDER_PAYMENT đã tạo trong lượt (chưa có thì trả order thay).',
   async prepare(env, _config, plan): Promise<PreparedScenario> {
-    const queue = new TopupQueue(
-      await seedPendingTopups(env, {
-        count: Math.ceil(plan.maxOps * TOPUP_SHARE * TOPUP_QUEUE_SLACK) + plan.concurrency,
-        customers: [...plan.customers],
-        amount: TOPUP_AMOUNT,
-      }),
-    );
+    const topups = await seedPendingTopups(env, {
+      count: Math.ceil(plan.maxOps * TOPUP_SHARE * TOPUP_QUEUE_SLACK) + plan.concurrency,
+      customers: [...plan.customers],
+      amount: TOPUP_AMOUNT,
+    });
+    const queue = new TopupQueue(topups, sizingOf(plan, topups.length));
     const tally = newTally();
     // Giao dịch ORDER_PAYMENT vừa tạo và chưa bị đảo; lấy ra (pop) khi đảo để mỗi giao dịch chỉ bị đảo một lần.
     const reversible: Array<{ tenant: SeededCustomer['tenant']; transactionId: string }> = [];
     return {
+      summary: () => `${tallyNote(tally)}; ${unusedNote(queue)}`,
       task: async () => {
         const roll = Math.random();
         if (roll < PAY_SHARE) {
@@ -232,6 +283,7 @@ export const mixedScenario: ScenarioDefinition = {
           if (target === undefined) {
             // Chưa có giao dịch nào để đảo: trả order thay (vẫn là một thao tác thật, không phải thao tác rỗng).
             reversible.push(await payOnce(env, plan.customers, tally));
+            tally.fallbackPays += 1;
             return;
           }
           await env.reverse.execute({
@@ -246,8 +298,7 @@ export const mixedScenario: ScenarioDefinition = {
       },
       verify(_result, before, after) {
         const problems: string[] = [];
-        if (queue.exhausted)
-          problems.push('hàng đợi topup cạn giữa lượt đo (kết quả đo không đầy đủ)');
+        if (queue.exhausted) problems.push(queue.exhaustedProblem());
         checkPayments(problems, tally, before, after);
         expectEqual(
           problems,
@@ -260,6 +311,12 @@ export const mixedScenario: ScenarioDefinition = {
           'giao dịch REVERSAL',
           delta(before.reversalTransactions, after.reversalTransactions),
           tally.reversed,
+        );
+        expectEqual(
+          problems,
+          'giao dịch ADJUSTMENT',
+          delta(before.adjustmentTransactions, after.adjustmentTransactions),
+          tally.adjusted,
         );
         return problems;
       },

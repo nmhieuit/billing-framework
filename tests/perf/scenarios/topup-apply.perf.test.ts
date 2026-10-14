@@ -22,7 +22,6 @@ describe.skipIf(!enabled)('kịch bản topup-apply', () => {
 
   it('đo qua mọi mức đồng thời và ghi báo cáo một phần', async () => {
     const report = await runAndReport(env, config, topupApplyScenario);
-    expect(report.notes.filter((n) => !n.includes('sampler'))).toEqual([]);
     expect(report.valid).toBe(true);
   });
 });

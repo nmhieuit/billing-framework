@@ -6,6 +6,7 @@ export interface LedgerCounts {
   orderPaymentTransactions: number;
   topupTransactions: number;
   reversalTransactions: number;
+  adjustmentTransactions: number;
 }
 
 /** Đọc một số đếm; truy vấn lỗi thì ném (không bao giờ coi lỗi là 0). */
@@ -22,6 +23,7 @@ export async function readLedgerCounts(env: PerfEnv): Promise<LedgerCounts> {
     orderPaymentTransactions: 0,
     topupTransactions: 0,
     reversalTransactions: 0,
+    adjustmentTransactions: 0,
   };
   for (const tenant of env.tenants) {
     const schema = `t_${tenant.value}`;
@@ -35,6 +37,7 @@ export async function readLedgerCounts(env: PerfEnv): Promise<LedgerCounts> {
       if (row.kind === 'ORDER_PAYMENT') totals.orderPaymentTransactions += num(row.n);
       else if (row.kind === 'TOPUP') totals.topupTransactions += num(row.n);
       else if (row.kind === 'REVERSAL') totals.reversalTransactions += num(row.n);
+      else if (row.kind === 'ADJUSTMENT') totals.adjustmentTransactions += num(row.n);
     }
   }
   return totals;

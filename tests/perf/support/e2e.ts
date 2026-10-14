@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { assertSystemInvariants } from '../../chaos/support/invariants.js';
 import { createSystem, type System } from '../../chaos/support/system-harness.js';
 import { summarizeLatencies } from './histogram.js';
@@ -16,8 +15,6 @@ const TENANT = 'perf1';
 const E2E_ORDER_AMOUNT = 1_000;
 /** Tối đa số ví nhận đơn xoay vòng. */
 const MAX_WALLETS = 20;
-/** Chu kỳ quét danh sách kết quả của Orders giả: độ phân giải đo độ trễ ~ vài ms. */
-const POLL_MS = 2;
 /** Một đơn quá hạn này mà chưa có kết quả thì coi là kẹt (đo vô hiệu). */
 const ORDER_TIMEOUT_MS = 60_000;
 const HEAL_TIMEOUT_MS = 180_000;
@@ -29,7 +26,7 @@ type Verdict = { kind: 'PAID' | 'FAILED'; at: number };
  * (POST /topups → payment → webhook), gửi `orders` đơn qua broker bằng `concurrency` luồng gửi kín (mỗi luồng gửi một đơn, chờ
  * OrderPaidV1 của chính đơn đó rồi mới gửi đơn tiếp). Độ trễ mỗi đơn = từ lúc bắt đầu gửi tới lúc Orders giả nhận OrderPaidV1,
  * thông lượng = số đơn / thời gian cả lô. Sau đó heal() và assertSystemInvariants(): vi phạm → ném lỗi.
- * Một bộ nhận duy nhất quét mảng kết quả của Orders giả (không mỗi đơn một vòng thăm dò).
+ * Thời điểm nhận được ghi ngay khi kết quả được đẩy vào mảng của Orders giả (không thăm dò).
  */
 export async function runE2e(
   options: E2eOptions,
@@ -40,27 +37,26 @@ export async function runE2e(
     const customers = await fundWallets(system, options.orders);
 
     const waiting = new Map<string, (verdict: Verdict) => void>();
-    // Đọc thẳng mảng kết quả của simulator qua con trỏ (received() sao chép cả mảng mỗi lần gọi).
+    // Đo thời điểm nhận ngay lúc consumer của Orders giả đẩy kết quả vào mảng (bọc push của CHÍNH mảng này, chỉ trong code test),
+    // nên không bị lượng tử hóa bởi chu kỳ thăm dò/timer của Windows. Khớp đơn theo orderId qua Map `waiting`.
     const results = system.orders.results;
-    let cursor = results.length;
-    let running = true;
-    const receiver = (async (): Promise<void> => {
-      while (running) {
-        while (cursor < results.length) {
-          const message = results[cursor]!;
-          cursor += 1;
-          const orderId = message.body.orderId;
-          const resolve = typeof orderId === 'string' ? waiting.get(orderId) : undefined;
-          if (resolve === undefined) continue;
-          waiting.delete(orderId as string);
-          resolve({
-            kind: message.type === 'OrderPaidV1' ? 'PAID' : 'FAILED',
-            at: performance.now(),
-          });
-        }
-        await sleep(POLL_MS);
+    const originalPush = results.push;
+    results.push = function (this: typeof results, ...items: typeof results): number {
+      const at = performance.now();
+      const length = originalPush.apply(this, items);
+      for (const message of items) {
+        const orderId = message.body.orderId;
+        const resolve = typeof orderId === 'string' ? waiting.get(orderId) : undefined;
+        if (resolve === undefined) continue;
+        waiting.delete(orderId as string);
+        resolve({ kind: message.type === 'OrderPaidV1' ? 'PAID' : 'FAILED', at });
       }
-    })();
+      return length;
+    };
+    const restorePush = (): void => {
+      // Gỡ bản bọc (thuộc tính riêng của mảng) để mảng trở lại push nguyên bản của Array.prototype.
+      delete (results as { push?: unknown }).push;
+    };
 
     const latencies: number[] = [];
     let failed = 0;
@@ -103,8 +99,7 @@ export async function runE2e(
       await Promise.all(Array.from({ length: options.concurrency }, () => sender()));
       wallMs = performance.now() - batchStart;
     } finally {
-      running = false;
-      await receiver;
+      restorePush();
     }
     if (failed > 0) {
       throw new Error(

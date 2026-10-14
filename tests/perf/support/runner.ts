@@ -13,6 +13,7 @@ import {
   type ScenarioResult,
 } from './report.js';
 import { seedCustomers, type SeededCustomer } from './seed.js';
+import { storage } from './settle.js';
 import { checkLedger, readLedgerCounts, type LedgerCounts } from './validity.js';
 import { BlockedSampler, diffWaits, snapshotWaits } from './wait-stats.js';
 
@@ -26,38 +27,19 @@ export const CURRENCY = 'VND';
  *  - mỗi luồng tối đa PER_WORKER_OPS_PER_SEC;
  *  - tổng tối đa TOTAL_OPS_PER_SEC.
  * Hiệu chuẩn trên máy phát triển (SQL Server trong container): ~30 thao tác/giây/luồng ở 2 luồng và tối đa ~65 thao tác/giây tổng
- * ở 16-64 luồng, nên hai trần cao hơn thực đo khoảng 2x và 6x. Nhân thêm SAFETY_FACTOR cho dao động. Từ lần lặp thứ hai của một
- * mức, runScenario thu hẹp theo thông lượng thực đo của lần lặp trước (observedMaxOps) để không seed thừa hàng chục nghìn
- * topup. Máy mạnh hơn nhiều thì lượt đo dừng với lỗi rõ ràng "hàng đợi topup cạn" (verify của topup-apply/mixed) chứ không đo
- * sai; khi đó nâng hằng số ở đây.
+ * ở 16-64 luồng, nên hai trần cao hơn thực đo khoảng 2x và 6x. Nhân thêm SAFETY_FACTOR cho dao động. Cỡ hàng đợi LUÔN là cận tĩnh
+ * này, giống hệt ở mọi lần lặp của một mức (đối xứng: lượng ghi do seed, trạng thái kho lưu trữ và kích thước bảng như nhau
+ * giữa các lần lặp; không suy từ lần lặp trước). Máy mạnh hơn nhiều thì lượt đo dừng với lỗi rõ ràng "hàng đợi topup cạn"
+ * (verify của topup-apply/mixed) chứ không đo sai; khi đó nâng hằng số ở đây.
  */
 export const PER_WORKER_OPS_PER_SEC = 60;
 export const TOTAL_OPS_PER_SEC = 400;
 export const SAFETY_FACTOR = 1.25;
-/** Dư 50% so với thông lượng của lần lặp trước (dao động giữa các lần lặp). */
-export const OBSERVED_FACTOR = 1.5;
 
 /** Số thao tác tối đa dự kiến của một lượt (gồm khởi động nóng; cộng thêm các lệnh còn bay lúc hết cửa sổ). */
 export function estimateMaxOps(concurrency: number, seconds: number): number {
   const perSecond = Math.min(concurrency * PER_WORKER_OPS_PER_SEC, TOTAL_OPS_PER_SEC);
   return Math.ceil(perSecond * seconds * SAFETY_FACTOR) + concurrency * 2;
-}
-
-/**
- * Cận trên theo thông lượng thực đo của lần lặp trước: (thao tác/giây trong cửa sổ đo) x (khởi động + đo) x OBSERVED_FACTOR,
- * không bao giờ vượt `ceiling` (cận tĩnh của estimateMaxOps).
- */
-export function observedMaxOps(
-  previous: { ok: number; errors: number },
-  config: Pick<PerfConfig, 'durationSeconds' | 'warmupSeconds'>,
-  concurrency: number,
-  ceiling: number,
-): number {
-  const perSecond = (previous.ok + previous.errors) / config.durationSeconds;
-  const bound = Math.ceil(
-    perSecond * (config.warmupSeconds + config.durationSeconds) * OBSERVED_FACTOR,
-  );
-  return Math.min(ceiling, bound + concurrency * 2);
 }
 
 export interface ScenarioPlan {
@@ -79,6 +61,8 @@ export interface PreparedScenario {
    */
   verify(result: DriverResult, countsBefore: LedgerCounts, countsAfter: LedgerCounts): string[];
   cleanup?(): Promise<void>;
+  /** Sau verify: một dòng mô tả thao tác thực tế (vd tỷ lệ của mixed) để đưa vào ghi chú báo cáo. */
+  summary?(): string;
 }
 
 export interface ScenarioDefinition {
@@ -129,9 +113,14 @@ async function runRepeat(
 ): Promise<RepeatOutcome> {
   // Thứ tự: prepare → đếm sổ cái (trước) → chụp wait + bật sampler → tải → tắt sampler + diff wait → xác nhận đã xả hết
   // → đếm sổ cái (sau) + checkLedger → verify. Tải chạy qua env.db; sampler và kiểm tra hợp lệ qua env.admin.
+  const prepareStart = performance.now();
   const prepared = await scenario.prepare(env, config, plan);
+  const prepareMs = performance.now() - prepareStart;
   let primary: unknown;
   try {
+    // Seed vừa ghi hàng nghìn dòng: CHECKPOINT + UPDATE STATISTICS để mọi lần lặp bắt đầu từ cùng trạng thái kho lưu trữ,
+    // và để dọn dẹp ghi đĩa của seed không rơi vào cửa sổ đo.
+    await storage.settle(env);
     const before = await readLedgerCounts(env);
     let inFlight = 0;
     const task: DriverOptions['task'] = async (context) => {
@@ -176,7 +165,11 @@ async function runRepeat(
         `${where}: không có thao tác thành công nào trong cửa sổ đo (ok=${driver.ok}, mẫu độ trễ=${latency.count}; lỗi: ${JSON.stringify(driver.errors)})`,
       );
     }
-    const info: string[] = [];
+    const info: string[] = [
+      `${where}: chuẩn bị (seed, NGOÀI cửa sổ đo) ${(prepareMs / 1000).toFixed(1)} s, cỡ hàng đợi tối đa ${plan.maxOps} thao tác`,
+    ];
+    const summary = prepared.summary?.();
+    if (summary !== undefined) info.push(`${where}: ${summary}`);
     if (sampler.errorCount > 0) {
       info.push(
         `${where}: sampler chờ khóa lỗi ${sampler.errorCount} lần (${sampler.sampleCount} lần lấy mẫu thành công): ${sampler.lastError ?? ''}`,
@@ -229,25 +222,8 @@ export async function runScenario(
     const ceiling = estimateMaxOps(concurrency, config.warmupSeconds + config.durationSeconds);
     for (let repeat = 1; repeat <= config.repeats; repeat += 1) {
       const where = `kịch bản ${label}, mức ${concurrency}, lần lặp ${repeat}`;
-      const previous = repeats[repeats.length - 1];
-      const plan: ScenarioPlan = {
-        concurrency,
-        repeat,
-        customers,
-        maxOps:
-          previous === undefined
-            ? ceiling
-            : observedMaxOps(
-                {
-                  ok: previous.ok,
-                  errors:
-                    previous.errors.deadlock + previous.errors.timeout + previous.errors.other,
-                },
-                config,
-                concurrency,
-                ceiling,
-              ),
-      };
+      // Cỡ hàng đợi giống hệt ở mọi lần lặp của mức này (đối xứng), luôn là cận tĩnh.
+      const plan: ScenarioPlan = { concurrency, repeat, customers, maxOps: ceiling };
       const outcome = await runRepeat(env, config, scenario, plan, where);
       repeats.push(outcome.result);
       invalid.push(...outcome.invalid);
