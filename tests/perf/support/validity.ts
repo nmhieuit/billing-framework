@@ -13,7 +13,8 @@ const num = (value: string | number | null | undefined): number => Number(value 
 
 /**
  * Cộng qua mọi tenant: số dòng `order_payments` và số giao dịch sổ cái theo loại. Dùng trước/sau lượt đo (lúc không có tải)
- * để đối chiếu hiệu số với số thao tác thành công do driver báo.
+ * để đối chiếu hiệu số với số thao tác thành công do driver báo. Người gọi phải đã chờ hết mọi worker, kể cả việc nền tách rời
+ * (detached), trước khi gọi.
  */
 export async function readLedgerCounts(env: PerfEnv): Promise<LedgerCounts> {
   const totals: LedgerCounts = {
@@ -43,7 +44,7 @@ export async function readLedgerCounts(env: PerfEnv): Promise<LedgerCounts> {
  * Bất biến sổ cái của từng tenant; trả danh sách vi phạm (rỗng = hợp lệ). Truy vấn lỗi thì ném lỗi.
  * SQL sao chép từ `expectLedgerInvariants` trong services/wallet/src/test-support.ts: tổng số dư mọi tài khoản = 0;
  * số dư mỗi tài khoản = tổng các dòng sổ cái của nó; tổng các dòng của mỗi giao dịch = 0.
- * Chỉ có nghĩa khi không còn giao dịch đang bay (gọi lúc đã dừng tải).
+ * Chỉ có nghĩa khi không còn giao dịch đang bay: người gọi phải đã chờ hết mọi worker, kể cả việc nền tách rời (detached).
  */
 export async function checkLedger(env: PerfEnv): Promise<string[]> {
   const violations: string[] = [];

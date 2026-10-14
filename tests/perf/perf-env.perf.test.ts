@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createDatabase } from '@billing/database';
 import { sql } from 'kysely';
 import { afterEach, describe, expect, inject, it } from 'vitest';
-import { createPerfEnv, type PerfEnv } from './support/perf-env.js';
+import { assertConcurrencyFitsPool, createPerfEnv, type PerfEnv } from './support/perf-env.js';
 import { seedCustomers, seedPendingTopups } from './support/seed.js';
 import { checkLedger, readLedgerCounts } from './support/validity.js';
 
@@ -59,6 +59,19 @@ describe('môi trường đo mức use case', () => {
     expect(await perfDatabases()).toEqual(before);
   });
 
+  it('poolMax: mặc định >= 64, guard concurrency chặn mức vượt pool', async () => {
+    const env = await newEnv(1);
+    expect(env.poolMax).toBeGreaterThanOrEqual(64);
+    expect(() => assertConcurrencyFitsPool(env, 64)).not.toThrow();
+    expect(() => assertConcurrencyFitsPool(env, 65)).toThrow(/poolMax/);
+
+    const small = await createPerfEnv({ tenants: 1, poolMax: 8 });
+    envs.push(small);
+    expect(small.poolMax).toBe(8);
+    expect(() => assertConcurrencyFitsPool(small, 8)).not.toThrow();
+    expect(() => assertConcurrencyFitsPool(small, 16)).toThrow(/poolMax/);
+  });
+
   it('seedCustomers: ví đúng số dư, trải đều tenant, sổ cái hợp lệ', async () => {
     const env = await newEnv(2);
     const customers = await seedCustomers(env, { count: 50, balance: 1_000_000, concurrency: 8 });
@@ -104,7 +117,7 @@ describe('môi trường đo mức use case', () => {
       chargeId: t.chargeId,
       reference: t.topupId,
       amount: t.amount,
-      currency: 'VND',
+      currency: t.currency,
     });
     expect(outcome).toBe('APPLIED');
     const after = await readLedgerCounts(env);
@@ -115,9 +128,43 @@ describe('môi trường đo mức use case', () => {
 
   it('counts phản ánh đúng các lần gọi use case thật (trả order, đảo)', async () => {
     const env = await newEnv(2);
-    const [customer] = await seedCustomers(env, { count: 2, balance: 1_000_000, concurrency: 2 });
-    const c = customer!;
+    const seeded = await seedCustomers(env, { count: 2, balance: 1_000_000, concurrency: 2 });
+    const c = seeded[0]!;
+    const other = seeded[1]!;
+    expect(c.tenant.equals(other.tenant)).toBe(false);
+    const start = await readLedgerCounts(env);
+
+    // Tenant THỨ HAI: một lần trả order và một lần áp nạp tiền; counts phải cộng qua mọi tenant.
+    const paidOther = await env.payOrder.execute({
+      tenant: other.tenant,
+      eventId: randomUUID(),
+      correlationId: randomUUID(),
+      orderId: `o-${randomUUID()}`,
+      customerId: other.customerId,
+      amount: 10_000,
+      currency: 'VND',
+    });
+    expect(paidOther.kind).toBe('PAID');
+    const [topupOther] = await seedPendingTopups(env, {
+      count: 1,
+      customers: [other],
+      amount: 20_000,
+    });
+    expect(
+      await env.applyPayment.execute({
+        tenant: other.tenant,
+        eventId: randomUUID(),
+        type: 'charge.succeeded',
+        chargeId: topupOther!.chargeId,
+        reference: topupOther!.topupId,
+        amount: topupOther!.amount,
+        currency: topupOther!.currency,
+      }),
+    ).toBe('APPLIED');
     const zero = await readLedgerCounts(env);
+    expect(zero.orderPayments - start.orderPayments).toBe(1);
+    expect(zero.orderPaymentTransactions - start.orderPaymentTransactions).toBe(1);
+    expect(zero.topupTransactions - start.topupTransactions).toBe(1);
 
     const paid = await env.payOrder.execute({
       tenant: c.tenant,

@@ -8,17 +8,24 @@ export interface SeededCustomer {
   customerId: string;
 }
 
+/**
+ * Một lần nạp đã PENDING. DÙNG MỘT LẦN theo quy ước: áp lần thứ hai trả DUPLICATE/IGNORED (không tăng sổ cái), nên Task 5 phải
+ * dùng `eventId` MỚI cho mỗi lần áp và mỗi topup chỉ áp một lần.
+ */
 export interface SeededTopup {
   tenant: TenantId;
   topupId: string;
   chargeId: string;
   amount: number;
+  currency: string;
 }
 
 const DEFAULT_CONCURRENCY = 16;
 
 /** Số thứ tự khách đã cấp trên mỗi môi trường, để hai lần seed liên tiếp không trùng id (và không nạp đôi). */
 const issued = new WeakMap<PerfEnv, number>();
+/** Bộ đếm riêng cho khóa idempotency của topup (không trộn với số thứ tự khách). */
+const issuedTopups = new WeakMap<PerfEnv, number>();
 
 /** Chạy `work(i)` cho i = 0..count-1 với tối đa `concurrency` việc cùng lúc; lỗi đầu tiên dừng việc nhận thêm và được ném ra. */
 async function forEachLimited(
@@ -48,7 +55,11 @@ async function forEachLimited(
 
 /**
  * Tạo `count` ví (CreateWallet) rồi nạp `balance` bằng AdjustWallet CREDIT (đúng use case: bút toán kép đối ứng tài khoản
- * ADJUSTMENT, có ghi ops_actions), trải đều quanh các tenant. Không đi đường tắt SQL để bất biến sổ cái luôn do use case giữ.
+ * ADJUSTMENT, có ghi ops_actions), trải đều quanh các tenant (vòng tròn, liên tục qua các lần gọi). Không đi đường tắt SQL để
+ * bất biến sổ cái luôn do use case giữ.
+ *
+ * Thời gian dựng TUYẾN TÍNH theo số khách (PERF_CUSTOMERS): ~24 ms/khách trên máy này (2000 khách ≈ 45-50 s). Mọi lần nạp đều khóa
+ * cùng một tài khoản ADJUSTMENT nên tăng `concurrency` gần như không rút ngắn được.
  */
 export async function seedCustomers(
   env: PerfEnv,
@@ -94,8 +105,8 @@ export async function seedPendingTopups(
     // Không gửi sang payment: perf chỉ đo luồng áp kết quả, nên bộ gửi nền là no-op.
     submitter: { submitSoon: () => undefined },
   });
-  const start = issued.get(env) ?? 0;
-  issued.set(env, start + input.count);
+  const start = issuedTopups.get(env) ?? 0;
+  issuedTopups.set(env, start + input.count);
   const topups: SeededTopup[] = new Array<SeededTopup>(input.count);
   await forEachLimited(input.count, input.concurrency ?? DEFAULT_CONCURRENCY, async (i) => {
     const customer = input.customers[i % input.customers.length]!;
@@ -111,7 +122,13 @@ export async function seedPendingTopups(
       if (!topup) throw new Error(`seeded topup ${body.topupId} disappeared`);
       await repository.save(topup.recordSubmitted(chargeId));
     });
-    topups[i] = { tenant: customer.tenant, topupId: body.topupId, chargeId, amount: input.amount };
+    topups[i] = {
+      tenant: customer.tenant,
+      topupId: body.topupId,
+      chargeId,
+      amount: input.amount,
+      currency: body.currency,
+    };
   });
   return topups;
 }
