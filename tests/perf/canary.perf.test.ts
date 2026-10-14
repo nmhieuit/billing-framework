@@ -36,6 +36,7 @@ const HOLD_MS = 1500;
 //  (b') độ trễ lớn nhất của hold >= HOLD_MS / 2 (thao tác đang bay lúc bị giữ khóa không thể xong sớm hơn);
 //  (c) sampler thấy ít nhất một request bị chặn LCK_M_* trên câu lệnh update hot (SQL Server tự tham số hóa đơn
 //      giản nên văn bản có thể là "(@1 int)update [hot] set [v] = [v]+@1 ...", vì vậy khớp cả dạng có ngoặc vuông).
+// Lưu ý: canary KHÔNG tự lặp; độ ổn định được kiểm bằng cách chạy lặp lại bằng tay nhiều lần (không flake).
 // Nếu giữ khóa 0 ms (đột biến), (b), (b') và (c) đều sai.
 describe('contention canary', () => {
   it('thấy rõ khóa bị giữ: ngừng hoàn tất, LCK_M_* tăng, sampler thấy request bị chặn', async () => {
@@ -89,6 +90,10 @@ describe('contention canary', () => {
       databaseName: testDb.config.database,
     });
     sampler.start();
+    // Đăng ký dừng ngay để một lượt hỏng không để sampler rò sang pool admin đã bị hủy.
+    cleanups.push(async () => {
+      await sampler.stop();
+    });
     let heldFrom = 0;
     let heldUntil = 0;
     const holdTask = (async (): Promise<void> => {

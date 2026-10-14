@@ -8,6 +8,8 @@ export interface BlockedSummary {
   waitType: string;
   statement: string;
   count: number;
+  /** Tối đa vài wait_resource phổ biến nhất (tùy chọn, tương thích ngược; renderer Markdown chưa dùng). */
+  resources?: Array<{ resource: string; count: number }>;
 }
 
 export interface RepeatResult {

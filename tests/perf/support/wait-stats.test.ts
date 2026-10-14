@@ -22,12 +22,11 @@ describe('diffWaits', () => {
     expect(diffWaits(before, after)).toEqual({ LCK_M_X: { waitMs: 250, count: 4 } });
   });
 
-  it('bỏ qua loại chỉ có ở một phía', () => {
+  it('wait_type mới xuất hiện trong lúc đo coi như before = 0; loại chỉ có ở before bị bỏ', () => {
     const before = snap({ LCK_M_U: { waitMs: 10, count: 1 } });
     const after = snap({ LCK_M_X: { waitMs: 500, count: 9 } });
-    expect(diffWaits(before, after)).toEqual({});
+    expect(diffWaits(before, after)).toEqual({ LCK_M_X: { waitMs: 500, count: 9 } });
   });
-
   it('không trả delta âm (bộ đếm bị reset giữa chừng)', () => {
     const before = snap({ LCK_M_X: { waitMs: 900, count: 90 } });
     const after = snap({ LCK_M_X: { waitMs: 100, count: 10 } });
@@ -49,6 +48,17 @@ describe('normalizeStatement', () => {
     expect(normalizeStatement('x'.repeat(500))).toHaveLength(120);
     expect(normalizeStatement(null)).toBe('');
   });
+
+  it('bỏ khai báo tham số sp_executesql TRƯỚC khi cắt 120 ký tự (nhiều tham số vẫn còn tên bảng)', () => {
+    const params = Array.from({ length: 12 }, (_, i) => `@${i + 1} nvarchar(4000)`).join(',');
+    const text = `(${params})INSERT INTO [orders] ([a], [b]) VALUES (@1, @2)`;
+    expect(text.indexOf('INSERT')).toBeGreaterThan(120); // khai báo dài hơn giới hạn cắt
+    expect(normalizeStatement(text)).toBe('insert into [orders] ([a], [b]) values (@1, @2)');
+  });
+
+  it('không bỏ nhầm câu lệnh thường bắt đầu bằng dấu ngoặc', () => {
+    expect(normalizeStatement('(select 1) union (select 2)')).toBe('(select 1) union (select 2)');
+  });
 });
 
 describe('summarizeBlocked', () => {
@@ -65,6 +75,38 @@ describe('summarizeBlocked', () => {
       { waitType: 'LCK_M_U', statement: 'select 1', count: 1 },
       { waitType: 'LCK_M_X', statement: 'update hot set v = 2', count: 1 },
     ]);
+  });
+});
+
+describe('summarizeBlocked resources', () => {
+  it('giữ tối đa 3 wait_resource phổ biến nhất mỗi nhóm nhưng không gom theo resource', () => {
+    const row = (resource: string | null) => ({
+      waitType: 'LCK_M_X',
+      text: 'update hot set v = 1',
+      resource,
+    });
+    const summary = summarizeBlocked([
+      row('KEY: 5:1 (a)'),
+      row('KEY: 5:1 (b)'),
+      row('KEY: 5:1 (b)'),
+      row('KEY: 5:1 (c)'),
+      row('KEY: 5:1 (c)'),
+      row('KEY: 5:1 (c)'),
+      row('KEY: 5:1 (d)'),
+      row(null),
+    ]);
+    expect(summary).toHaveLength(1);
+    expect(summary[0]?.count).toBe(8);
+    expect(summary[0]?.resources).toEqual([
+      { resource: 'KEY: 5:1 (c)', count: 3 },
+      { resource: 'KEY: 5:1 (b)', count: 2 },
+      { resource: 'KEY: 5:1 (a)', count: 1 },
+    ]);
+  });
+
+  it('không có resource → không có trường resources', () => {
+    const [only] = summarizeBlocked([{ waitType: 'LCK_M_X', text: 'x' }]);
+    expect(only).toEqual({ waitType: 'LCK_M_X', statement: 'x', count: 1 });
   });
 });
 

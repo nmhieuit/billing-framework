@@ -154,6 +154,62 @@ describe('runClosedLoop', () => {
     ]);
   });
 
+  it('classify ném lỗi hoặc trả giá trị lạ → other, không làm hỏng lượt đo', async () => {
+    const clock = fakeClock();
+    let call = 0;
+    const result = await runClosedLoop({
+      concurrency: 1,
+      warmupMs: 0,
+      durationMs: 40,
+      now: clock.now,
+      classify: () => {
+        call += 1;
+        if (call % 2 === 1) throw new Error('classifier bug');
+        return 'bogus' as never;
+      },
+      task: async () => {
+        clock.advance(10);
+        throw new Error('boom');
+      },
+    });
+    expect(result.errors).toEqual({ deadlock: 0, timeout: 0, other: 3 });
+  });
+
+  it('từ chối rõ ràng (nêu số thao tác kẹt) khi thao tác đang bay không kết thúc trong drainTimeoutMs', async () => {
+    await expect(
+      runClosedLoop({
+        concurrency: 2,
+        warmupMs: 0,
+        durationMs: 30,
+        drainTimeoutMs: 50,
+        task: () => new Promise<void>(() => undefined), // không bao giờ kết thúc
+      }),
+    ).rejects.toThrow(/2 thao tác vẫn chưa kết thúc sau 50 ms/);
+  });
+
+  it('drainTimeoutMs không ảnh hưởng lượt chạy bình thường và phải > 0', async () => {
+    const clock = fakeClock();
+    const ok = await runClosedLoop({
+      concurrency: 1,
+      warmupMs: 0,
+      durationMs: 30,
+      drainTimeoutMs: 1000,
+      now: clock.now,
+      task: async () => {
+        clock.advance(10);
+      },
+    });
+    expect(ok.ok).toBe(2); // hoàn tất ở 10, 20 (30 nằm ngoài cửa sổ)
+    await expect(
+      runClosedLoop({
+        concurrency: 1,
+        warmupMs: 0,
+        durationMs: 10,
+        drainTimeoutMs: 0,
+        task: async () => undefined,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
   it.each([
     { concurrency: 0, durationMs: 10, warmupMs: 0 },
     { concurrency: 1.5, durationMs: 10, warmupMs: 0 },

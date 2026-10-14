@@ -7,8 +7,13 @@ export interface DriverOptions {
   warmupMs: number;
   /** Ném lỗi = thao tác thất bại. */
   task: (context: { worker: number; seq: number }) => Promise<void>;
-  /** Mặc định: {@link defaultClassify}. */
+  /** Mặc định: {@link defaultClassify}. Ném lỗi hoặc trả giá trị lạ → coi là other (không làm hỏng lượt đo). */
   classify?: (error: unknown) => ErrorKind;
+  /**
+   * Thời gian tối đa (ms, đồng hồ thật) chờ các thao tác còn đang bay sau khi hết cửa sổ đo. Quá hạn thì từ chối
+   * với thông báo nêu số thao tác bị kẹt (tránh treo vô hạn). Mặc định 30000.
+   */
+  drainTimeoutMs?: number;
   /** Đồng hồ (ms), tiêm được cho test. Mặc định performance.now(). */
   now?: () => number;
 }
@@ -73,7 +78,20 @@ export async function runClosedLoop(options: DriverOptions): Promise<DriverResul
   }
   if (!(durationMs > 0)) throw new RangeError(`durationMs phải > 0, nhận ${durationMs}`);
   if (!(warmupMs >= 0)) throw new RangeError(`warmupMs phải >= 0, nhận ${warmupMs}`);
-  const classify = options.classify ?? defaultClassify;
+  const rawClassify = options.classify ?? defaultClassify;
+  const drainTimeoutMs = options.drainTimeoutMs ?? 30_000;
+  if (!(drainTimeoutMs > 0))
+    throw new RangeError(`drainTimeoutMs phải > 0, nhận ${drainTimeoutMs}`);
+  // classify của người dùng có thể ném lỗi/trả giá trị lạ: không để nó làm Promise.all từ chối khi các worker khác vẫn chạy.
+  const classify = (error: unknown): ErrorKind => {
+    try {
+      const kind = rawClassify(error);
+      return kind === 'deadlock' || kind === 'timeout' || kind === 'other' ? kind : 'other';
+    } catch {
+      return 'other';
+    }
+  };
+  let inFlight = 0;
   const now = options.now ?? ((): number => performance.now());
 
   const start = now();
@@ -91,10 +109,13 @@ export async function runClosedLoop(options: DriverOptions): Promise<DriverResul
     for (let seq = 0; now() < measureEnd; seq += 1) {
       const began = now();
       let failure: { error: unknown } | undefined;
+      inFlight += 1;
       try {
         await task({ worker, seq });
       } catch (error) {
         failure = { error };
+      } finally {
+        inFlight -= 1;
       }
       const finished = now();
       if (finished >= measureStart && finished < measureEnd) {
@@ -109,7 +130,27 @@ export async function runClosedLoop(options: DriverOptions): Promise<DriverResul
     }
   };
 
-  await Promise.all(Array.from({ length: concurrency }, (_, worker) => runWorker(worker)));
+  // Đồng hồ thật: quá hạn cửa sổ + drainTimeoutMs mà vẫn còn thao tác bay thì báo lỗi rõ ràng thay vì treo.
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  const stuck = new Promise<never>((_, reject) => {
+    watchdog = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `${inFlight} thao tác vẫn chưa kết thúc sau ${drainTimeoutMs} ms kể từ hết cửa sổ đo (kẹt?)`,
+          ),
+        ),
+      warmupMs + durationMs + drainTimeoutMs,
+    );
+  });
+  try {
+    await Promise.race([
+      Promise.all(Array.from({ length: concurrency }, (_, worker) => runWorker(worker))),
+      stuck,
+    ]);
+  } finally {
+    clearTimeout(watchdog);
+  }
   result.throughputPerSec = result.ok / (result.elapsedMs / 1000);
   return result;
 }
