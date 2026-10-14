@@ -12,6 +12,7 @@ import {
   type RepeatResult,
   type ScenarioResult,
 } from './report.js';
+import { describeResources, startResourceMonitor, type ResourceUsage } from './resources.js';
 import { seedCustomers, type SeededCustomer } from './seed.js';
 import { storage } from './settle.js';
 import { checkLedger, readLedgerCounts, type LedgerCounts } from './validity.js';
@@ -137,8 +138,10 @@ async function runRepeat(
     const waitsBefore = await snapshotWaits(env.admin);
     const sampler = new BlockedSampler(env.admin, { databaseName: env.databaseName });
     sampler.start();
+    const monitor = startResourceMonitor();
     let driver: DriverResult;
     let blocked: Awaited<ReturnType<BlockedSampler['stop']>>;
+    let resources: ResourceUsage;
     try {
       driver = await runClosedLoop({
         concurrency: plan.concurrency,
@@ -147,7 +150,8 @@ async function runRepeat(
         task,
       });
     } finally {
-      // Luôn dừng sampler (kể cả khi tải ném lỗi), nếu không vòng lấy mẫu rò rỉ sang lượt sau.
+      // Luôn dừng bộ theo dõi tài nguyên và sampler (kể cả khi tải ném lỗi), nếu không vòng lấy mẫu rò rỉ sang lượt sau.
+      resources = await monitor.stop();
       blocked = await sampler.stop();
     }
     const waits = diffWaits(waitsBefore, await snapshotWaits(env.admin));
@@ -170,6 +174,7 @@ async function runRepeat(
     const info: string[] = [
       `${where}: chuẩn bị (seed, NGOÀI cửa sổ đo) ${(prepareMs / 1000).toFixed(1)} s, cỡ hàng đợi tối đa ${plan.maxOps} thao tác`,
     ];
+    info.push(`${where}: ${describeResources(resources)}`);
     const summary = prepared.summary?.();
     if (summary !== undefined) info.push(`${where}: ${summary}`);
     if (sampler.errorCount > 0) {
@@ -185,6 +190,7 @@ async function runRepeat(
         latency,
         waits,
         blocked,
+        resources,
       },
       invalid,
       info,

@@ -92,6 +92,13 @@ describe('runner: smoke 2 giây mỗi kịch bản use case', () => {
       expect(repeat.latency.count).toBe(repeat.ok);
       expect(typeof repeat.waits).toBe('object');
       expect(Array.isArray(repeat.blocked)).toBe(true);
+      // Tài nguyên của lượt: CPU Node và trễ vòng lặp luôn có; CPU container SQL có khi tìm được đúng một container testcontainers.
+      expect(repeat.resources?.nodeCpuSeconds).toBeGreaterThan(0);
+      expect(repeat.resources?.eventLoopDelayMs.p99).toBeGreaterThanOrEqual(0);
+      expect(
+        repeat.resources?.sqlCpuPercent?.samples,
+        repeat.resources?.sqlCpuError,
+      ).toBeGreaterThan(0);
       console.log(
         `[smoke] ${name} @2 luồng: ${repeat.throughputPerSec.toFixed(1)} ops/s, ok=${repeat.ok}, p95=${repeat.latency.p95.toFixed(1)} ms, lỗi=${JSON.stringify(repeat.errors)}`,
       );

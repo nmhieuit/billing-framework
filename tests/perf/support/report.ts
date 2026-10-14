@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { LatencySummary } from './histogram.js';
 import type { MachineInfo } from './machine.js';
+import type { ResourceUsage } from './resources.js';
 import { median, range } from './stats.js';
 
 export interface BlockedSummary {
@@ -19,6 +20,8 @@ export interface RepeatResult {
   latency: LatencySummary;
   waits: Record<string, { waitMs: number; count: number }>;
   blocked: BlockedSummary[];
+  /** CPU Node, trễ vòng lặp sự kiện, CPU container SQL trong lượt (tùy chọn: báo cáo cũ không có). */
+  resources?: ResourceUsage;
 }
 
 export interface LevelResult {
