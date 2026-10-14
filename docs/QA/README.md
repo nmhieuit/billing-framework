@@ -19,6 +19,10 @@ Dành cho tester và người mới onboard. Mọi test chạy trên **local sta
 | 6 | Retention và quan sát | [`test-case/retention-quan-sat.md`](test-case/retention-quan-sat.md) |
 | 7 | Chaos (lỗi hạ tầng giữa tải) | [`test-case/chaos.md`](test-case/chaos.md) |
 
+## E2E liên service
+
+Các luồng e2e xuyên nhiều service (nạp tiền, thanh toán order, vận hành, đối soát, gián đoạn, retention): [`e2e/overview.md`](e2e/overview.md).
+
 ## Quy ước trong các bảng test case
 
 - **ID**: mã case (ví dụ `WLT-001`). **Loại**: `S` = Smoke (chạy mỗi lần deploy), `R` = Regression.
