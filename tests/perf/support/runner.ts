@@ -26,14 +26,16 @@ export const CURRENCY = 'VND';
  * trong prepare(), ngoài cửa sổ đo; hết hàng đợi là lỗi (không quay vòng). Hai trần:
  *  - mỗi luồng tối đa PER_WORKER_OPS_PER_SEC;
  *  - tổng tối đa TOTAL_OPS_PER_SEC.
- * Hiệu chuẩn trên máy phát triển (SQL Server trong container): ~30 thao tác/giây/luồng ở 2 luồng và tối đa ~65 thao tác/giây tổng
- * ở 16-64 luồng, nên hai trần cao hơn thực đo khoảng 2x và 6x. Nhân thêm SAFETY_FACTOR cho dao động. Cỡ hàng đợi LUÔN là cận tĩnh
+ * Hiệu chuẩn 2026-10-14 trên máy phát triển (4 CPU, SQL Server trong container testcontainers, cửa sổ 8 s, 1 lần lặp):
+ * topup-apply 43,0 / 58,5 / 51,4 thao tác/giây ở 1 / 16 / 64 luồng; pay-order 35,8 / 51,9 / 50,8. Hai trần đặt khoảng 2x thực đo
+ * cao nhất của topup-apply (43 → 90 mỗi luồng; 58,5 → 120 tổng): seed ~8 ms mỗi topup PENDING nên trần càng cao bước chuẩn bị
+ * càng lâu. Nhân thêm SAFETY_FACTOR cho dao động. Cỡ hàng đợi LUÔN là cận tĩnh
  * này, giống hệt ở mọi lần lặp của một mức (đối xứng: lượng ghi do seed, trạng thái kho lưu trữ và kích thước bảng như nhau
  * giữa các lần lặp; không suy từ lần lặp trước). Máy mạnh hơn nhiều thì lượt đo dừng với lỗi rõ ràng "hàng đợi topup cạn"
  * (verify của topup-apply/mixed) chứ không đo sai; khi đó nâng hằng số ở đây.
  */
-export const PER_WORKER_OPS_PER_SEC = 60;
-export const TOTAL_OPS_PER_SEC = 400;
+export const PER_WORKER_OPS_PER_SEC = 90;
+export const TOTAL_OPS_PER_SEC = 120;
 export const SAFETY_FACTOR = 1.25;
 
 /** Số thao tác tối đa dự kiến của một lượt (gồm khởi động nóng; cộng thêm các lệnh còn bay lúc hết cửa sổ). */
