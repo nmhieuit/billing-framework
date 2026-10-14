@@ -53,29 +53,39 @@ Các service dùng chung vùng biến của collection (ví dụ `run`, `cust`, 
 
 **Postman app:** Import collection và environment, chọn environment `billing-local`, điền `webhook_secret`. Chuột phải vào folder cần chạy (ví dụ `Wallet > Smoke`) và chọn **Run**, giữ thứ tự mặc định. Các request poll tự lặp lại bằng `postman.setNextRequest`: **chỉ chạy đúng trong Collection Runner hoặc CLI**, không chạy từng request riêng lẻ.
 
-**Postman CLI** (chỉ định folder bằng đường dẫn vì tên `Smoke`, `Regression`, `EndPoints` lặp lại ở mỗi service):
+**Postman CLI** (chọn folder bằng **id**, vì tên `Smoke`, `Regression`, `EndPoints` lặp lại ở mỗi service và đường dẫn dạng `Wallet/Smoke` không được nhận):
 
 ```bash
-postman collection run docs/QA/postman/billing.postman_collection.json \
-  -e docs/QA/postman/billing-local.postman_environment.json \
-  -i "Wallet/Smoke"
+postman collection run docs/QA/postman/billing.postman_collection.json   -e docs/QA/postman/billing-local.postman_environment.json   -i 476c8f75-fcea-5a33-a8bf-a4ea589bc033   # Wallet > Smoke
 ```
 
-Thay `Wallet/Smoke` bằng `Wallet/Regression`, `Payment/Smoke`, `Ops/Regression`, `Reconciliations/EndPoints`... Thứ tự khuyến nghị: Payment, Wallet, Ops, Reconciliations (đối soát đọc sao kê payment và dữ liệu wallet).
+Id của từng folder (cũng dùng với `newman --folder`):
 
-**Folder `Chaos`** giữ trạng thái giữa các folder trong environment nên cần xuất environment sau mỗi lần chạy. Dùng Collection Runner trong Postman app (cùng một environment), hoặc Newman với `--export-environment` và id folder:
-
-| Folder | Id (dùng với `newman --folder`) |
+| Folder | Id |
 | --- | --- |
+| Wallet > Smoke | `476c8f75-fcea-5a33-a8bf-a4ea589bc033` |
+| Wallet > Regression | `9f3968e1-197b-5ff5-a621-741703d3eca9` |
+| Wallet > EndPoints | `7488b164-d1bd-5b2c-a866-e772a4592cba` |
+| Payment > Smoke | `b1ba7ade-4cc2-54e5-a32a-353d9a0740ed` |
+| Payment > Regression | `6d47f8e5-07c3-557f-a9dc-02c4da9b85b6` |
+| Payment > EndPoints | `2f867e83-ebab-587c-a6c1-e2c662abdced` |
+| Ops > Smoke | `c496e69d-b9b1-53f1-abb8-6f35ede6492c` |
+| Ops > Regression | `15091a23-198d-581e-aea7-281df8db2b94` |
+| Ops > EndPoints | `a379f330-b2e3-5301-a037-0df613f998c8` |
+| Reconciliations > Smoke | `c2b1b102-0bce-559b-a8f9-2ff51ad965d1` |
+| Reconciliations > Regression | `478770f7-f695-5c72-a151-d49b0350df85` |
+| Reconciliations > EndPoints | `7be90199-e3a5-544f-ac60-6c2218569d25` |
 | Chaos > Smoke | `be3d0715-2439-5180-ada5-5239e08bef1b` |
 | Chaos > Workload | `58bb9889-a537-5790-a880-8bfd67fa8239` |
 | Chaos > Oracle | `c7aeb48f-1f80-5f4f-a2b3-b33a2d6c9b85` |
 | Chaos > Regression | `edab67c8-dd9d-5abe-aeb6-40c30cd6aed6` |
 
+Thứ tự khuyến nghị: Payment, Wallet, Ops, Reconciliations (đối soát đọc sao kê payment và dữ liệu wallet).
+
+**Folder `Chaos`** giữ trạng thái giữa các folder trong environment nên cần xuất environment sau mỗi lần chạy. Postman CLI không có tùy chọn này; dùng Collection Runner trong Postman app (cùng một environment), hoặc Newman:
+
 ```bash
-npx newman run docs/QA/postman/billing.postman_collection.json \
-  -e docs/QA/postman/billing-local.postman_environment.json \
-  --export-environment chaos-state.json --folder be3d0715-2439-5180-ada5-5239e08bef1b
+npx newman run docs/QA/postman/billing.postman_collection.json   -e docs/QA/postman/billing-local.postman_environment.json   --export-environment chaos-state.json --folder be3d0715-2439-5180-ada5-5239e08bef1b   # Chaos > Smoke
 # các lần sau dùng -e chaos-state.json, --folder <id Workload> -n 25, rồi <id Oracle>
 ```
 
