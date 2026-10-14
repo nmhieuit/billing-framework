@@ -19820,7 +19820,8 @@
                       "  if (it % 3 === 2 && open.length) { const o = open.shift(); pm.environment.set(\"ch_adj_open\", JSON.stringify(open)); p = { kind: \"REVERSE\", t: o.t, c: o.c, url: W + \"/ops/transactions/\" + o.txId + \"/reversals\", body: { reason: \"chaos reverse\", idempotencyKey: idem }, reverses: o.txId }; }",
                       "  else { const x = custs[it % custs.length]; p = { kind: \"ADJUST\", t: x.t, c: x.c, url: W + \"/ops/wallets/\" + x.c + \"/adjustments\", body: { direction: \"CREDIT\", amount: 500 + Math.floor(Math.random() * 4500), currency: \"VND\", reason: \"chaos adjust\", idempotencyKey: idem } }; }",
                       "  pm.environment.set(\"ch_pending_op\", JSON.stringify(p)); }",
-                      "pm.environment.set(\"ch_op_t\", p.t); pm.environment.set(\"ch_op_url\", p.url); pm.environment.set(\"ch_op_body\", JSON.stringify(p.body));"
+                      "pm.environment.set(\"ch_op_t\", p.t); pm.environment.set(\"ch_op_url\", p.url); pm.environment.set(\"ch_op_body\", JSON.stringify(p.body));",
+                      "pm.request.url.update(pm.environment.get(\"ch_op_url\"));"
                     ]
                   }
                 },
