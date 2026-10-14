@@ -104,9 +104,11 @@ Ghi dồn vào một merchant
 
 ## Chờ khóa nổi bật
 
-| Loại chờ | Câu lệnh | Số lần |
-| --- | --- | --- |
-| LCK_M_U | UPDATE a \\| b | 7 |
+### merchant-hotspot
+
+| Loại chờ | Câu lệnh | Số lần | Tài nguyên chờ nhiều nhất |
+| --- | --- | --- | --- |
+| LCK_M_U | UPDATE a \\| b | 7 | - |
 
 ## End-to-end
 
@@ -151,8 +153,120 @@ describe('renderMarkdown', () => {
       ],
     });
     expect(md).toContain(
-      '| Loại chờ | Câu lệnh | Số lần |\n| --- | --- | --- |\n| LCK_M_U | few | 6 |\n| LCK_M_X | many | 5 |\n',
+      '| Loại chờ | Câu lệnh | Số lần | Tài nguyên chờ nhiều nhất |\n| --- | --- | --- | --- |\n| LCK_M_U | few | 6 | - |\n| LCK_M_X | many | 5 | - |\n',
     );
+  });
+
+  it('mục chờ khóa chia theo kịch bản, không trộn câu lệnh giữa các kịch bản', () => {
+    const blk = (statement: string, count: number) => ({
+      waitType: 'LCK_M_U',
+      statement,
+      count,
+    });
+    const scenario = (name: string, blocked: ReturnType<typeof blk>[]) => ({
+      name,
+      description: 'd',
+      levels: [buildLevelResult(2, [{ ...repeat(1, 2, 3), blocked }])],
+    });
+    const md = renderMarkdown({
+      ...sample,
+      scenarios: [scenario('alpha', [blk('stmt-a', 3)]), scenario('beta', [blk('stmt-b', 9)])],
+    });
+    expect(md).toContain(
+      '## Chờ khóa nổi bật\n\n### alpha\n\n| Loại chờ | Câu lệnh | Số lần | Tài nguyên chờ nhiều nhất |\n| --- | --- | --- | --- |\n| LCK_M_U | stmt-a | 3 | - |\n\n### beta\n\n| Loại chờ | Câu lệnh | Số lần | Tài nguyên chờ nhiều nhất |\n| --- | --- | --- | --- |\n| LCK_M_U | stmt-b | 9 | - |\n',
+    );
+    const alpha = md.slice(md.indexOf('### alpha'), md.indexOf('### beta'));
+    expect(alpha).not.toContain('stmt-b');
+  });
+
+  it('giới hạn 10 câu lệnh mỗi kịch bản và nói rõ phần bị cắt', () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      waitType: 'LCK_M_U',
+      statement: `stmt-${String(i).padStart(2, '0')}`,
+      count: 100 - i,
+    }));
+    const md = renderMarkdown({
+      ...sample,
+      scenarios: [
+        {
+          name: 's',
+          description: 'd',
+          levels: [buildLevelResult(2, [{ ...repeat(1, 2, 3), blocked: many }])],
+        },
+      ],
+    });
+    expect(md).toContain('stmt-09');
+    expect(md).not.toContain('stmt-10');
+    expect(md).toContain('Chỉ hiển thị 10/12 câu lệnh nhiều nhất.');
+  });
+
+  it('hiển thị wait_resource hàng đầu của nhóm, cộng dồn qua các lần lặp', () => {
+    const withResources = (resources: Array<{ resource: string; count: number }>) => ({
+      ...repeat(1, 2, 3),
+      blocked: [{ waitType: 'LCK_M_U', statement: 'upd', count: 5, resources }],
+    });
+    const md = renderMarkdown({
+      ...sample,
+      scenarios: [
+        {
+          name: 's',
+          description: 'd',
+          levels: [
+            buildLevelResult(2, [
+              withResources([
+                { resource: 'KEY: 1', count: 3 },
+                { resource: 'KEY: 2', count: 1 },
+              ]),
+              withResources([
+                { resource: 'KEY: 2', count: 4 },
+                { resource: 'KEY: 3', count: 1 },
+                { resource: 'KEY: 4', count: 1 },
+              ]),
+            ]),
+          ],
+        },
+      ],
+    });
+    // KEY: 2 = 5, KEY: 1 = 3, rồi KEY: 3 (hòa với KEY: 4, giữ thứ tự xuất hiện); chỉ giữ top 3.
+    expect(md).toContain('| LCK_M_U | upd | 10 | KEY: 2 (5); KEY: 1 (3); KEY: 3 (1) |');
+  });
+
+  it('lượt không có mẫu (NaN) in n/a, cả khi đã qua vòng JSON (NaN thành null)', () => {
+    const empty: RepeatResult = {
+      throughputPerSec: 0,
+      ok: 0,
+      errors: { deadlock: 0, timeout: 0, other: 3 },
+      latency: {
+        count: 0,
+        mean: Number.NaN,
+        p50: Number.NaN,
+        p95: Number.NaN,
+        p99: Number.NaN,
+        max: Number.NaN,
+      },
+      waits: {},
+      blocked: [],
+    };
+    const level = buildLevelResult(4, [empty]);
+    expect(level.medianP95Ms).toBeNaN();
+    const report: PerfReport = {
+      ...sample,
+      scenarios: [{ name: 's', description: 'd', levels: [level] }],
+    };
+    const row = '| 4 | 0.0 | 0.0–0.0 | n/a | n/a | 3 |';
+    expect(renderMarkdown(report)).toContain(row);
+    expect(renderMarkdown(report)).not.toContain('NaN');
+    const roundTrip = JSON.parse(JSON.stringify(report)) as PerfReport;
+    expect(roundTrip.scenarios[0]?.levels[0]?.medianP95Ms).toBeNull();
+    expect(renderMarkdown(roundTrip)).toContain(row);
+    expect(renderMarkdown(roundTrip)).not.toContain('null');
+  });
+
+  it('trung vị bỏ qua lượt NaN thay vì bị phá bởi nó', () => {
+    const empty = { ...repeat(0, 0, 0), latency: { ...latency(0, 0), p95: NaN, p99: NaN } };
+    const level = buildLevelResult(2, [repeat(10, 5, 8), empty, repeat(30, 7, 9)]);
+    expect(level.medianP95Ms).toBe(6);
+    expect(level.medianP99Ms).toBe(8.5);
   });
 
   it('báo cáo không hợp lệ, không có e2e/chờ khóa/ghi chú', () => {
@@ -168,7 +282,7 @@ describe('renderMarkdown', () => {
     });
     expect(md).toContain('- Hợp lệ: không');
     expect(md).toContain('| 2 | 1.0 | 1.0–1.0 | 2.0 | 3.0 | 0 |');
-    expect(md).toContain('## Chờ khóa nổi bật\n\nKhông ghi nhận chờ khóa.\n');
+    expect(md).toContain('## Chờ khóa nổi bật\n\n### s\n\nKhông ghi nhận chờ khóa.\n');
     expect(md).not.toContain('## End-to-end');
     expect(md).not.toContain('## Ghi chú');
   });
