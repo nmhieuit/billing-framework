@@ -147,20 +147,22 @@ deadlock; lỗi chỉ xuất hiện ở các lượt nhiễu của lượt 2 (ti
 
 | Mức | Thông lượng/s (min–max) | p95 | p99 | Lỗi |
 | --- | ----------------------- | --- | --- | --- |
-| 1 | 30,8 (29,2–33,3) | 56,4 | 98,7 | 0 |
+| 1 | 30,8 (29,2–33,3) ⚠ thấp hơn hiệu chuẩn 28% | 56,4 | 98,7 | 0 |
 | 4 | 40,9 (23,9–41,2) ⚠ lần 3 | 146,9 | 209,1 | 0 |
 | 16 | 19,3 (8,2–25,8) ⚠ | 3 025,6 | 3 918,3 | 0 |
 | 64 | 54,5 (42,8–57,1) ⚠ lần 1 | 1 620,6 | 1 676,1 | 0 |
 
-Lượt 2 của `topup-apply` nhiễu nặng hơn (mức 16: 8,8/s, 8 timeout; mức 64: 18,5/s). Lượt hiệu chuẩn 8 s trước đó (máy rảnh) đo
-43,0 / 58,5 / 51,4 thao tác/s ở 1 / 16 / 64 luồng: trần GATEWAY cùng cỡ với trần MERCHANT.
+Lượt 2 của `topup-apply` nhiễu nặng hơn ở mức 1, 16, 64 (mức 16: 8,8/s, 8 timeout; mức 64: 18,5/s), nhưng **mức 4 của lượt 2 sạch hơn
+lượt 1**: 44,1 (39,2–45,6, độ phân tán 14%). Lượt hiệu chuẩn 8 s trước đó (máy rảnh, 1 lần lặp) đo 43,0 / 58,5 / 51,4 thao tác/s ở
+1 / 16 / 64 luồng; mức 1 của baseline (30,8) thấp hơn số đó 28% dù khoảng thời gian đó không ghi nhận tải nền, nên coi là chưa chắc
+chắn. Trần GATEWAY cùng cỡ với trần MERCHANT.
 
-**`mixed`** (70% trả order / 15% nạp / 10% điều chỉnh / 5% đảo; lượt 1, sạch):
+**`mixed`** (70% trả order / 15% nạp / 10% điều chỉnh / 5% đảo; lượt 1, khoảng rảnh):
 
 | Mức | Thông lượng/s (min–max) | p95 | p99 | Lỗi |
 | --- | ----------------------- | --- | --- | --- |
 | 1 | 37,1 (36,5–38,7) | 45,0 | 65,8 | 0 |
-| 4 | 48,1 (47,7–60,9) | 132,9 | 177,9 | 0 |
+| 4 | 48,1 (47,7–60,9) ⚠ phân tán 27% | 132,9 | 177,9 | 0 |
 | 16 | 49,4 (47,5–49,4) | 618,4 | 767,7 | 0 |
 | 64 | 40,4 (38,5–46,3) | 3 461,5 | 4 818,4 | 0 |
 
@@ -173,7 +175,7 @@ Lượt 2 của `topup-apply` nhiễu nặng hơn (mức 16: 8,8/s, 8 timeout; m
 
 `pay-order` (lượt 2): `LCK_M_*` trong mỗi lượt chỉ gồm `LCK_M_U` (và vài `LCK_M_S` vài ms):
 
-| Mức | Tổng chờ `LCK_M_U` mỗi lượt (s) | Số lần chờ / số thao tác đã bắt đầu | Chờ TB mỗi lần (ms) | Số luồng đang chờ khóa TB (tổng chờ / độ dài cửa sổ) |
+| Mức | Tổng chờ `LCK_M_U` mỗi lượt (s) | Số lần chờ / số thao tác đã bắt đầu | Chờ TB mỗi lần (ms) | Số luồng đang chờ khóa TB (tổng chờ chia cho khoảng 23,1–24,5 s từ lúc chụp trước khởi động nóng tới sau khi xả) |
 | --- | ------------------------------- | ----------------------------------- | ------------------- | ---------------------------------------------------- |
 | 1 | 0 | 0 | – | 0 |
 | 4 | 56,5–57,0 | 1 151 / 1 152 (lần 1) | ~49 | ~2,4 / 4 |
@@ -191,7 +193,7 @@ Câu lệnh bị chặn (mẫu 100 ms, gộp mọi mức và lần lặp):
 | `mixed` (lượt 1) | `LCK_M_S` | `select e.account_id, e.amount, a.currency from ledger_entries e join accounts a …` (`findTransaction` của đảo giao dịch) | 2 786 | 100% MERCHANT |
 
 Không có một mẫu nào của `insert into ledger_entries` (hay câu lệnh ghi nào khác) chờ khóa trên dòng `accounts`, ở cả ba kịch bản và
-hai lượt; cũng không có mẫu nào chờ trên dòng ví. Trong `mixed`, `LCK_M_S` mỗi lượt là 1,6–1,7 s (mức 4), 15–26 s (mức 16), 78–96 s
+hai lượt; chờ trên dòng ví **gần như không** có (2 mẫu `LCK_M_S` ở `pay-order` lượt 2, 1 mẫu ở `mixed` lượt 1). Trong `mixed`, `LCK_M_S` mỗi lượt là 1,6–1,7 s (mức 4), 15–26 s (mức 16), 78–96 s
 (mức 64), trung bình 1,6–2,2 s mỗi lần chờ ở mức 64.
 
 **Chờ ngoài khóa** (`pay-order`, lượt 2): `WRITELOG` đúng ~1,00 lần mỗi thao tác (một commit), trung bình **0,66–0,80 ms** mỗi lần ở mọi
@@ -207,12 +209,24 @@ mức; không ghi nhận `ASYNC_NETWORK_IO`, `LOGBUFFER`; `PAGELATCH_*`/`PAGEIOL
   không đọc được điểm bão hòa chính xác, nhưng mức 4 (41) đã gần trần.
 - `mixed`: 37,1 → 48,1 → 49,4 → 40,4. Bão hòa ở mức 4–16 và **giảm ~18% ở mức 64** (khoảng 38,5–46,3 không chồng 47,5–49,4).
 
-Tách thời gian một thao tác `pay-order`: một luồng mất 1 / 37,6 ≈ **26,6 ms** mỗi thao tác; ở trần, cứ 1 / 52,8 ≈ **18,9 ms** mới xong
-một thao tác. Vì bảng chờ cho thấy cả hệ thống xếp hàng trên một dòng (mục 3), 18,9 ms là thời gian giữ khóa MERCHANT trung bình mỗi
-transaction, tức **~71%** thời gian của thao tác nằm trong đoạn giữ khóa; phần ngoài khóa (~7,7 ms) chỉ cho phép tối đa 26,6 / 18,9 ≈
-1,41 lần tăng tốc, đúng với 1,34–1,40 lần đo được ở mức 4. Đối chiếu với code `PayOrder` (đọc code, không đo): trước khi khóa MERCHANT
-có khoảng 3–4 lượt đi-về (inbox, tìm order đã trả, đọc ví), sau khi khóa có khoảng 8–9 (khóa ví, 2 `UPDATE` số dư, 2 `INSERT` sổ cái,
-`order_payments`, outbox, commit): tỉ lệ ~2/3 khớp với 71%.
+**Thời gian giữ khóa là SUY RA, không đo.** Một luồng mất 1 / 37,6 ≈ 26,6 ms mỗi thao tác. Nếu hệ thống tuần tự hoàn toàn trên một
+dòng (bằng chứng độc lập ở mục 3), thời gian giữ khóa MERCHANT trung bình mỗi transaction ≈ 1 / thông lượng: 19,8 / 18,9 / 20,1 ms ở
+mức 4 / 16 / 64. Đây chỉ là nghịch đảo của thông lượng dưới giả định đó, **không** phải bằng chứng thêm cho giả định; bộ đo không đo
+thời gian từng câu lệnh nên thành phần của ~19 ms chưa biết. Theo code `PayOrder` (đọc code, không đo): trước khi khóa MERCHANT có
+khoảng 3–4 lượt đi-về (inbox, tìm order đã trả, đọc ví), sau khi khóa có khoảng 8–9 (khóa ví, 2 `UPDATE` số dư, 2 `INSERT` sổ cái,
+`order_payments`, outbox, commit).
+
+**Thời gian giữ có bị thổi phồng bởi máy (CPU, Node, Docker, chính bộ sinh tải) không?** Bằng chứng từ baseline, theo hai chiều:
+
+- Chiều "không bị thổi phồng nhiều" (lượt 2, khi máy rảnh): `SOS_SCHEDULER_YIELD` của SQL Server nhỏ (2–55 ms mỗi lượt ~23 s ở mức 1–16,
+  95–249 ms ở mức 64, tức < 1% thời gian); chia ~19 ms cho ~9 lượt đi-về là ~2,1 ms mỗi lượt, ngang 26,6 ms / ~12 lượt ≈ 2,2 ms mỗi lượt
+  khi một luồng không tranh chấp; thời gian giữ suy ra phẳng từ mức 4 đến 64 (19,8 / 18,9 / 20,1 ms) dù số luồng của bộ sinh tải tăng 16
+  lần.
+- Chiều ngược lại (lượt 1, có tải nền ~2,5 lõi): tổng chờ `LCK_M_U` ở mức 16 vẫn 332–335 s mỗi lượt (y như lượt 2, vì trong vòng kín
+  hầu hết luồng luôn chờ) trong khi thông lượng rơi xuống 17–22/s, tức thời gian giữ suy ra ≈ 45–57 ms, **gấp ~2,5–3 lần**. Đoạn giữ khóa
+  rất nhạy với môi trường: mọi trễ thêm của CPU host, Docker Desktop hay Node khi đang giữ khóa đều kéo dài nó.
+- CPU của Node và của SQL Server **không** được đo trong hai lượt baseline; phép đo bổ sung (mục
+  [Đo bổ sung](#đo-bổ-sung-mở-rộng-theo-số-tenant)) đo trực tiếp CPU Node, trễ vòng lặp sự kiện và CPU container SQL.
 
 ### 2. Độ trễ đuôi
 
@@ -231,15 +245,16 @@ chậm) được nhân lên cho cả hàng đợi.
 - **Câu lệnh chờ là `lockMany` lấy `UPDLOCK` trên chính dòng tài khoản hệ thống**: 100% mẫu `LCK_M_U` của `pay-order` nằm trên đúng một
   khóa `KEY (b8079320b67d)` = `system:MERCHANT:VND`; của `topup-apply` trên `KEY (49950b0e6a67)` = `system:GATEWAY:VND`. Mọi người chờ
   xếp hàng trên **cùng một khóa**.
-- Hàng đợi gần như đầy: tổng chờ `LCK_M_U` chia độ dài cửa sổ cho thấy ≈2,4/4, ≈14,3/16 và ≈60/64 luồng luôn đang chờ, và mỗi
-  thao tác chờ đúng một lần (số lần chờ ≈ số thao tác). Chờ trung bình mỗi lần ≈ (số luồng − 1) × 18,9 ms.
-- **Không** có mẫu nào của `insert into ledger_entries` (kiểm khóa ngoại `account_id → accounts`) hay `update accounts` bị chặn, và không
-  có chờ trên dòng ví (khách chọn ngẫu nhiên trong 2 000 nên hầu như không trùng).
+- Hàng đợi gần như đầy: tổng chờ `LCK_M_U` chia cho khoảng 23–24,5 s (từ trước khởi động nóng tới sau khi xả) cho thấy ≈2,4/4,
+  ≈14,3/16 và ≈60/64 luồng luôn đang chờ (khoảng N − 2 luồng), và mỗi thao tác chờ đúng một lần (số lần chờ ≈ số thao tác). Chờ trung
+  bình mỗi lần ≈ (số luồng − 1) × thời gian phục vụ ~19 ms: đúng hình dạng của một hàng đợi một chỗ phục vụ.
+- **Không** có mẫu nào của `insert into ledger_entries` (kiểm khóa ngoại `account_id → accounts`) hay `update accounts` bị chặn; chờ trên
+  dòng ví gần như không có (2 mẫu; khách chọn ngẫu nhiên trong 2 000 nên hầu như không trùng).
 - Trong `mixed`, ngoài `lockMany`, có một câu lệnh **đọc** xếp hàng trên dòng MERCHANT: `findTransaction` của `ReverseTransaction` đọc
   `ledger_entries` JOIN `accounts` (database dùng read committed có khóa nên lệnh đọc lấy `S` trên dòng MERCHANT) **trước** khi gọi
   `lockMany`; 2 786 mẫu, tất cả trên MERCHANT, chờ TB 1,6–2,2 s ở mức 64.
 - `WRITELOG` ~0,7 ms mỗi commit, một lần mỗi thao tác: ở trần 52,8/s, ghi log chiếm 52,8 × 0,7 ≈ 37 ms mỗi giây (~4%) của đoạn giữ khóa
-  nối tiếp. Phần còn lại của 18,9 ms không hiện thành chờ phía server nào trong bảng: đó là thời gian session giữ khóa trong lúc không
+  nối tiếp. Phần còn lại của ~19 ms không hiện thành chờ phía server nào trong bảng: đó là thời gian session giữ khóa trong lúc không
   chạy câu lệnh nào (đi-về giữa Node và SQL Server qua Docker Desktop, xử lý ở Node). Đây là suy luận từ việc thiếu loại chờ khác, không
   phải số đo trực tiếp từng câu lệnh.
 
@@ -247,30 +262,36 @@ chậm) được nhân lên cho cả hàng đợi.
 
 | | Giả thuyết | Kết luận | Bằng chứng |
 | - | ---------- | -------- | ---------- |
-| H1 | Thông lượng trả order bị chặn trên bởi thời gian giữ khóa dòng MERCHANT; thứ tự khóa (MERCHANT trước) kéo dài thời gian giữ | **ĐÚNG** (phần "bị chặn bởi thời gian giữ"); phần "thứ tự khóa kéo dài": **đúng về cơ chế, độ lớn chưa đo** | Trần 52,8/s = 1 / 18,9 ms; 100% mẫu chờ trên `KEY (b8079320b67d)` = MERCHANT; ~14,3/16 và ~60/64 luồng luôn đang chờ; tăng tốc tối đa 1,4 lần đúng như tách 18,9 / 26,6 ms. Vì MERCHANT bị khóa trước, đoạn giữ gồm cả lượt khóa ví và mọi câu lệnh sau đó (~8–9 lượt đi-về theo code); bộ đo không đo thời gian từng câu lệnh nên không tách được riêng phần do thứ tự khóa |
+| H1 | Thông lượng trả order bị chặn trên bởi thời gian giữ khóa dòng MERCHANT; thứ tự khóa (MERCHANT trước) kéo dài thời gian giữ | **ĐÚNG phần "hệ thống tuần tự hóa trên dòng MERCHANT"** (1 tenant); thành phần của thời gian giữ ~19 ms (suy ra, không đo) và phần do thứ tự khóa: **chưa đo** | Bằng chứng độc lập: 100% mẫu `LCK_M_U` trên một khóa `KEY (b8079320b67d)` = MERCHANT; khoảng N − 2 luồng luôn đang chờ; chờ mỗi thao tác ≈ (N − 1) × thời gian phục vụ; thông lượng phẳng từ mức 4 tới 64. Thời gian giữ ~19 ms chỉ là 1 / thông lượng, không phải bằng chứng riêng. Vì MERCHANT bị khóa trước, đoạn giữ gồm cả lượt khóa ví và mọi câu lệnh sau đó (~8–9 lượt đi-về theo code), nhưng bộ đo không đo thời gian từng câu lệnh. Xem thêm [Đo bổ sung](#đo-bổ-sung-mở-rộng-theo-số-tenant) về việc dòng MERCHANT có phải giới hạn duy nhất không |
 | H2 | Kiểm khóa ngoại `ledger_entries → accounts` xếp hàng trên dòng MERCHANT dù khóa muộn | **CHƯA KẾT LUẬN** | 0 mẫu `insert into ledger_entries` bị chặn trong mọi kịch bản: với thứ tự hiện tại, transaction đã giữ khóa MERCHANT trước khi chèn nên kiểm khóa ngoại không phải chờ ai; giả thuyết nói về thiết kế sau khi đổi thứ tự, không quan sát được nếu không đổi code. Chỉ dấu liên quan: lệnh **đọc** dòng MERCHANT (`findTransaction`, `LCK_M_S`, 2 786 mẫu, 1,6–2,2 s mỗi lần ở mức 64) có xếp hàng sau người giữ khóa, nên một lệnh cần khóa `S` trên dòng MERCHANT (như kiểm khóa ngoại) nhiều khả năng cũng sẽ xếp hàng; Pha B phải đo lại sau khi đổi thứ tự |
-| H3 | Ở nhiều luồng, `LCK_M_*` và p99 tăng nhanh hơn thông lượng | **ĐÚNG** | 4 → 64 luồng: thông lượng −1% (50,5 → 49,8), tổng chờ `LCK_M_U` ×26 (57 s → 1 460 s mỗi lượt), p99 ×11,6 (180 → 2 087 ms); 1 → 64 luồng: thông lượng ×1,32, p99 ×38. Dạng tăng là của một hàng đợi đơn (luật Little), không phải sụp đổ: không deadlock, không timeout khi máy rảnh |
+| H3 | Ở nhiều luồng, `LCK_M_*` và p99 tăng nhanh hơn thông lượng | **ĐÚNG** | 4 → 64 luồng: thông lượng −1% (50,5 → 49,8), tổng chờ `LCK_M_U` ×26 (57 s → 1 460 s mỗi lượt), p99 ×11,6 (180 → 2 087 ms); 1 → 64 luồng: thông lượng ×1,32, p99 ×38. Lưu ý: mức tăng ×26 của tổng chờ là hệ quả cơ học của vòng kín (tổng chờ ≈ số luồng đang chờ × độ dài khoảng đo), **không** phải phát hiện độc lập; bằng chứng thực chất là thông lượng phẳng trong khi p99 tăng tuyến tính theo số luồng. Dạng tăng là của một hàng đợi đơn (luật Little), không phải sụp đổ: không deadlock, không timeout khi máy rảnh |
 
 ### 5. So sánh các kịch bản
 
 - **`pay-order` và `topup-apply`** có cùng hình dạng và cùng cỡ trần (~50–58/s), mỗi bên một dòng nóng (MERCHANT, GATEWAY). Nút cổ chai
   không riêng gì MERCHANT: mọi luồng ghi đi qua một dòng tài khoản hệ thống của (tenant, đồng tiền) đều có trần này.
-- **`mixed`** không cao hơn `pay-order` dù 15% thao tác (nạp tiền) đi qua GATEWAY, một dòng khác, và 10% (điều chỉnh) qua ADJUSTMENT:
-  ở trần 49,4/s chỉ ~37/s là trả order hoặc đảo (đi qua MERCHANT), thấp hơn trần 52,8/s của riêng `pay-order`, trong khi 99,5% mẫu
-  `LCK_M_U` vẫn nằm trên MERCHANT. Số đo cho thấy trong `mixed` dòng MERCHANT bị giữ lâu hơn hoặc bị chặn thêm (lệnh đảo đọc dòng MERCHANT
-  trước khi khóa, `WRITELOG` TB 1,6–2,8 ms và 1,06–1,26 lần mỗi thao tác so với 0,7 ms và 1,00 của `pay-order`), nhưng không tách được
-  phần nào là do đâu. `mixed` cũng là kịch bản duy nhất giảm rõ ở 64 luồng (−18%).
+- **Lưu ý khi so giữa hai lượt:** ngay cả ở các mức không ghi nhận tải nền, hai lượt lệch nhau ~15%: `pay-order` lượt 1 ở mức 1 và 4
+  (31,3 và 42,7/s) thấp hơn lượt 2 (37,6 và 50,5/s) 15–17%, `WRITELOG` TB của lượt 1 là 0,83–1,25 ms so với 0,66–0,74 ms của lượt 2. Vì
+  vậy chỉ so các kịch bản **trong cùng một lượt** khi có thể; chênh lệch dưới ~15% giữa hai lượt không có ý nghĩa.
+- **`mixed` so với `pay-order` trong cùng lượt 1:** ở mức 4, `mixed` 48,1/s (⚠ phân tán 27%) **cao hơn** `pay-order` 42,7/s; ở mức 16,
+  `mixed` 49,4/s còn `pay-order` lượt 1 bị nhiễu nên không so được. Phần đi qua MERCHANT của `mixed` (trả order + đảo, ~75%) ở mức 16 là
+  ~37/s; 99,5% mẫu `LCK_M_U` vẫn nằm trên MERCHANT. Số đo **không** cho phép kết luận dòng MERCHANT bị giữ lâu hơn trong `mixed`: thông
+  lượng tổng không thấp hơn `pay-order` cùng lượt, còn so với trần 52,8/s của lượt 2 thì vướng chênh lệch giữa hai lượt. Hai điểm riêng
+  của `mixed` có trong số đo: lệnh đảo đọc dòng MERCHANT bằng khóa `S` trước khi khóa (mục 3), và `WRITELOG` TB 1,6–2,8 ms, 1,06–1,26 lần
+  mỗi thao tác (so với 0,83–1,25 ms, 1,00–1,01 lần của `pay-order` cùng lượt ở mức 1–4). `mixed` là kịch bản duy nhất giảm rõ ở 64 luồng
+  (−18%, khoảng min–max không chồng mức 16).
 - **Đầu-cuối** chỉ đạt 14,0 đơn/s ở 16 luồng, ~3,8 lần dưới trần `pay-order` (52,8/s) cùng mức; p50 1 095 ms đúng bằng 16 / 14,0 s. Với
   harness này (broker, relay outbox theo lô, Orders giả trong cùng tiến trình), MERCHANT **không phải** nút cổ chai của đường đầu-cuối ở
   200 đơn × 16 luồng. Bộ đo không chụp chờ khóa cho phần đầu-cuối nên không nói được nút cổ chai ở đâu.
 
 ### 6. Trần commit/ghi log hay khóa MERCHANT?
 
-Canary (Task 3) đo được ~390–425 `UPDATE` tự commit/giây với 8 luồng trên 8 dòng khác nhau trên máy này, cao gấp ~8 lần trần
-`pay-order`; `WRITELOG` mỗi commit của `pay-order` chỉ 0,66–0,80 ms. Nếu trần là độ trễ commit, thông lượng phải tăng tiếp khi thêm luồng
-(commit của các transaction khác nhau không phải chờ nhau), nhưng thực tế bằng phẳng từ mức 4 và mọi luồng thừa nằm trong hàng
-đợi `LCK_M_U` của **một** khóa. Kết luận: trần hiện tại là **khóa MERCHANT** (thời gian giữ ~18,9 ms), trong đó ghi log commit chiếm ~4%;
-không phải sàn commit.
+Căn cứ: `WRITELOG` mỗi commit của `pay-order` chỉ 0,66–0,80 ms, một lần mỗi thao tác, tức ~4% của thời gian giữ ~19 ms (suy ra); và
+thông lượng phẳng từ mức 4 tới 64 trong khi mọi luồng thừa nằm trong hàng đợi `LCK_M_U` của **một** khóa. Nếu ghi log là giới hạn,
+`WRITELOG` mỗi lần phải tăng theo tải và chiếm phần lớn thời gian phục vụ; cả hai đều không xảy ra. Kết luận: trần hiện tại **không** phải
+sàn commit/ghi log. Chỉ để tham khảo về dung lượng ghi log của máy: canary (Task 3, ghi trong nhật ký tiến độ, không có tệp kết quả
+được commit, và là tải khác hẳn: `UPDATE` một dòng tự commit) chạy được ~390–425 commit/giây với 8 luồng trên 8 dòng khác nhau, tức
+ghi log của máy chịu được nhiều commit hơn mức `pay-order` đang dùng.
 
 ### 7. Giới hạn
 
@@ -290,15 +311,16 @@ không phải sàn commit.
 **Số liệu then chốt** (máy `DESKTOP-MBR3422`, 1 tenant):
 
 - Trần trả order: **~50–53 thao tác/s**, bão hòa từ **4 luồng**; một luồng 37,6/s. Trần nạp tiền cùng cỡ (~55–58/s).
-- Thời gian giữ khóa MERCHANT ≈ **18,9 ms** mỗi transaction, ~71% thời gian của một lần trả order; ghi log commit chỉ ~0,7 ms trong đó.
+- Thời gian giữ khóa MERCHANT **suy ra** (1 / thông lượng, không đo) ≈ **19 ms** mỗi transaction; ghi log commit chỉ ~0,7 ms trong đó;
+  phần còn lại chưa đo và rất nhạy với tải của máy (gấp ~2,5–3 lần khi có tải nền).
 - Trên trần, độ trễ tăng tuyến tính theo số luồng: p99 **180 ms** (4 luồng), **499 ms** (16), **2 087 ms** (64).
-- 100% chờ khóa nằm trên **một** khóa (`system:MERCHANT:VND` / `system:GATEWAY:VND`), tại câu lệnh `lockMany`; không có chờ trên kiểm khóa
-  ngoại `ledger_entries` với thứ tự khóa hiện tại.
+- 100% chờ `LCK_M_U` nằm trên **một** khóa (`system:MERCHANT:VND` / `system:GATEWAY:VND`), tại câu lệnh `lockMany`; không có chờ trên
+  kiểm khóa ngoại `ledger_entries` với thứ tự khóa hiện tại; chờ trên dòng ví gần như không có.
 - Đầu-cuối: 14 đơn/s ở 16 luồng, thấp hơn trần MERCHANT ~3,8 lần.
 
 **Hướng vá bậc 1 phù hợp với số đo** (chưa làm; cần spec/kế hoạch riêng của Pha B và đo lại bằng chính bộ đo này):
 
-1. **Thu ngắn đoạn giữ khóa MERCHANT**: số đo cho thấy trần = 1 / thời gian giữ. Khóa MERCHANT **muộn nhất có thể** (sau khi đã khóa ví,
+1. **Thu ngắn đoạn giữ khóa MERCHANT**: với 1 tenant, hệ thống tuần tự hóa trên dòng này nên trần ≈ 1 / thời gian giữ. Khóa MERCHANT **muộn nhất có thể** (sau khi đã khóa ví,
    trừ tiền ví, ghi `order_payments`/outbox), để đoạn giữ chỉ còn cập nhật số dư MERCHANT, dòng sổ cái của nó và commit.
 2. **Thứ tự khóa toàn hệ thống: ví khách trước, tài khoản hệ thống sau** (áp dụng đồng thời cho `PayOrder`, `ApplyPaymentResult`,
    `ReverseTransaction`, `AdjustWallet` để không tạo deadlock mới); đây là điều kiện để làm được hướng 1.
@@ -307,11 +329,15 @@ không phải sàn commit.
 4. Khi đã đổi thứ tự, **đo lại H2**: nếu `insert into ledger_entries` bắt đầu chờ `LCK_M_S` trên dòng MERCHANT thì kiểm khóa ngoại kéo
    đoạn chờ trở lại; khi đó mới cân nhắc cách ghi dòng sổ cái MERCHANT trong cùng đoạn giữ khóa.
 
-**Bậc 2 (chia nhỏ số dư MERCHANT) có thể cần không?** Số đo cho thấy hệ thống tuần tự hoàn toàn trên một dòng (~14,3/16 luồng luôn chờ),
+**Bậc 2 (chia nhỏ số dư MERCHANT) có thể cần không?** Số đo cho thấy hệ thống tuần tự hoàn toàn trên một dòng (khoảng N − 2 luồng luôn chờ),
 nên mọi vá bậc 1 chỉ dời trần lên tới 1 / (thời gian giữ còn lại), không bỏ được trần. Bao nhiêu thì đủ phụ thuộc thời gian giữ sau bậc 1,
 Pha A **không** đo được con số này. Một ước lượng thô chỉ để định hướng (giả định, không phải số đo): ~9 lượt đi-về trong 18,9 ms là ~2 ms
 mỗi lượt; nếu đoạn giữ còn 2–3 lượt đi-về thì trần cỡ 150–250/s trên máy này. Bậc 2 chỉ có ý nghĩa nếu ngưỡng cần đạt cao hơn mức đó **và**
 số đo sau bậc 1 xác nhận. Với nhiều tenant, mỗi tenant có MERCHANT riêng nên trần là theo tenant.
+
+**Lưu ý cho bộ đo ở Pha B:** hàng đợi topup của `topup-apply`/`mixed` được cấp theo `TOTAL_OPS_PER_SEC = 120` (× `SAFETY_FACTOR` 1,25 ≈
+150 thao tác/s) trong `tests/perf/support/runner.ts`. Nếu vá bậc 1 đẩy thông lượng lên gần hoặc vượt mức đó, hai kịch bản này sẽ dừng với
+lỗi "hàng đợi topup cạn" (cố ý, không đo sai): khi đó phải nâng hai hằng số trước khi đo.
 
 **Câu hỏi cần người dùng trả lời** (Pha A không tự chốt ngưỡng):
 
