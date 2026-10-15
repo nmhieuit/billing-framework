@@ -23,6 +23,13 @@ Dành cho tester và người mới onboard. Mọi test chạy trên **local sta
 
 Các luồng e2e xuyên nhiều service (nạp tiền, thanh toán order, vận hành, đối soát, gián đoạn, retention): [`e2e/overview.md`](e2e/overview.md).
 
+## Test tự động của dev: đã phủ gì, QA cần làm tay gì
+
+- [`auto_test/loai-test.md`](auto_test/loai-test.md): các loại test có trong source, nằm ở đâu, chạy thế nào.
+- [`auto_test/coverage.md`](auto_test/coverage.md): coverage hiện tại và cách đọc con số.
+- [`auto_test/ma-tran-phu.md`](auto_test/ma-tran-phu.md): hành vi nghiệp vụ nào đã có test tự động.
+- [`auto_test/tranh-manual-lap.md`](auto_test/tranh-manual-lap.md): quy tắc để không test manual lại những gì đã được tự động kiểm.
+
 ## Quy ước trong các bảng test case
 
 - **ID**: mã case (ví dụ `WLT-001`). **Loại**: `S` = Smoke (chạy mỗi lần deploy), `R` = Regression.

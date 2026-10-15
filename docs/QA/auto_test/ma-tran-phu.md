@@ -1,0 +1,108 @@
+# Ma trận phủ: developer đã test tự động gì, QA cần làm tay gì
+
+Bảng này trả lời câu hỏi: với mỗi hành vi nghiệp vụ, test tự động nào đã kiểm, kiểm đến mức nào, và còn khoảng trống nào.
+
+**Cách đọc**
+- Mức bằng chứng của mọi hàng: **đếm tĩnh** (đọc tên file, tiêu đề test và tham số `it.each` trong source), không phải kết quả đo. Tên test viết bằng tiếng Anh; bảng dịch ý. Chỗ chưa đọc chi tiết tham số được ghi rõ.
+- Loại test (xem [`loai-test.md`](loai-test.md)): **U** unit, **I** integration (SQL Server và RabbitMQ thật trong container), **E** e2e trong process, **C** contract (Pact), **X** chaos, **P** perf.
+- Nhãn: **Đã phủ tự động** (thấy test cho cả happy path và các nhánh lỗi chính), **Phủ một phần** (thiếu một số khía cạnh, nêu ở cột Khoảng trống), **Chưa thấy test tự động** (không tìm thấy test nào kiểm hành vi đó trong source).
+- "Trên stack thật": test tự động chạy **trong process** của test, với DB và broker dựng riêng bằng container. Không test nào chạy vào stack `billing-local` đã deploy. Khoảng trống này áp dụng cho **mọi hàng**; cột Khoảng trống chỉ nêu thêm các khoảng trống riêng.
+- Cột "Case manual liên quan" trỏ tới ID trong [`docs/QA/test-case/`](../test-case/). Xem cách dùng ở [`tranh-manual-lap.md`](tranh-manual-lap.md).
+
+Đường dẫn test viết tắt: `W` = `services/wallet/src/`, `P` = `services/payment/src/`.
+
+## 1. Ví và nạp tiền (wallet)
+
+| Hành vi | Test tự động đã phủ | Mức phủ thấy được | Khoảng trống | Nhãn | Case manual liên quan |
+| --- | --- | --- | --- | --- | --- |
+| Tạo ví (201 lần đầu, 200 lặp lại, 409 khác đồng tiền) | I `W interface/http/api.integration.test.ts`; I `W application/create-wallet.integration.test.ts` (6) | Happy path, lặp lại, khác đồng tiền; body sai: `EUR`, `currency` kiểu số, thiếu `currency`, body mảng, không body → 400 `INVALID_REQUEST` | — | Đã phủ tự động | WLT-001..006 |
+| Đọc ví, ví chưa có | I `api.integration` ("404 `WALLET_NOT_FOUND`, then the wallet"); I `W application/get-wallet.integration.test.ts` | Có và không có ví | — | Đã phủ tự động | WLT-012, WLT-013 |
+| Header danh tính `x-tenant-id`, `x-customer-id` | I `api.integration` (8 tham số: thiếu tenant, tenant trắng, tenant lạ, tenant sai dạng `Acme`, tenant giả mạo schema, thiếu customer, customer sai dạng, customer quá 64 ký tự); U `W infrastructure/tenant-registry.test.ts`, `W domain/customer-id.test.ts`, `W domain/tenant-id.test.ts`; I "ignores a tenant or customer given in the body or the query" | Đủ các nhánh lỗi header | — | Đã phủ tự động | WLT-007..011 |
+| Yêu cầu nạp tiền (`POST /topups`: 202, `REQUESTED`) | I `api.integration`; I `W application/request-topup.integration.test.ts` (8); U `W domain/topup.test.ts` (13) | 202; trần đúng `1_000_000_000_000` và vượt 1 → 400; số tiền không hợp lệ (0, âm, thập phân, chuỗi, thiếu, `null`) → 400; không có ví → 404; không lấy `currency` từ body | — | Đã phủ tự động | TOP-001 (phần yêu cầu), TOP-006..015 |
+| Idempotency của nạp tiền | I `api.integration` (cùng key và cùng body → trả lại kết quả cũ; cùng key khác body → từ chối; key phải hợp lệ); I `request-topup.integration` (key phân biệt hoa thường, theo khách, đồng thời cùng key chỉ tạo 1 topup, hai tenant độc lập); E `tests/e2e/billing.integration.test.ts` (5 request đồng thời cùng key → 1 topup, 1 charge) | Tuần tự và đồng thời | — | Đã phủ tự động | IDM-001..006, TEN-004 |
+| Cộng ví khi webhook thành công, ghi sổ cái | I `W application/apply-payment-result.integration.test.ts` (23); I `W service.integration.test.ts` (wallet với payment kịch bản); E `tests/e2e` ("tops up a wallet from request to credited balance, with payment agreeing on the charge") | Cộng ví, trừ tài khoản GATEWAY, cả `USD`; topup còn `REQUESTED` vẫn được cộng; webhook thành công muộn sau `PAYMENT_UNAVAILABLE` vẫn cộng; `PAYMENT_REJECTED` không cộng; `charge.failed` sau thành công giữ tiền; trùng sự kiện, đồng thời, nhiều topup cùng ví đồng thời | — | Đã phủ tự động | TOP-001, TOP-002 |
+| Thử lại gửi charge sang payment theo backoff, hết lượt thì `FAILED` | I `W service.integration.test.ts` ("retries on the backoff schedule...", "does not retry before the backoff has elapsed", "gives up with `PAYMENT_UNAVAILABLE` once the backoff list is exhausted, yet a later webhook still credits the wallet", "treats a payment that is too slow as unavailable"); I `W application/submit-topup.integration.test.ts`, `submit-due-topups.integration.test.ts` | Backoff dùng đồng hồ giả, không chờ thật | Độ trễ thật (khoảng 756 giây) chỉ kiểm bằng tay | Phủ một phần | LED-008 |
+| Tra cứu topup, cô lập theo khách và tenant | I `api.integration` ("shows a topup to its owner only: not to another customer, not to another tenant"); I `W application/get-topup.integration.test.ts` | Có | — | Đã phủ tự động | TOP-003..005, TEN-002 |
+| Sổ cái: danh sách, phân trang, tổng khớp số dư | I `api.integration` (phân trang bằng cursor; `limit` 0, 1001, `abc`, 1.5, lặp, `cursor` `abc`, `-1` → 400 `INVALID_QUERY`; ví chưa có → 404); I `W application/list-entries.integration.test.ts` (6); E `tests/e2e` ("leaves the ledger balanced and equal to what payment settled, per tenant"); X invariants | Có | — | Đã phủ tự động | LED-001..007 |
+| Cô lập tenant | I `request-topup.integration` (cùng customer và key ở hai tenant); E `tests/e2e` ("keeps tenants apart"); I `W application/pay-order.integration.test.ts`, `apply-payment-result.integration.test.ts` (không thấy dữ liệu tenant khác) | Có | — | Đã phủ tự động | TEN-001..004 |
+| Nhận webhook từ payment: chữ ký, hạn dùng, schema | I `api.integration` (webhook hợp lệ cộng ví không cần header tenant; trùng → 200 và không áp dụng lại; `charge.failed` làm topup `FAILED`; sự kiện không nhất quán → 200; thiếu, sai định dạng hoặc sai chữ ký → 401 `INVALID_SIGNATURE`; sửa thân sau khi ký, kể cả 1 ký tự; timestamp ngoài dung sai; kiểm chữ ký trước thân; payload sai schema hoặc tenant lạ → 400 `INVALID_WEBHOOK`; không lộ secret) | Rất đủ | — | Đã phủ tự động | WHK-001..011 |
+
+## 2. Cổng thanh toán giả lập (payment)
+
+| Hành vi | Test tự động đã phủ | Mức phủ thấy được | Khoảng trống | Nhãn | Case manual liên quan |
+| --- | --- | --- | --- | --- | --- |
+| Tạo charge (`POST /charges` 202 `PENDING`) | U `P interface/http/charges.route.test.ts` (12); I `P application/create-charge.integration.test.ts` (9); I `P application/create-charge.metadata.integration.test.ts` (5) | Route kiểm bằng use case giả; use case kiểm với DB thật | Chưa thấy test gọi trọn `HTTP → DB thật` cho validation của `/charges` | Phủ một phần | PAY-001, PAY-004, PAY-005 |
+| Validation đầu vào và `Idempotency-Key` | U `charges.route.test` (key thiếu hoặc rỗng, khoảng trắng đầu/cuối, 255 ký tự được nhận và 256 bị từ chối, JSON hỏng, mảng, `null`, `amount` chuỗi, thiếu `currency`, thiếu `reference`, `reference` không phải chuỗi); I `create-charge.integration` (thập phân, `EUR`, 0, âm, `reference` trắng, token `X-Simulate` lạ, và không ghi gì vào DB); U `P domain/metadata.test.ts` | Các nhánh lỗi chính | Số tiền 0 hoặc âm qua route HTTP chưa thấy test riêng | Phủ một phần | PAY-010..022 |
+| Idempotency của charge | I `create-charge.integration` (cùng key và nội dung → trả lại; khác `amount`, `currency`, `reference` hoặc `X-Simulate` → từ chối; thứ tự token `X-Simulate` không đổi hash; đồng thời cùng key chỉ 1 charge; key khác độc lập) | Tuần tự và đồng thời | — | Đã phủ tự động | PAY-030..033 |
+| Kịch bản `X-Simulate` (fail, delay, webhook, response) | U `P domain/scenario.test.ts` (parse mọi token; từ chối `fail`, `fail=`, `fail=Bad`, mã dài 65, `delay=0`, `3601`, `1.5`, `abc`, `05`, `-1`...); I `create-charge.integration` (delay, `responseTimeout` chỉ lần đầu); I `P service.integration.test.ts` ("reports a declined card through `charge.failed`", "`webhook=drop`", "`response=timeout`") | Có | Hành vi thời gian thật (ví dụ `response=timeout` khoảng 30 giây) chỉ kiểm bằng tay | Đã phủ tự động | SIM-001..012 |
+| Hoàn tất charge theo hạn | I `P application/complete-due-charges.integration.test.ts` (8); U `P domain/charge.test.ts` (8) | Có | — | Đã phủ tự động | PAY-002 |
+| Giao webhook, gửi lại theo backoff, chữ ký gửi đi | I `P application/deliver-due-webhooks.integration.test.ts` (14: ký hợp lệ, retry theo backoff rồi `FAILED`, giao khi receiver hồi phục, `webhook=duplicate` gửi 2 lần, lease sau crash, giới hạn lô); U `P infrastructure/http-webhook-sender.test.ts` (6); U `P domain/webhook-event.test.ts` (10); I `P service.integration` ("keeps its state across a restart and still delivers the pending webhook") | Có (đồng hồ giả) | Hành vi khi wallet thật từ chối (400) hoặc tạm dừng chỉ kiểm bằng tay | Phủ một phần | PAY-040..044 |
+| Sao kê `GET /settlements` | I `P application/get-settlement.integration.test.ts` (9: theo ngày UTC, mốc 00:00:00.000 thuộc ngày mới, ngày không có giao dịch, phân trang cursor và tie-break theo id, ngày hôm nay hợp lệ và ngày mai bị từ chối, 6 ngày sai, 5 `limit` sai, 5 cursor hỏng); U `P interface/http/settlements.route.test.ts` (5) | Có | — | Đã phủ tự động | STL-001..011 |
+| Đọc charge `GET /charges/:id`, 404 | U `charges.route.test`; I `P application/get-charge.integration.test.ts` (3) | Có | — | Đã phủ tự động | PAY-003 |
+
+## 3. Thanh toán order qua RabbitMQ
+
+| Hành vi | Test tự động đã phủ | Mức phủ thấy được | Khoảng trống | Nhãn | Case manual liên quan |
+| --- | --- | --- | --- | --- | --- |
+| Trả order thành công, ghi sổ cái, phát `OrderPaidV1` | I `W application/pay-order.integration.test.ts` (22); I `W order-payment.integration.test.ts` (11, wallet với broker RabbitMQ thật và "orders" mô phỏng) | Có, gồm trả hết số dư còn đúng 0 | Orders thật không có trong repo | Đã phủ tự động | ORD-001 |
+| Từ chối nghiệp vụ (`INSUFFICIENT_FUNDS`, `WALLET_NOT_FOUND`, `CURRENCY_MISMATCH`, `WALLET_FROZEN`) | `pay-order.integration` (mỗi nhánh có test; lần từ chối không được nhớ nên trả được sau khi nạp thêm; ví đóng băng vẫn nhận nạp tiền và vẫn phát lại order đã trả) | Có | — | Đã phủ tự động | ORD-010..016 |
+| Idempotency và đồng thời của order | `pay-order.integration` (cùng `eventId` → `DUPLICATE`; cùng `orderId` `eventId` mới → phát lại cùng `walletTransactionId`; `CONFLICT` khi khác số tiền, khác khách hoặc đã bị đảo; 10 lần cùng event đồng thời; 10 event khác nhau cùng order; không bao giờ trừ quá số dư); `order-payment.integration` (20 lần publish đồng thời) | Có | — | Đã phủ tự động | ORD-002..007 |
+| Message hỏng vào DLQ | I `order-payment.integration` ("dead-letters unreadable, schema-invalid and unknown-tenant messages without touching any wallet"); U `W interface/messaging/order-ready.decoder.test.ts` (5), `order-ready.handler.test.ts` (6), `order-payments.topology.test.ts` | Có | Thao tác trên DLQ bằng tay (xem, đưa về hàng đợi làm việc, xóa) chưa thấy test | Phủ một phần | DLQ-001..003 (tự động); DLQ-004..007 (chưa thấy) |
+| Kết quả không mất khi nơi nhận chưa sẵn sàng hoặc consumer chết | I `order-payment.integration` ("does not lose the result when nobody is bound to receive it yet", "survives a consumer that dies after the payment committed but before it acknowledged"); I `W application/relay-outbox.integration.test.ts` (10); X `scenarios-sql-broker.chaos.test.ts` | Có (X không chạy trong CI) | — | Đã phủ tự động | RES-001..004 |
+| Metric và cảnh báo (`billing-dlq-not-empty`, `billing-outbox-stuck`...) | U `W infrastructure/otel-metrics.test.ts` (9); U `tools/kibana/*.test.ts` (9 file: dựng, áp dụng, kiểm quy tắc và dashboard) | Kiểm định nghĩa quy tắc, không kiểm cảnh báo bật tắt thật | Trạng thái cảnh báo thực trên Kibana | Phủ một phần | OBS-001..004 |
+
+## 4. Công cụ vận hành (ops)
+
+| Hành vi | Test tự động đã phủ | Mức phủ thấy được | Khoảng trống | Nhãn | Case manual liên quan |
+| --- | --- | --- | --- | --- | --- |
+| Xác thực ops (401, 403, tenant) | I `W interface/http/ops.api.integration.test.ts` (25); U `W interface/http/ops.guard.test.ts` (5) | `MISSING_ACTOR`, `FORBIDDEN_ROLE`, `UNKNOWN_TENANT`, `MISSING_TENANT`; danh tính lấy từ header, không từ body | Header nhiều giá trị (`OPS, ADMIN`) và `x-actor-id` chỉ khoảng trắng: chưa đọc chi tiết tham số | Phủ một phần | OPS-001..009 |
+| Freeze, unfreeze | `ops.api.integration`; I `W application/freeze-wallet.integration.test.ts` (8: no-op khi đã đóng băng, 5 yêu cầu đồng thời khác key đổi trạng thái 1 lần, cùng key trả cùng kết quả) | Có | — | Đã phủ tự động | FRZ-001..013 |
+| Adjust (CREDIT, DEBIT) | `ops.api.integration` (201, replay, actor lấy từ header, conflict khác số tiền, `INSUFFICIENT_FUNDS`, `customerId` sai, 422); I `W application/adjust-wallet.integration.test.ts` (10) | Có | Số rất lớn (ADJ-012) chưa đọc chi tiết | Đã phủ tự động | ADJ-001..013 |
+| Reversal | `ops.api.integration` (201, replay, lần đảo thứ hai bị từ chối, `TRANSACTION_NOT_FOUND`, `REVERSAL_NOT_SUPPORTED` cho topup, `INSUFFICIENT_FUNDS`, `REVERSAL_NOT_POSSIBLE`); I `W application/reverse-transaction.integration.test.ts` (14) | Có | — | Đã phủ tự động | REV-001..012 |
+| Replay-paid | `ops.api.integration` (202, replay, `ORDER_NOT_FOUND`, `ORDER_REVERSED`, `EVENT_ID_UNKNOWN`); I `W application/replay-order-paid.integration.test.ts` (7); I `W ops.integration.test.ts` ("replays the original `OrderPaidV1` (same eventId) exactly once...") | Có, kể cả với broker thật | — | Đã phủ tự động | RPL-001..006 |
+| Nhật ký `ops_actions` (chỉ thêm) | `ops.api.integration` ("pages newest first without leaking keys or fingerprints"); I `W application/list-ops-actions.integration.test.ts`; I `W infrastructure/kysely/ops.repository.integration.test.ts` ("blocks direct update and delete with the append-only..."); `ops-migration.integration` ("creates an append-only `ops_actions` table"); I `ops.integration` ("keeps `ops_actions` across a service restart") | Có | — | Đã phủ tự động | LOG-001..008 |
+
+## 5. Đối soát
+
+| Hành vi | Test tự động đã phủ | Mức phủ thấy được | Khoảng trống | Nhãn | Case manual liên quan |
+| --- | --- | --- | --- | --- | --- |
+| Chạy đối soát và các loại lệch | I `W application/run-reconciliation.integration.test.ts` (21: ngày sạch; `MISSING_AT_WALLET` + ghi bù một lần; topup `REQUESTED` và `FAILED`; autofix tắt; `FAILED_AUTOFIX`; hai lượt đua; `UNKNOWN_CHARGE`, `AMOUNT_MISMATCH`, `STATUS_MISMATCH`; `MISSING_AT_GATEWAY`; bỏ qua charge tenant khác; payment lỗi thì lượt `FAILED`; vượt `RECONCILE_MAX_ITEMS`; lượt bất biến; ngày sai hoặc tương lai); I `W application/run-reconciliation.ledger.integration.test.ts`; U `W domain/reconciliation.test.ts` (14) | Rất đủ (kể cả các loại lệch khó dựng tay) | — | Đã phủ tự động | REC-001..006, REC-030..036 |
+| API đối soát (202, 404, 409, phân trang, cách ly tenant) | I `W interface/http/reconciliations.api.integration.test.ts` (7); I `W application/reconciliation-operations.integration.test.ts` (9) | Có | — | Đã phủ tự động | REC-010..022, RES-001..012 |
+| Lượt định kỳ 02:00 UTC | I `W application/schedule-daily-reconciliation.integration.test.ts` (8); I `W reconciliation.integration.test.ts` ("runs the daily task on its own...") | Giờ chạy, retry sau 15 phút, tối đa số lần, nhiều worker, nhiều tenant | Đồng hồ giả: không chờ qua đêm thật | Phủ một phần | REC-050..053 |
+| Cảnh báo và dashboard đối soát | U `tools/kibana/*.test.ts` (định nghĩa) | Định nghĩa quy tắc | Trạng thái thật trên Kibana | Phủ một phần | REC-051, REC-052, REC-054 |
+
+## 6. Retention
+
+| Hành vi | Test tự động đã phủ | Mức phủ thấy được | Khoảng trống | Nhãn | Case manual liên quan |
+| --- | --- | --- | --- | --- | --- |
+| Logic dọn dữ liệu, dry-run, xóa thật, không chạm bảng tài chính | U `W application/retention.test.ts` (7), `P application/retention.test.ts` (7); I `W infrastructure/kysely/retention.repository.integration.test.ts` (13), `P infrastructure/kysely/retention.repository.integration.test.ts` (9); I `W retention.integration.test.ts` (4), `P retention.integration.test.ts` (4: "really deletes aged rows when dry run is off, and never touches financial tables") | Có, gồm dòng chưa xong được giữ và lô nhỏ | Dữ liệu "đủ cũ" được dựng bằng DB trong test; trên stack thật dữ liệu mới không đủ cũ | Đã phủ tự động | RET-010..013, RET-020..025 |
+| Kiểm tra cấu hình khi khởi động | U `W config.test.ts` (20), `P config.test.ts` (11), `W env-example.test.ts`, `P env-example.test.ts` | Có | Hành vi service từ chối khởi động trên container thật | Phủ một phần | RET-003..006 |
+| Hệ quả nghiệp vụ sau khi dọn (khử trùng, cửa sổ idempotency, sao kê) | Chưa thấy test nào kiểm trực tiếp (tìm theo từ khóa idempotency và retention trong các file test) | — | Khử trùng sau khi xóa `processed_messages`; khóa idempotency hết hạn được coi là yêu cầu mới; đối soát hôm sau | Chưa thấy test tự động | RET-030..035 |
+| Metric, dashboard, cảnh báo retention | U `otel-metrics.test.ts` (metric retention); U `tools/kibana/*.test.ts` | Định nghĩa metric và quy tắc | Hiển thị và trạng thái thật | Phủ một phần | RET-040..044 |
+
+## 7. Liên service, hạ tầng, hợp đồng
+
+| Hành vi | Test tự động đã phủ | Mức phủ thấy được | Khoảng trống | Nhãn | Case manual liên quan |
+| --- | --- | --- | --- | --- | --- |
+| Nạp tiền xuyên wallet và payment | E `tests/e2e/billing.integration.test.ts` (5 test; wallet và payment cùng chạy trong process, DB thật) | Happy path, đồng thời, tenant, ví đóng băng từ chối order, sổ cái cân | Không phải stack đã deploy; không có RabbitMQ thật | Phủ một phần | TOP-001; luồng E1 ở [`docs/QA/e2e`](../e2e/overview.md) |
+| Lỗi hạ tầng giữa tải (kill session SQL, consumer chết, mất kết nối AMQP, mất webhook, kill service) | X `tests/chaos/*.chaos.test.ts` (10 file, 130 test; kịch bản S1..S13; oracle 8 bất biến); X soak | Chính xác đến từng câu lệnh và commit | Không chạy trong CI; không chạy trên stack deploy; thời gian thật (backoff, lease) | Phủ một phần | CHM-001..019 |
+| Hiệu năng và khóa tranh chấp | P `tests/perf/*.perf.test.ts` (10 file) | Đo trên container riêng | Không chạy trong CI; không đo trên stack deploy | Phủ một phần | — |
+| Hợp đồng với ecommerce | C `W contract/wallet-consumer.pact.test.ts` (2) và `wallet-provider.pact.integration.test.ts` (2) | Phía wallet; schema JSON của event trong U `packages/contracts` | Phía ecommerce chưa verify | Phủ một phần | — |
+| Ranh giới kiến trúc (domain/application/infrastructure) | U `tools/boundaries.test.ts` (7) | Có | — | Đã phủ tự động | — |
+| Migration DB | I `W infrastructure/kysely/*-migration.integration.test.ts` (4 file), `W provisioning.integration.test.ts`, `db/payment/migrations.integration.test.ts` | Có | — | Đã phủ tự động | — |
+| Cấu hình đã deploy (cổng, compose, biến môi trường, gateway, mạng) | Chưa thấy test tự động | — | Toàn bộ | Chưa thấy test tự động | Mục "Chuẩn bị" của mọi file test-case |
+| Giao diện người dùng, bảo mật tự động, API độc lập ngoài repo | Không có trong repo (tìm theo từ khóa, xem `loai-test.md` mục 3) | — | Toàn bộ | Chưa thấy test tự động | — |
+
+## 8. Công cụ và DB (`tools/`, `db/`)
+
+Các công cụ này không phải tính năng của sản phẩm nhưng QA dùng hoặc phụ thuộc vào chúng khi chuẩn bị môi trường và quan sát.
+
+| Hành vi | Test tự động đã phủ | Mức phủ thấy được | Khoảng trống | Nhãn | Case manual liên quan |
+| --- | --- | --- | --- | --- | --- |
+| Dựng, áp dụng và kiểm quy tắc cảnh báo và dashboard Kibana (`pnpm kibana:build`, `kibana:apply`, `kibana:verify`) | U `tools/kibana/*.test.ts` (9 file, 110 test đếm tĩnh: `apply`, `cli`, `client`, `dashboard`, `docs`, `params`, `rules`, `verify`, `version`); coverage 96,2% dòng | Với một Kibana giả: tạo 9 rule trên Kibana trống, chạy lại không đổi gì, chỉ cập nhật rule đổi tham số, chế độ dry-run không ghi, báo lỗi tham số, kiểm phiên bản tối thiểu, `verify` báo PASS hoặc lỗi (rule thiếu, rule lỗi, dashboard thiếu, truy vấn bị từ chối) | Không chạy với Kibana thật; cảnh báo có bật đúng hay không trên stack thật chưa có test | Phủ một phần | OBS-002..004, REC-051, REC-052, REC-054, RET-040..044 |
+| Dữ liệu mẫu `pnpm local:seed` | U `tools/local/seed.test.ts` (17 test); coverage 70,4% dòng | Tạo queue hứng kết quả một lần, thứ tự ví → nạp tiền → order → đối soát, 3 ví mỗi tenant, nạp 500000 với khóa idempotency cố định, 3 order mỗi tenant (một order vượt số dư), `eventId` mới mỗi lần, đối soát tới `COMPLETED`, `--with-dlq` thêm đúng một message hỏng | Chạy thật vào stack chưa có test; 29,6% dòng của `seed.ts` chưa được chạm | Phủ một phần | ORD-S01 |
+| Khởi tạo RabbitMQ (vhost, user, exchange) | U `tools/rabbitmq-init.test.ts` (5 test) | Hai exchange bền kiểu topic, không dùng default exchange, không cấp quyền wildcard cho user service, mật khẩu đọc từ môi trường | Chạy thật trong compose chưa có test | Phủ một phần | — |
+| Tài liệu handoff với ecommerce | U `tools/handoff-doc.test.ts` (3 test) | Mỗi trong 3 event có ví dụ thỏa schema đã phát hành, nêu đúng routing key và vhost | — | Đã phủ tự động | — |
+| Ranh giới kiến trúc | U `tools/boundaries.test.ts` (7 test) | Domain không import infrastructure hay framework, application không import infrastructure/interface, một service không import service kia | — | Đã phủ tự động | — |
+| Migration DB payment | I `db/payment/migrations.integration.test.ts` (6 test); coverage 100% với các file migration | Áp dụng một lần và chạy lại không đổi, 4 bảng, chỉ mục cho worker và phân trang sao kê, chỉ mục retention, khóa idempotency phân biệt hoa thường, ràng buộc CHECK | — | Đã phủ tự động | — |
+| Chạy migration bằng lệnh (`pnpm db:migrate:payment`, `pnpm db:migrate:wallet`) | Chưa thấy test (`db/payment/migrate.ts` 0/11 dòng, `db/wallet/migrate.ts` 0/18 dòng) | — | Toàn bộ script chạy lệnh | Chưa thấy test tự động | Mục "Chuẩn bị" của mọi file test-case |
