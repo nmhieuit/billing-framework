@@ -7,7 +7,7 @@ Bảng này trả lời câu hỏi: với mỗi hành vi nghiệp vụ, test t�
 - Loại test (xem [`loai-test.md`](loai-test.md)): **U** unit, **I** integration (SQL Server và RabbitMQ thật trong container), **E** e2e trong process, **C** contract (Pact), **X** chaos, **P** perf.
 - Nhãn: **Đã phủ tự động** (thấy test cho cả happy path và các nhánh lỗi chính), **Phủ một phần** (thiếu một số khía cạnh, nêu ở cột Khoảng trống), **Chưa thấy test tự động** (không tìm thấy test nào kiểm hành vi đó trong source).
 - "Trên stack thật": test tự động chạy **trong process** của test, với DB và broker dựng riêng bằng container. Không test nào chạy vào stack `billing-local` đã deploy. Khoảng trống này áp dụng cho **mọi hàng**; cột Khoảng trống chỉ nêu thêm các khoảng trống riêng.
-- Cột "Case manual liên quan" trỏ tới ID trong [`docs/QA/test-case/`](../QA/test-case/). Xem cách dùng ở [`tranh-manual-lap.md`](tranh-manual-lap.md).
+- Cột "Case manual liên quan" trỏ tới ID trong [`docs/QA/test-case/`](../test-case/). Xem cách dùng ở [`tranh-manual-lap.md`](tranh-manual-lap.md).
 
 Đường dẫn test viết tắt: `W` = `services/wallet/src/`, `P` = `services/payment/src/`.
 
@@ -84,7 +84,7 @@ Bảng này trả lời câu hỏi: với mỗi hành vi nghiệp vụ, test t�
 
 | Hành vi | Test tự động đã phủ | Mức phủ thấy được | Khoảng trống | Nhãn | Case manual liên quan |
 | --- | --- | --- | --- | --- | --- |
-| Nạp tiền xuyên wallet và payment | E `tests/e2e/billing.integration.test.ts` (5 test; wallet và payment cùng chạy trong process, DB thật) | Happy path, đồng thời, tenant, ví đóng băng từ chối order, sổ cái cân | Không phải stack đã deploy; không có RabbitMQ thật | Phủ một phần | TOP-001; luồng E1 ở [`docs/QA/e2e`](../QA/e2e/overview.md) |
+| Nạp tiền xuyên wallet và payment | E `tests/e2e/billing.integration.test.ts` (5 test; wallet và payment cùng chạy trong process, DB thật) | Happy path, đồng thời, tenant, ví đóng băng từ chối order, sổ cái cân | Không phải stack đã deploy; không có RabbitMQ thật | Phủ một phần | TOP-001; luồng E1 ở [`docs/QA/e2e`](../e2e/overview.md) |
 | Lỗi hạ tầng giữa tải (kill session SQL, consumer chết, mất kết nối AMQP, mất webhook, kill service) | X `tests/chaos/*.chaos.test.ts` (10 file, 130 test; kịch bản S1..S13; oracle 8 bất biến); X soak | Chính xác đến từng câu lệnh và commit | Không chạy trong CI; không chạy trên stack deploy; thời gian thật (backoff, lease) | Phủ một phần | CHM-001..019 |
 | Hiệu năng và khóa tranh chấp | P `tests/perf/*.perf.test.ts` (10 file) | Đo trên container riêng | Không chạy trong CI; không đo trên stack deploy | Phủ một phần | — |
 | Hợp đồng với ecommerce | C `W contract/wallet-consumer.pact.test.ts` (2) và `wallet-provider.pact.integration.test.ts` (2) | Phía wallet; schema JSON của event trong U `packages/contracts` | Phía ecommerce chưa verify | Phủ một phần | — |

@@ -27,7 +27,7 @@ Khi thấy test tự động "phủ" nhưng bạn nghi ngờ (tên test mơ hồ
 
 ## 3. Đối chiếu các case manual hiện có
 
-Mã case lấy từ [`docs/QA/test-case/`](../QA/test-case/). Một số mã trùng giữa hai file (ví dụ `RES-001..004` có ở `order-payment.md` và `doi-soat.md`), nên cột đầu ghi rõ file.
+Mã case lấy từ [`docs/QA/test-case/`](../test-case/). Một số mã trùng giữa hai file (ví dụ `RES-001..004` có ở `order-payment.md` và `doi-soat.md`), nên cột đầu ghi rõ file.
 
 ### 3.1 Có thể bỏ qua (đã phủ tự động, không phụ thuộc môi trường)
 
@@ -52,7 +52,7 @@ Ghi chú:
 
 ### 3.2 Giữ ở mức Smoke trên stack thật (xác nhận môi trường)
 
-Các nhánh logic đã tự động phủ, nhưng QA vẫn cần **một lần chạy trên stack đã deploy** cho mỗi nghiệp vụ chính: tạo ví và nạp tiền, charge và sao kê, trả order qua RabbitMQ, ops cơ bản, đối soát. Dùng bộ Smoke của collection Postman (`Wallet/Smoke`, `Payment/Smoke`, `Ops/Smoke`, `Reconciliations/Smoke`) và các luồng e2e ở [`docs/QA/e2e`](../QA/e2e/overview.md). Chạy cả bộ `Regression` của Postman chỉ cần khi thay đổi cấu hình, gateway, secret hoặc môi trường, vì phần lớn nhánh lỗi của nó đã có test tự động tương đương.
+Các nhánh logic đã tự động phủ, nhưng QA vẫn cần **một lần chạy trên stack đã deploy** cho mỗi nghiệp vụ chính: tạo ví và nạp tiền, charge và sao kê, trả order qua RabbitMQ, ops cơ bản, đối soát. Dùng bộ Smoke của collection Postman (`Wallet/Smoke`, `Payment/Smoke`, `Ops/Smoke`, `Reconciliations/Smoke`) và các luồng e2e ở [`docs/QA/e2e`](../e2e/overview.md). Chạy cả bộ `Regression` của Postman chỉ cần khi thay đổi cấu hình, gateway, secret hoặc môi trường, vì phần lớn nhánh lỗi của nó đã có test tự động tương đương.
 
 ### 3.3 Vẫn làm manual (khoảng trống, hoặc phụ thuộc môi trường)
 
@@ -78,5 +78,5 @@ Các nhánh logic đã tự động phủ, nhưng QA vẫn cần **một lần c
 1. Tìm hành vi trong [`ma-tran-phu.md`](ma-tran-phu.md). Nếu nhãn là **Đã phủ tự động**, đọc file test được nêu rồi mới quyết định.
 2. Case của bạn kiểm **mã lỗi hoặc logic** (đã có test) hay kiểm **môi trường, thời gian, hạ tầng, hiển thị** (không có test)? Chỉ viết case cho vế sau.
 3. Có thể gộp vào một luồng Smoke hoặc e2e có sẵn thay vì thêm case riêng không?
-4. Case cần hạ tầng thật hoặc thời gian thật? Ghi rõ lệnh và thời gian chờ (xem [`docs/QA/e2e`](../QA/e2e/overview.md) làm mẫu).
+4. Case cần hạ tầng thật hoặc thời gian thật? Ghi rõ lệnh và thời gian chờ (xem [`docs/QA/e2e`](../e2e/overview.md) làm mẫu).
 5. Nếu phát hiện test tự động còn thiếu (nhãn **Chưa thấy test tự động**), ghi lại cho dev thay vì chỉ dựa vào manual lâu dài.

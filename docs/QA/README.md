@@ -25,10 +25,10 @@ Các luồng e2e xuyên nhiều service (nạp tiền, thanh toán order, vận 
 
 ## Test tự động của dev: đã phủ gì, QA cần làm tay gì
 
-- [`../auto_test/loai-test.md`](../auto_test/loai-test.md): các loại test có trong source, nằm ở đâu, chạy thế nào.
-- [`../auto_test/coverage.md`](../auto_test/coverage.md): coverage hiện tại và cách đọc con số.
-- [`../auto_test/ma-tran-phu.md`](../auto_test/ma-tran-phu.md): hành vi nghiệp vụ nào đã có test tự động.
-- [`../auto_test/tranh-manual-lap.md`](../auto_test/tranh-manual-lap.md): quy tắc để không test manual lại những gì đã được tự động kiểm.
+- [`auto_test/loai-test.md`](auto_test/loai-test.md): các loại test có trong source, nằm ở đâu, chạy thế nào.
+- [`auto_test/coverage.md`](auto_test/coverage.md): coverage hiện tại và cách đọc con số.
+- [`auto_test/ma-tran-phu.md`](auto_test/ma-tran-phu.md): hành vi nghiệp vụ nào đã có test tự động.
+- [`auto_test/tranh-manual-lap.md`](auto_test/tranh-manual-lap.md): quy tắc để không test manual lại những gì đã được tự động kiểm.
 
 ## Quy ước trong các bảng test case
 
