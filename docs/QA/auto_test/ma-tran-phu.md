@@ -92,3 +92,17 @@ Bảng này trả lời câu hỏi: với mỗi hành vi nghiệp vụ, test t�
 | Migration DB | I `W infrastructure/kysely/*-migration.integration.test.ts` (4 file), `W provisioning.integration.test.ts`, `db/payment/migrations.integration.test.ts` | Có | — | Đã phủ tự động | — |
 | Cấu hình đã deploy (cổng, compose, biến môi trường, gateway, mạng) | Chưa thấy test tự động | — | Toàn bộ | Chưa thấy test tự động | Mục "Chuẩn bị" của mọi file test-case |
 | Giao diện người dùng, bảo mật tự động, API độc lập ngoài repo | Không có trong repo (tìm theo từ khóa, xem `loai-test.md` mục 3) | — | Toàn bộ | Chưa thấy test tự động | — |
+
+## 8. Công cụ và DB (`tools/`, `db/`)
+
+Các công cụ này không phải tính năng của sản phẩm nhưng QA dùng hoặc phụ thuộc vào chúng khi chuẩn bị môi trường và quan sát.
+
+| Hành vi | Test tự động đã phủ | Mức phủ thấy được | Khoảng trống | Nhãn | Case manual liên quan |
+| --- | --- | --- | --- | --- | --- |
+| Dựng, áp dụng và kiểm quy tắc cảnh báo và dashboard Kibana (`pnpm kibana:build`, `kibana:apply`, `kibana:verify`) | U `tools/kibana/*.test.ts` (9 file, 110 test đếm tĩnh: `apply`, `cli`, `client`, `dashboard`, `docs`, `params`, `rules`, `verify`, `version`); coverage 96,2% dòng | Với một Kibana giả: tạo 9 rule trên Kibana trống, chạy lại không đổi gì, chỉ cập nhật rule đổi tham số, chế độ dry-run không ghi, báo lỗi tham số, kiểm phiên bản tối thiểu, `verify` báo PASS hoặc lỗi (rule thiếu, rule lỗi, dashboard thiếu, truy vấn bị từ chối) | Không chạy với Kibana thật; cảnh báo có bật đúng hay không trên stack thật chưa có test | Phủ một phần | OBS-002..004, REC-051, REC-052, REC-054, RET-040..044 |
+| Dữ liệu mẫu `pnpm local:seed` | U `tools/local/seed.test.ts` (17 test); coverage 70,4% dòng | Tạo queue hứng kết quả một lần, thứ tự ví → nạp tiền → order → đối soát, 3 ví mỗi tenant, nạp 500000 với khóa idempotency cố định, 3 order mỗi tenant (một order vượt số dư), `eventId` mới mỗi lần, đối soát tới `COMPLETED`, `--with-dlq` thêm đúng một message hỏng | Chạy thật vào stack chưa có test; 29,6% dòng của `seed.ts` chưa được chạm | Phủ một phần | ORD-S01 |
+| Khởi tạo RabbitMQ (vhost, user, exchange) | U `tools/rabbitmq-init.test.ts` (5 test) | Hai exchange bền kiểu topic, không dùng default exchange, không cấp quyền wildcard cho user service, mật khẩu đọc từ môi trường | Chạy thật trong compose chưa có test | Phủ một phần | — |
+| Tài liệu handoff với ecommerce | U `tools/handoff-doc.test.ts` (3 test) | Mỗi trong 3 event có ví dụ thỏa schema đã phát hành, nêu đúng routing key và vhost | — | Đã phủ tự động | — |
+| Ranh giới kiến trúc | U `tools/boundaries.test.ts` (7 test) | Domain không import infrastructure hay framework, application không import infrastructure/interface, một service không import service kia | — | Đã phủ tự động | — |
+| Migration DB payment | I `db/payment/migrations.integration.test.ts` (6 test); coverage 100% với các file migration | Áp dụng một lần và chạy lại không đổi, 4 bảng, chỉ mục cho worker và phân trang sao kê, chỉ mục retention, khóa idempotency phân biệt hoa thường, ràng buộc CHECK | — | Đã phủ tự động | — |
+| Chạy migration bằng lệnh (`pnpm db:migrate:payment`, `pnpm db:migrate:wallet`) | Chưa thấy test (`db/payment/migrate.ts` 0/11 dòng, `db/wallet/migrate.ts` 0/18 dòng) | — | Toàn bộ script chạy lệnh | Chưa thấy test tự động | Mục "Chuẩn bị" của mọi file test-case |

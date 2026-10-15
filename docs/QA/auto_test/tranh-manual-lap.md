@@ -62,8 +62,8 @@ Các nhánh logic đã tự động phủ, nhưng QA vẫn cần **một lần c
 | `payment-simulator.md` | PAY-041, PAY-042, PAY-040, PAY-043..044 | Webhook thật giữa hai service đã deploy (wallet từ chối 400, wallet tạm dừng) |
 | `payment-simulator.md` | SIM-003, SIM-005, SIM-006 | Thời gian thật (`delay`, `response=timeout` khoảng 30 giây) |
 | `order-payment.md` | DLQ-004..007, RES-001..004 | Thao tác DLQ, dừng wallet và broker bằng tay, hạ tầng thật. Test tự động chỉ phủ phần liên quan: consumer chết sau commit trước khi ack, và outbox giữ kết quả khi chưa có nơi nhận (một phần RES-002, RES-003) |
-| `order-payment.md` | OBS-001..004 | Metric, cảnh báo và dashboard Kibana thật |
-| `order-payment.md` | ORD-S01 | Dữ liệu mẫu bằng lệnh `local:seed` trên stack thật |
+| `order-payment.md` | OBS-001..004 | Metric, cảnh báo và dashboard Kibana thật; test tự động của `tools/kibana` chỉ kiểm định nghĩa rule với Kibana giả |
+| `order-payment.md` | ORD-S01 | Dữ liệu mẫu bằng lệnh `local:seed` trên stack thật; test tự động của `seed.ts` dùng dịch vụ giả |
 | `ops.md` | OPS-002, OPS-004 | Chưa đọc được chi tiết tham số của test tự động (xem ghi chú trên) |
 | `ops.md` | CON-001..004 | Một phần có test (freeze song song, đảo và replay song song); CON-004 (dừng wallet giữa chừng) là hạ tầng thật |
 | `doi-soat.md` | REC-051, REC-052, REC-054 | Cảnh báo và dashboard Kibana thật |
@@ -71,6 +71,7 @@ Các nhánh logic đã tự động phủ, nhưng QA vẫn cần **một lần c
 | `retention-quan-sat.md` | RET-001..006 | Cấu hình khi khởi động trên container thật (test tự động chỉ kiểm hàm đọc cấu hình) |
 | `retention-quan-sat.md` | RET-030..035 | **Chưa thấy test tự động** cho hệ quả nghiệp vụ sau khi dọn (khử trùng, cửa sổ idempotency, sao kê) |
 | `retention-quan-sat.md` | RET-040..044 | Metric, dashboard và cảnh báo thật |
+| (mọi file) | Chạy `pnpm db:migrate:payment` và `pnpm db:migrate:wallet` bằng tay, khởi tạo RabbitMQ trong compose | Hai script migrate không có test (0% coverage); khởi tạo RabbitMQ chỉ có test tự động phía định nghĩa |
 | `chaos.md` | CHM-001..019 | Test tự động chaos kiểm chính xác đến từng câu lệnh bằng đồng hồ giả và không chạy trong CI; bản manual kiểm hành vi và độ trễ thật |
 
 ## 4. Checklist trước khi viết một case manual mới

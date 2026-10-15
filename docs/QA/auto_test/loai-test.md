@@ -1,6 +1,6 @@
 # Các loại test đang có trong source
 
-Tài liệu này cho biết repo có những loại test nào, nằm ở đâu, chạy thế nào, kiểm được gì và không kiểm được gì. Phạm vi: toàn bộ repo, gồm `services/wallet`, `services/payment`, `packages/*`, `db/`, `tests/`. Test của `tools/` và test của chính công cụ chaos/perf được **liệt kê riêng** (mục 2.8), không tính vào test sản phẩm.
+Tài liệu này cho biết repo có những loại test nào, nằm ở đâu, chạy thế nào, kiểm được gì và không kiểm được gì. Phạm vi: toàn bộ repo, gồm `services/wallet`, `services/payment`, `packages/*`, `db/`, `tools/`, `tests/`. Test của `db/` (migration) và `tools/` (công cụ Kibana, dữ liệu mẫu, khởi tạo RabbitMQ, kiểm kiến trúc), cùng test của chính công cụ chaos/perf, được **tính trong số liệu** và liệt kê thành nhóm riêng ở mục 2.8 để không lẫn với test sản phẩm.
 
 **Nhãn bằng chứng:** **đếm tĩnh** là đếm trong source, không chạy; **chạy thật** là kết quả lệnh đã chạy ngày 2026-10-15; **cấu hình** là đọc từ file cấu hình hoặc `Jenkinsfile`.
 
@@ -96,13 +96,14 @@ Các loại không phải test nhưng nằm trong quy trình kiểm tra: `lint`,
 - **CI / số lượng:** không thấy trong `Jenkinsfile`; 10 file, 27 test (đếm tĩnh; chưa chạy).
 - **Lưu ý:** tài liệu QA cũ từng ghi repo không có test performance; hiện đã có.
 
-### 2.8 Test của công cụ (không phải test sản phẩm)
+### 2.8 Test của công cụ và của DB (`tools/`, `db/`, công cụ chaos/perf)
 
-Các file `*.test.ts` (đuôi unit) kiểm chính công cụ hỗ trợ, được tách riêng để không lẫn với test sản phẩm. Chúng chạy trong bộ unit (`pnpm test`):
+Các file `*.test.ts` (đuôi unit) kiểm chính công cụ hỗ trợ được tách thành nhóm riêng để không lẫn với test sản phẩm; chúng chạy trong bộ unit (`pnpm test`). Test migration của `db/` là một file integration (xem thêm 2.2):
 
 | Nhóm | Vị trí | File | Test (chạy thật) | Kiểm gì |
 | --- | --- | --- | --- | --- |
 | Công cụ vận hành và kiến trúc | `tools/*.test.ts`, `tools/kibana/*.test.ts`, `tools/local/*.test.ts` | 13 | 181 | Dựng và kiểm quy tắc, dashboard Kibana; dữ liệu mẫu; tài liệu handoff; khởi tạo RabbitMQ; **kiểm ranh giới kiến trúc** (`tools/boundaries.test.ts`: domain không được import infrastructure, v.v.) |
+| `db/` migration payment | `db/payment/migrations.integration.test.ts` (bộ integration) | 1 | 6 (đếm tĩnh; nằm trong nhóm Migration ở 2.2) | Migration áp dụng một lần và chạy lại không đổi, tạo 4 bảng, các chỉ mục cho worker và phân trang sao kê, chỉ mục retention, so sánh khóa idempotency phân biệt hoa thường, ràng buộc CHECK. Hai script chạy migration bằng lệnh (`db/payment/migrate.ts`, `db/wallet/migrate.ts`) không có test |
 | Công cụ chaos | `tests/chaos/support/*.test.ts` không có đuôi `.chaos` | 11 | 92 | Bộ sinh số ngẫu nhiên, kế hoạch tiêm lỗi, proxy HTTP, kiểm bất biến |
 | Công cụ perf | `tests/perf/support/*.test.ts` và các file perf không có đuôi `.perf` | 9 | 96 | Bộ đo, bộ lấy mẫu, dựng dữ liệu |
 
