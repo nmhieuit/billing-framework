@@ -34,12 +34,11 @@ Sau tuần học, người học phải **tự làm được**:
 - Đầu ra: nhiều file Markdown trong `docs/training/nodejs-1-tuan/`.
 - Cần bài kiểm tra cuối mỗi ngày, có đáp án (đáp án để file riêng hoặc phần cuối bài).
 
-### Còn phải hỏi ở Giai đoạn 0 (người học chưa trả lời)
-- Hệ điều hành máy học (Windows/macOS/Linux) để đưa đúng lệnh.
-- Phiên bản C# và có dùng MassTransit không.
-- Mức JavaScript/TypeScript hiện có.
-- Nhóm sự cố ưu tiên troubleshoot trước.
-- Thuật ngữ: giữ tiếng Anh kèm giải thích, hay dịch hoàn toàn.
+- Hệ điều hành: Windows (lệnh PowerShell/WSL, lưu ý đường dẫn và Docker Desktop).
+- .NET: C# hiện đại, có dùng MassTransit.
+- JavaScript/TypeScript: chưa biết gì, nên Ngày 1 phải dạy cú pháp nền tảng.
+- Ưu tiên troubleshoot: tiền/ledger/idempotency, rồi messaging/outbox/DLQ.
+- Thuật ngữ: giữ tiếng Anh kèm giải thích tiếng Việt.
 
 ### Giai đoạn 0 — Khảo sát và hỏi (làm trước, chưa viết bài)
 1. Đọc: `README.md`, `package.json`, `pnpm-workspace.yaml`, `tsconfig*.json`, `eslint.config.js`, `vitest*.config.ts`, `docs/architecture/README.md`, các ADR trong `docs/adr/`, `docs/ops/*`, `docs/integration/*`, `docs/QA/*`.
