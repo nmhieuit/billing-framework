@@ -27,6 +27,20 @@ Sau tuần học, người học phải **tự làm được**:
 - Gặp mâu thuẫn giữa docs và code: **code là nguồn đúng**, nêu mâu thuẫn cho người học, không tự sửa docs cũ.
 - Không sửa code nghiệp vụ. Chỉ tạo file trong `docs/training/nodejs-1-tuan/`. Không commit/push cho tới khi được yêu cầu.
 
+### Thông tin người học đã xác nhận (không hỏi lại)
+- IDE: VS Code. Máy có Docker Desktop, chạy được SQL Server container.
+- .NET: ASP.NET Core, EF Core, RabbitMQ (chưa xác nhận phiên bản C#, có dùng MassTransit hay không).
+- Thời lượng: 4 giờ/ngày. Mỗi bài phải chia khung giờ cho vừa 4 giờ.
+- Đầu ra: nhiều file Markdown trong `docs/training/nodejs-1-tuan/`.
+- Cần bài kiểm tra cuối mỗi ngày, có đáp án (đáp án để file riêng hoặc phần cuối bài).
+
+### Còn phải hỏi ở Giai đoạn 0 (người học chưa trả lời)
+- Hệ điều hành máy học (Windows/macOS/Linux) để đưa đúng lệnh.
+- Phiên bản C# và có dùng MassTransit không.
+- Mức JavaScript/TypeScript hiện có.
+- Nhóm sự cố ưu tiên troubleshoot trước.
+- Thuật ngữ: giữ tiếng Anh kèm giải thích, hay dịch hoàn toàn.
+
 ### Giai đoạn 0 — Khảo sát và hỏi (làm trước, chưa viết bài)
 1. Đọc: `README.md`, `package.json`, `pnpm-workspace.yaml`, `tsconfig*.json`, `eslint.config.js`, `vitest*.config.ts`, `docs/architecture/README.md`, các ADR trong `docs/adr/`, `docs/ops/*`, `docs/integration/*`, `docs/QA/*`.
 2. Lập **bản đồ code** (liệt kê file đã đọc): điểm vào của từng service, các package dùng chung, luồng chính (nạp ví, thanh toán order, outbox, webhook, đối soát, retention, ops tools).
