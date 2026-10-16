@@ -82,7 +82,20 @@ Khung 4 giờ: Chuẩn bị 30' · Lý thuyết 80' · Đọc code 50' · Thực
    ```
    Viết test trong `money.test.ts`: `Money.of(100,'VND').multiply(3).amount` bằng `300`, và `multiply(0.5)` ném `InvalidMoneyError` khi kết quả không nguyên (ví dụ `Money.of(101,'VND').multiply(0.5)`).
    Chạy lại test + `corepack pnpm typecheck` + `corepack pnpm lint`.
-3. Cố ý gây lỗi kiểu: sửa `Money.of(1000, 'VND')` thành `Money.of('1000', 'VND')` trong một test, chạy `typecheck` → đọc thông báo lỗi; chạy `vitest` → test vẫn có thể chạy vì kiểu bị xóa lúc runtime. Giải thích vì sao. Hoàn tác bằng `git restore`.
+3. Cố ý gây lỗi kiểu, hai trường hợp [ĐÃ CHẠY]. Tạo tạm `packages/money/src/tmp-probe.test.ts` (xóa sau khi xong):
+   ```ts
+   import { expect, it } from 'vitest';
+   import { Money } from './index.js';
+   it('chuỗi thay vì số', () => {
+     expect(Money.of('5', 'USD').amount).toBe(5);
+   });
+   it('object thường thay vì Money', () => {
+     expect(Money.of(100, 'VND').equals({ amount: 100, currency: 'VND' })).toBe(true);
+   });
+   ```
+   - `corepack pnpm typecheck` báo **cả hai** dòng: `TS2345: Argument of type 'string' is not assignable to parameter of type 'number'` và `... is not assignable to parameter of type 'Money'`.
+   - `corepack pnpm vitest run packages/money/src/tmp-probe`: test 1 **fail lúc chạy** với `InvalidMoneyError: amount must be a safe integer` (vì `Number.isSafeInteger('5')` là false, `money.ts:13`), test 2 **pass** (code chạy chỉ đọc `amount`/`currency`, không biết kiểu sai).
+   - Bài học: kiểu bị xóa lúc chạy; lỗi có thể được runtime bắt (test 1, nhờ code phòng thủ) hoặc lọt qua (test 2). Chỉ `typecheck` bắt được cả hai.
 4. Chạy `corepack pnpm format:check` và đọc kết quả (prettier).
 
 ## Thử thách troubleshoot
