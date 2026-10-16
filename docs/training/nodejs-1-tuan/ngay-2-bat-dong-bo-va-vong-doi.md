@@ -122,3 +122,20 @@ Thứ tự in ra [ĐÃ CHẠY 4 lần, ổn định]:
 | 6 | `req1`/`req2: nhận kết quả` | phần code sau `await` (microtask) |
 
 Ghi chú: ở file này `nextTick` in **sau** microtask vì file là module ESM có top-level `await`, đang chạy bên trong một job microtask. Trong callback I/O thông thường của Node, `nextTick` chạy **trước** promise microtask. Đây là quan sát từ lab + hiểu biết về Node, chưa kiểm chứng riêng trong callback I/O.
+
+
+## Bổ sung: "nhà hàng một đầu bếp" — thứ tự của mọi lệnh runtime
+
+Lab: [labs/event-loop-restaurant.ts](labs/event-loop-restaurant.ts). Kịch bản 1 chạy trong callback I/O (giống request HTTP đến). Thứ tự [ĐÃ CHẠY 3 lần, ổn định]:
+
+| # | Lệnh | Loại |
+| - | ---- | ---- |
+| 1 | code đồng bộ trong callback (kể cả phần trước `await` đầu tiên) | đồng bộ |
+| 2 | `process.nextTick` | nextTick |
+| 3 | `Promise.then`, `queueMicrotask`, phần sau `await`, microtask do microtask sinh ra | microtask |
+| 4 | `setImmediate` | macrotask (pha check) |
+| 5 | `setTimeout(…, 0)` | macrotask (pha timers) |
+
+Kịch bản 2 [ĐÃ CHẠY 3 lần]: nối 100000 bước bằng microtask thì timer 0ms chạy sau khi xong 100000/100000 bước (bị chặn hoàn toàn); nối bằng `setImmediate` thì timer chen vào sau 8–171 bước (số bước thay đổi mỗi lần chạy).
+
+Trong repo: phần sau `await` là microtask (`get-wallet.ts:36→39`); `Worker` đặt tick kế tiếp bằng `setTimeout` (macrotask, `worker.ts:38-40`) để nhường lượt cho HTTP và consumer.
