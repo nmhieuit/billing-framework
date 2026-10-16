@@ -98,3 +98,27 @@ Tự lần theo: (a) code nào đặt giới hạn 5 giây? (b) nó chờ cái g
 ## Câu hỏi còn mở (cho đội dev)
 - Cơ chế `stop()` có hủy request HTTP đang bay của `app.close()` hay chờ hết? (tác giả chưa đọc hành vi của NestJS/Fastify trong repo này.)
 - Thời gian tối đa của toàn bộ trình tự tắt so với `terminationGracePeriod`/`docker stop -t` — repo chưa thấy cấu hình production (xem Ngày 1).
+
+
+## Bổ sung: đi theo endpoint `GET /wallet` (đồng bộ, bất đồng bộ, microtask)
+
+Lab chạy được, dùng **code thật** của `GetWallet` với DB giả: [labs/get-wallet-async.ts](labs/get-wallet-async.ts).
+
+```powershell
+.\node_modules\.bin\tsx docs/training/nodejs-1-tuan/labs/get-wallet-async.ts
+```
+
+Đường đi của `GET /wallet` trong code: Fastify (qua Nest) → `CorrelationMiddleware` (`correlation.middleware.ts:11-15`) → `CallerGuard.canActivate` (`caller.guard.ts`, **đồng bộ**) → `WalletsController.get` (`wallets.controller.ts:42-45`) → `GetWallet.execute` (`get-wallet.ts:35-41`, `async`) → `uow.run` (`unit-of-work.ts:22-40`) → `accounts.find` (`account.repository.ts:16-23`) → SQL qua socket (I/O).
+
+Thứ tự in ra [ĐÃ CHẠY 4 lần, ổn định]:
+
+| Thứ tự | Dòng | Loại |
+| --- | --- | --- |
+| 1 | `A`, `req1` vào handler, `[uow.run] mở transaction`, `req2` vào handler, `[uow.run] mở transaction`, `B`, `G` | đồng bộ: mỗi request chạy tới `await` đầu tiên rồi trả quyền |
+| 2 | `D: queueMicrotask`, `E: Promise.then` | microtask |
+| 3 | `C: process.nextTick` | nextTick (xem ghi chú) |
+| 4 | `F: setTimeout 0ms` | macrotask |
+| 5 | `[accounts.find]` của req1 rồi req2 (cách nhau ~1ms, sau ~20ms) | cả hai request chạy xen kẽ trên một luồng |
+| 6 | `req1`/`req2: nhận kết quả` | phần code sau `await` (microtask) |
+
+Ghi chú: ở file này `nextTick` in **sau** microtask vì file là module ESM có top-level `await`, đang chạy bên trong một job microtask. Trong callback I/O thông thường của Node, `nextTick` chạy **trước** promise microtask. Đây là quan sát từ lab + hiểu biết về Node, chưa kiểm chứng riêng trong callback I/O.
