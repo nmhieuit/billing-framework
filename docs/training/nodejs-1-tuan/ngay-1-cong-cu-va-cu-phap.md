@@ -126,3 +126,38 @@ Khung 4 giờ: Chuẩn bị 30' · Lý thuyết 80' · Đọc code 50' · Thực
 
 ## Câu hỏi còn mở (cho đội dev)
 - Production chạy service bằng gì? `deploy/Dockerfile.dev` ghi rõ chỉ cho local ("Không dùng cho production", dòng 1) và chạy bằng `tsx`. Repo không có Dockerfile production mà tác giả thấy; cần đội dev xác nhận cách đóng gói production.
+
+
+## Hỏi đáp sau khi học Ngày 1
+
+**1. `install`, `typecheck`, `lint`, `test` để làm gì?**
+- `corepack pnpm install`: tải thư viện theo `pnpm-lock.yaml` (≈ `dotnet restore`).
+- `corepack pnpm typecheck`: `tsc --noEmit`, kiểm tra kiểu toàn repo, không sinh file (≈ `dotnet build` chỉ phần lỗi biên dịch).
+- `corepack pnpm lint`: ESLint, kiểm tra luật code và ranh giới kiến trúc (≈ Roslyn analyzers).
+- `corepack pnpm test`: vitest, chạy unit test, không cần Docker (≈ `dotnet test`).
+- Chạy theo thứ tự trên; `install` phải chạy trước.
+
+**2. Gõ `Money.of('5', 'USD')` thấy gạch đỏ trong IDE: do plugin hay do `typecheck`?**
+- Do TypeScript language service có sẵn trong VS Code, không cần plugin. `typecheck` dùng cùng bộ kiểm tra kiểu nhưng chạy toàn repo và là cổng chặn ở CI.
+- Plugin ESLint là thứ khác: chỉ báo lỗi luật, không báo lỗi kiểu.
+- Lỗi này cũng làm test fail lúc chạy (`InvalidMoneyError`, `money.ts:13`). Truyền object thường thay vì `Money` thì test vẫn pass nhưng `typecheck` đỏ (bài tập 3 ở trên).
+
+**3. `corepack pnpm format:check` để làm gì?**
+- Chạy `prettier --check .` (`package.json:21`): kiểm tra định dạng code, chỉ báo cáo, không sửa.
+- Sửa bằng `corepack pnpm exec prettier --write <file>`.
+- `.prettierignore` loại `docs/`, nên sửa giáo trình không làm lệnh này đỏ.
+
+**4. `.prettierrc.json` gồm gì?**
+- `singleQuote: true`: dùng nháy đơn `'`.
+- `trailingComma: "all"`: thêm dấu phẩy cuối danh sách nhiều dòng.
+- `printWidth: 100`: tối đa 100 ký tự mỗi dòng.
+- `.editorconfig`: UTF-8, xuống dòng `lf`, thụt lề 2 dấu cách.
+
+**5. `eslint.config.js` gồm gì?**
+- Dòng 3–17: `SERVICES`, `LAYERS`, `FRAMEWORKS` (danh sách thư viện hạ tầng bị cấm ở lớp lõi).
+- Dòng 19–22 `layerImport`: tạo mẫu cấm import vào một lớp.
+- Dòng 24–45 `FORBIDDEN_BY_LAYER`: `domain` chỉ được import `@billing/money`; `domain` và `application` không import framework; `infrastructure` và `interface` không import nhau.
+- Dòng 47–53 `otherService`: wallet và payment không import code của nhau; giao tiếp qua `@billing/contracts`.
+- Dòng 55 `restrict`: bật luật `no-restricted-imports` ở mức `error`.
+- Dòng 57–72: mảng cấu hình; khối sau ghi đè khối trước, nên luật cấm import chéo service phải lặp lại trong khối theo lớp (comment dòng 65).
+- Đã kiểm chứng: chèn import `infrastructure` vào `domain` thì ESLint báo lỗi `no-restricted-imports`.
