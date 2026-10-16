@@ -1,0 +1,69 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug current file (tsx)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx"],
+      "program": "${file}",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Debug payment-service",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/services/payment",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx"],
+      "program": "${workspaceFolder}/services/payment/src/main.ts",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Debug wallet-service",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/services/wallet",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx"],
+      "program": "${workspaceFolder}/services/wallet/src/main.ts",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Debug current test file (vitest)",
+      "type": "node",
+      "request": "launch",
+      "autoAttachChildProcesses": true,
+      "runtimeExecutable": "pnpm",
+      "windows": { "runtimeExecutable": "pnpm.cmd" },
+      "runtimeArgs": ["exec", "vitest", "run", "${relativeFile}", "--no-file-parallelism"],
+      "cwd": "${workspaceFolder}",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Debug current integration test (vitest)",
+      "type": "node",
+      "request": "launch",
+      "autoAttachChildProcesses": true,
+      "runtimeExecutable": "pnpm",
+      "windows": { "runtimeExecutable": "pnpm.cmd" },
+      "runtimeArgs": ["exec", "vitest", "run", "--config", "vitest.integration.config.ts", "${relativeFile}", "--no-file-parallelism"],
+      "cwd": "${workspaceFolder}",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Attach to process (9229)",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    }
+  ]
+}
