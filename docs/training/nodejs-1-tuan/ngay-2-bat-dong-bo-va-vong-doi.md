@@ -139,3 +139,24 @@ Lab: [labs/event-loop-restaurant.ts](labs/event-loop-restaurant.ts). Kịch bả
 Kịch bản 2 [ĐÃ CHẠY 3 lần]: nối 100000 bước bằng microtask thì timer 0ms chạy sau khi xong 100000/100000 bước (bị chặn hoàn toàn); nối bằng `setImmediate` thì timer chen vào sau 8–171 bước (số bước thay đổi mỗi lần chạy).
 
 Trong repo: phần sau `await` là microtask (`get-wallet.ts:36→39`); `Worker` đặt tick kế tiếp bằng `setTimeout` (macrotask, `worker.ts:38-40`) để nhường lượt cho HTTP và consumer.
+
+
+## Bổ sung: các hàm bất đồng bộ trong luồng nạp tiền thật (wallet → payment)
+
+Lab chạy được, dùng code thật `RequestTopup`, `InlineTopupSubmitter`, `createShutdownHandler`: [labs/topup-async-flow.ts](labs/topup-async-flow.ts).
+
+**Phát hiện [ĐÃ CHẠY `grep` trên mã nguồn không phải test]:** `process.nextTick`, `queueMicrotask`, `setImmediate`, `setInterval` **không có ở đâu** trong `packages/`, `services/`, `db/`, `tools/`. Repo chỉ dùng `await`, `.then/.catch/.finally`, `new Promise`, `Promise.race/allSettled`, `setTimeout`, `AbortSignal`.
+
+| Công cụ | Chỗ dùng thật trong luồng tiền | Vai trò |
+| ------- | ------------------------------ | ------- |
+| `await` | `request-topup.ts:80,85`; `http-payment-gateway.ts:22`; `deliver-due-webhooks.ts:52,61,63` | chờ DB/HTTP; phần sau `await` là microtask |
+| `.catch/.finally` | `inline-topup-submitter.ts:18-30` | việc nền "gửi sang payment" không được làm hỏng request, không để lại rejection chưa xử lý |
+| `.then(ok, err)` | `lifecycle.ts:38` | sau khi `stop()` xong thì `exit(0)`, lỗi thì `exit(1)` |
+| `.then(task, task)` | `client.ts:185` | xếp hàng tác vụ tuần tự (chuỗi promise làm hàng đợi) |
+| `new Promise` + `setTimeout` | `main.ts:44-46` (cả hai service), `client.ts:165-167`, `payment/app.ts:24` | tạo hạn chót; sleep |
+| `Promise.race` | `main.ts:48`, `client.ts:163` | "xong hoặc hết giờ, cái nào trước" |
+| `Promise.allSettled` | `inline-topup-submitter.ts:35`, `consumer.ts:193`, `background-runs.ts:30` | chờ mọi việc đang chạy dù có lỗi |
+| `setTimeout` (loop) | `worker.ts:39` | nhường lượt giữa các tick |
+| `AbortSignal.timeout` | `http-payment-gateway.ts:34`, `http-webhook-sender.ts:31` | hạn chót cho `fetch` |
+
+Kết quả lab [ĐÃ CHẠY]: client nhận `202` ngay sau `COMMIT`, ~60ms **trước** khi payment trả lời; payment chết thì client vẫn nhận `202` và lỗi chỉ được log; khi tắt dịch vụ, `drain()` chờ lần gửi đang chạy rồi `.then` mới gọi `exit(0)`.
