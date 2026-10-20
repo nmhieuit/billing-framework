@@ -1,0 +1,7 @@
+services:
+  wallet:
+    command: ['node', '--inspect=0.0.0.0:9229', '--import', 'tsx', 'services/wallet/src/main.ts']
+    ports: ['127.0.0.1:9229:9229']
+  payment:
+    command: ['node', '--inspect=0.0.0.0:9229', '--import', 'tsx', 'services/payment/src/main.ts']
+    ports: ['127.0.0.1:9230:9229']
