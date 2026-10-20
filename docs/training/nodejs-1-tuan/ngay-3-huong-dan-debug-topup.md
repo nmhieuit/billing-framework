@@ -23,10 +23,10 @@ Bạn mô tả "gọi bất đồng bộ qua payment **có truyền** correlatio
 
 Lab chạy được, dùng code thật `HttpPaymentGateway`, payment `buildApp` (Fastify), `InlineTopupSubmitter`: [labs/correlation-propagation.ts](labs/correlation-propagation.ts) [ĐÃ CHẠY].
 
-**Hệ quả cho hướng dẫn này:**
-- Phần 3–5 dạy bạn debug luồng **như code hiện tại đang chạy** và dùng đúng những khóa liên kết có thật (`topupId`, idempotency key, `x-webhook-event-id`) để nối wallet với payment.
-- Phần 6 là bài tập sửa code: **thêm `x-correlation-id` vào request wallet → payment** (bản vá 3 dòng đã chạy thử).
-- **Cần bạn xác nhận** (xem Phần 9): đây là chủ ý thiết kế hay chỗ còn thiếu? Tôi chưa áp dụng bản vá vào code của repo.
+**Quyết định đã chốt:** không sửa code để truyền correlation id. Hướng dẫn này debug luồng **đúng như code hiện tại**:
+- Correlation id chỉ dùng để lọc log **bên trong wallet** (phần HTTP và phần chạy nền khởi phát từ request).
+- Khi sang payment và khi webhook quay về, bạn nối các hệ thống bằng **khóa có thật**: `topupId`, idempotency key `topup:<tenant>:<topupId>`, `chargeId`, `x-webhook-event-id` (xem Phần 5.4 và 6, có truy vấn SQL).
+- Muốn lọc theo một lần nạp cụ thể khi debugger: dùng **conditional breakpoint** và **logpoint** theo `topupId` (Phần 5.5).
 
 ---
 
@@ -313,55 +313,75 @@ curl.exe -i -X POST http://localhost:3001/topups `
 2. **#2 → #3**: F10 qua `await this.requestTopup.execute`. Quan sát: lần F10 đi qua `await` "nhảy" sang code khác (Ngày 2: phần sau `await` là microtask).
 3. **#3** (`request-topup.ts:88`): `result.body.topupId` là mã bạn sẽ dùng để theo dõi. F10 một lần: dòng `submitSoon` **trả về ngay**.
 4. **Quan sát #4 trước khi client nhận 202**: với breakpoint ở `inline-topup-submitter.ts:16`, trình debug dừng **trước khi** controller trả 202 (đúng như lab Ngày 2: phần đồng bộ của việc chạy nền chạy ngay). Call Stack có khung `submitSoon`.
-5. **#5 → #6**: F5 đến `http-payment-gateway.ts:22`. Xem biến `headers` (đối tượng literal ở dòng 24–27): chỉ có hai khóa `content-type`, `idempotency-key`. Chưa có `x-correlation-id`. (Lab C đã chứng minh `getCorrelationId()` ở đây vẫn trả id của khách; hàm này chưa được import trong file nên Debug Console sẽ báo `not defined` trước khi vá. Sau khi áp dụng bản vá ở Phần 6, bạn thêm được Watch `correlationId`.)
+5. **#5 → #6**: F5 đến `http-payment-gateway.ts:22`. Xem biến `headers` (đối tượng literal ở dòng 24–27): chỉ có hai khóa `content-type`, `idempotency-key`. **Không có** `x-correlation-id`. (Lab C đã chứng minh `getCorrelationId()` ở thời điểm này vẫn trả id của khách trong wallet, nhưng id đó không được đưa vào request.)
 6. **#7** (payment `app.ts:30`): `request.headers['x-correlation-id']` là `undefined`; sau `resolveCorrelationId` biến `correlationId` là UUID **mới** — khác id của khách.
 7. **#8** (`create-charge.ts:57`): `input.reference` = `topupId` ở wallet; `input.idempotencyKey` = `topup:acme:<topupId>` (`submit-topup.ts:69`). **Đây là khóa nối hai hệ thống hiện nay.**
 8. Quay lại **#11**: sau khi payment trả `202 {chargeId}`, `topups.save(current.recordSubmitted(...))`. Gọi `GET /topups/<topupId>` để xem trạng thái (xem trường `status`).
 9. Chờ worker payment (chu kỳ `WORKER_INTERVAL_MS`, mặc định 500ms trong compose): **#9** dừng ở `deliver-due-webhooks.ts:61`, rồi **#10** dừng ở `webhooks.controller.ts:69` trên wallet. Ở request webhook này, `correlation.middleware.ts` sinh một id **khác nữa** (payment không gửi header).
 10. Kết quả cuối: `GET /topups/<topupId>` → trạng thái chốt (ví dụ `SUCCEEDED`), `GET /wallet/entries` có dòng sổ cái (`ledger-transaction.ts:73`, khóa `topup:<topupId>`). Chi tiết trạng thái: [GIẢ THUYẾT: bạn quan sát và ghi lại tên trạng thái thực tế].
 
-### 5.4. Truy vết khi KHÔNG có correlation id xuyên suốt (hiện tại)
-Dùng chuỗi khóa có thật:
-| Hệ thống | Khóa tìm trong log / DB |
-| -------- | ----------------------- |
-| Wallet HTTP | `correlationId` = id khách gửi |
-| Wallet → payment | `topupId`; idempotency key `topup:<tenant>:<topupId>` |
-| Payment | `reference` (= topupId), `chargeId` |
-| Payment → wallet | `x-webhook-event-id`, `payload.data.reference` (= topupId) |
-Log `SubmitTopup` chỉ ghi khi lỗi hoặc retry (`submit-topup.ts:116-132`): thành công thì **không có dòng log**, hãy dùng debugger/DB để xác nhận.
+### 5.4. Bảng khóa nối wallet ↔ payment (thay cho correlation id)
+| Hệ thống | Khóa tìm trong log / DB | Nguồn trong code |
+| -------- | ----------------------- | ---------------- |
+| Wallet HTTP | `x-correlation-id` do khách gửi (chỉ trong wallet) | `correlation.middleware.ts:12` |
+| Wallet | `topups.id` = `topupId` | `request-topup.ts:58`, `002-topups.ts` |
+| Wallet → payment | `idempotency-key: topup:<tenant>:<topupId>`; body `reference` = `topupId`; `metadata.tenantId` | `submit-topup.ts:69-72` |
+| Payment | `charges.reference` = `topupId`, `charges.id` = `chargeId` | `create-charge.ts:57-63`, `db/payment/001-init.ts` |
+| Payment → wallet | `webhook_events.event_id` (header `x-webhook-event-id`), `payload.data.reference` = `topupId` | `http-webhook-sender.ts:25-29`, `webhooks.controller.ts:69-78` |
+Log của `SubmitTopup` chỉ ghi khi lỗi hoặc retry (`submit-topup.ts:116-132`); thành công thì **không có dòng log**, hãy xác nhận bằng debugger hoặc SQL.
+
+### 5.5. Lọc theo một lần nạp khi debugger: conditional breakpoint và logpoint
+Khi nhiều request chạy cùng lúc, dừng ở mọi request là khó theo dõi. VS Code cho phép:
+- **Conditional breakpoint:** chuột phải vào lề trái cạnh số dòng → *Add Conditional Breakpoint…* → *Expression*. Ví dụ tại `submit-topup.ts:68`:
+  ```
+  props.id === 'tp_xxxxx'
+  ```
+  (thay bằng `topupId` bạn nhận ở bước 5.2; lấy từ response `202`). Tại `webhooks.controller.ts:69`: `payload.data.reference === 'tp_xxxxx'`. Tại `create-charge.ts:57`: `input.reference === 'tp_xxxxx'`.
+- **Logpoint:** chuột phải → *Add Logpoint…*, nhập thông điệp có biểu thức trong `{}`, ví dụ `submit topup {props.id} key={'topup:' + tenant.value + ':' + props.id}`. Không dừng chương trình, chỉ in ra Debug Console.
+[CHƯA CHẠY: cần VS Code. Đây là tính năng chuẩn của VS Code.] Biến `props`, `tenant`, `input`, `payload` là các biến cục bộ có tên đúng như trong code ở các dòng nêu trên.
+
+### 5.6. Truy vết bằng SQL (không cần sửa code)
+Dùng extension **SQL Server (mssql)** của Microsoft trong VS Code (ID `ms-mssql.mssql`), kết nối `localhost,11433`. Hoặc dùng `sqlcmd` trong container (đường dẫn công cụ lấy từ healthcheck, `compose.infra.yml:24-27`):
+```powershell
+docker compose -f deploy/compose.local.yml --env-file deploy/.env exec sqlserver /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -d billing_wallet -P "<BILLING_SQLSERVER_SA_PASSWORD>" -Q "SELECT id, status, charge_id, attempts, next_attempt_at, completed_at FROM t_acme.topups WHERE id = 'tp_xxxxx'"
+```
+[CHƯA CHẠY. Nếu PowerShell làm hỏng dấu nháy, dùng extension mssql thay cho `sqlcmd`.]
+
+Truy vấn theo thứ tự luồng (tên bảng/cột lấy từ `002-topups.ts`, `001-ledger.ts:31-34`, `db/payment/001-init.ts`; tenant `acme` ví dụ):
+```sql
+-- DB billing_wallet
+SELECT id, customer_id, status, charge_id, failure_code, attempts, next_attempt_at, created_at, completed_at
+FROM t_acme.topups WHERE id = 'tp_xxxxx';
+SELECT * FROM t_acme.idempotency_keys WHERE topup_id = 'tp_xxxxx';
+SELECT * FROM t_acme.ledger_transactions WHERE business_key = 'topup:tp_xxxxx';   -- chỉ có khi đã SUCCEEDED
+
+-- DB billing_payment
+SELECT * FROM charges WHERE reference = 'tp_xxxxx';
+SELECT * FROM webhook_events WHERE charge_id = '<chargeId từ dòng trên>';
+SELECT * FROM webhook_attempts WHERE event_id = '<event_id từ dòng trên>';
+```
+Trạng thái đã kiểm chứng trong schema: `topups.status` ∈ `REQUESTED, PENDING, SUCCEEDED, FAILED`; `charges.status` ∈ `PENDING, SUCCEEDED, FAILED`; `webhook_events.status` ∈ `PENDING, DELIVERED, FAILED` (check constraint trong migration). `webhook_attempts` ghi từng lần gửi webhook (`deliver-due-webhooks.ts:70-76`).
+Hai DB dùng hai tài khoản khác nhau (`billing_wallet_app`, `billing_payment_app`); với truy vấn tạm thời có thể dùng `sa`.
 
 ---
 
-## 6. Bài tập sửa code: truyền correlation id sang payment (đã chạy thử, đã hoàn tác)
+## 6. Bài tập truy vết (không sửa code)
 
-Sửa `services/wallet/src/infrastructure/http-payment-gateway.ts` (tạo nhánh học: `git switch -c hoc/ngay-3-correlation`):
-```diff
-+import { CORRELATION_HEADER, getCorrelationId } from '@billing/observability';
- import type {
-   GatewayChargeRequest,
-@@
-   async createCharge(request: GatewayChargeRequest): Promise<GatewayChargeResult> {
-     const doFetch = this.options.fetchImpl ?? fetch;
-+    const correlationId = getCorrelationId();
-     try {
-@@
-         headers: {
-           'content-type': 'application/json',
-           'idempotency-key': request.idempotencyKey,
-+          ...(correlationId ? { [CORRELATION_HEADER]: correlationId } : {}),
-         },
-```
-Kết quả đã kiểm chứng [ĐÃ CHẠY]:
-- Lab A in `content-type, idempotency-key, x-correlation-id` và `CÓ (= <id>)`.
-- `corepack pnpm vitest run services/wallet/src/infrastructure/http-payment-gateway.test.ts`: 13 test pass.
-- `typecheck`, `eslint`, `prettier --check` trên file này: không lỗi.
-- Quy tắc ranh giới (`infrastructure` được phép import package dùng chung; `FRAMEWORKS` không chứa `@billing/observability`, `eslint.config.js:6-17`).
+**Bài 1: theo dõi một lần nạp thành công.**
+Thực hiện 5.2 và 5.3; ghi `topupId`. Sau khi webhook về, dựng bảng 6 dòng: thời điểm, hệ thống, sự kiện, khóa dùng để nhận ra (xem 5.4). Dùng SQL ở 5.6 để điền cột trạng thái. Kết quả mong đợi: `topups.status = SUCCEEDED`, có một dòng `ledger_transactions` với `business_key = topup:<topupId>`, `charges.status = SUCCEEDED`, `webhook_events.status = DELIVERED`.
 
-Sau khi vá, chạy lại luồng ở Phần 5: breakpoint #7 (`app.ts:30`) thấy `request.headers['x-correlation-id']` = id của khách; log của payment và response header cùng id. Hai điều **vẫn chưa** được giải quyết bởi bản vá này:
-1. **Đường Worker** (gửi lại khi lần gửi ngay thất bại): không có ngữ cảnh request nên không có id (lab C). Muốn có phải lưu correlation id cùng bản ghi topup. **Cần thay đổi schema/migration; ngoài phạm vi bài tập.**
-2. **Webhook payment → wallet**: worker payment chạy ngoài request nên cũng cần lưu id cùng webhook event. **Chưa khảo sát chi tiết.**
+**Bài 2: payment chết, wallet gửi lại bằng Worker (đường không có correlation id).**
+1. Chế độ A: dừng cấu hình payment trong debugger (hoặc Chế độ B: `docker compose ... stop payment`). Gửi `POST /topups` mới (idempotency key mới).
+2. Client vẫn nhận `202`. Chạy SQL (5.6). Theo `Topup.recordUnavailable` (`topup.ts:102-117`): `status` **giữ nguyên `REQUESTED`**, `attempts` tăng 1, `next_attempt_at = now + backoff[attempts-1]` (backoff mặc định `1,5,30,120,600` giây: `TOPUP_SUBMIT_BACKOFF`, `.env.example`).
+3. Log của wallet có dòng `payment unavailable; topup retry scheduled` (`submit-topup.ts:128`) kèm `topupId`, `attempt`, `error`. **Dòng này không có `correlationId`** nếu do Worker ghi (lab C).
+4. Bật payment lại; đến hạn `next_attempt_at` (điều kiện `Topup.isDue`: `status = REQUESTED` và `next_attempt_at <= now`, `topup.ts:64-70`), `Worker` (`bootstrap.ts:259-264`) gọi `SubmitDueTopups` → `SubmitTopup.executeNextDue` (`submit-topup.ts:55`). Đặt breakpoint ở `submit-topup.ts:68`: `Call Stack` bắt đầu từ `Worker.tick`, không từ HTTP.
+5. Khi payment trả `202`, `recordSubmitted` (`topup.ts:78-87`) đặt `status = PENDING`, ghi `charge_id`, `next_attempt_at = NULL`. Webhook sau đó chuyển sang `SUCCEEDED`.
+6. Nhánh hết lượt: nếu payment chết lâu hơn số bậc backoff (5 bậc mặc định), lần thất bại tiếp theo đặt `FAILED` với `failure_code = PAYMENT_UNAVAILABLE`. Webhook thành công đến muộn **vẫn được chấp nhận** cho trường hợp này (`topup.ts:119-125`, "cổng thanh toán là nguồn sự thật"). Bạn thử lại bằng cách để payment tắt đủ lâu, hoặc đặt `TOPUP_SUBMIT_BACKOFF=1,1` trong `wallet.debug.env` để rút ngắn. [CHƯA CHẠY]
 
-Bài tập thêm: viết test trong `http-payment-gateway.test.ts` khẳng định header có mặt khi chạy trong `runWithCorrelation(...)` và vắng mặt khi chạy ngoài. Đọc test hiện có để biết cách giả `fetchImpl`.
+**Bài 3: bắt cùng một topup đi qua cả hai dịch vụ chỉ bằng conditional breakpoint.**
+Đặt ba conditional breakpoint (5.5) với cùng `topupId` tại `submit-topup.ts:68`, `create-charge.ts:57`, `webhooks.controller.ts:69`. Chạy hai request nạp song song (hai customer khác nhau) và xác nhận debugger chỉ dừng cho đúng topup bạn chọn.
+
+**Bài 4 (đọc code, không chạy):** trả lời bằng `file:dòng` — vì sao webhook payment → wallet không thể mang correlation id nếu không đổi dữ liệu lưu trữ? (gợi ý: `deliver-due-webhooks.ts:52-61` lấy sự kiện từ DB trong `Worker`, không thuộc request nào.)
 
 ---
 
@@ -387,7 +407,7 @@ Bài tập thêm: viết test trong `http-payment-gateway.test.ts` khẳng đị
 
 1. Header nào wallet gửi sang payment ở `POST /charges` hiện tại, và vì sao `x-correlation-id` ở payment lại khác id của khách?
 2. Vì sao breakpoint ở `inline-topup-submitter.ts:16` dừng trước khi client nhận `202`?
-3. Hai khóa nào dùng để nối một lần nạp giữa wallet và payment khi chưa có correlation id xuyên suốt?
+3. Hai khóa nào nối một lần nạp giữa wallet và payment (vì correlation id không được truyền sang payment)? Truy vấn SQL nào xác nhận điều đó ở phía payment?
 4. Vì sao đường Worker không có `correlationId` trong log?
 5. Vì sao phải dừng container wallet/payment khi debug local?
 6. `envFile` giải quyết vấn đề gì mà cấu hình `Debug wallet-service` có sẵn không giải quyết được?
@@ -396,7 +416,7 @@ Bài tập thêm: viết test trong `http-payment-gateway.test.ts` khẳng đị
 ### Đáp án
 1. `content-type`, `idempotency-key` (`http-payment-gateway.ts:24-27`); payment không nhận header nên `resolveCorrelationId` sinh UUID mới (`correlation.ts:17-19`, `app.ts:30`).
 2. `submitSoon` gọi async IIFE, phần đồng bộ của nó chạy ngay đến `await` đầu tiên (lab Ngày 2 `topup-async-flow.ts`), trước khi `execute` trả về.
-3. `topupId` (= `reference` bên payment) và idempotency key `topup:<tenant>:<topupId>` (`submit-topup.ts:69-71`).
+3. `topupId` (= `reference` bên payment) và idempotency key `topup:<tenant>:<topupId>` (`submit-topup.ts:69-71`). Truy vấn: `SELECT * FROM charges WHERE reference = '<topupId>'` trong DB `billing_payment`.
 4. Worker chạy từ `setTimeout`, không thuộc request nào nên `AsyncLocalStorage` rỗng (lab C `tp_worker`).
 5. Trùng cổng; hai wallet cùng consume một hàng đợi nên message bị chia.
 6. `tsx` không đọc `.env`; service chỉ đọc `process.env` và sẽ từ chối khởi động nếu thiếu biến.
@@ -404,9 +424,9 @@ Bài tập thêm: viết test trong `http-payment-gateway.test.ts` khẳng đị
 
 ---
 
-## 9. Câu hỏi còn mở (cho bạn và đội dev)
+## 9. Câu hỏi còn mở (cho đội dev)
 
-1. **Cần bạn xác nhận:** wallet không gửi correlation id sang payment là chủ ý hay chỗ còn thiếu? Nếu là chỗ thiếu, bạn có muốn áp dụng bản vá ở Phần 6 vào repo không? (Tôi chưa áp dụng.)
+1. Việc wallet không gửi `x-correlation-id` sang payment và payment không gửi lại trong webhook là chủ ý thiết kế? (Quyết định hiện tại của bạn: không đổi code; hướng dẫn này dựa trên hành vi hiện có.)
 2. Với đường Worker và webhook, đội dev có kế hoạch lưu correlation id trong DB không?
 3. `compose.local.yml` + `-f compose.debug.yml`: kết quả bước `config` trên máy của bạn là gì?
-4. Tên trạng thái thực tế của topup trong quá trình chạy (bạn quan sát được những giá trị nào)?
+4. Ở Bài 2, `attempts` và `next_attempt_at` thực tế bạn quan sát có khớp `topup.ts:102-117` không?

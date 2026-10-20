@@ -96,4 +96,4 @@ Tự lần: nguyên nhân thường gặp trong repo này là gì? Bạn kiểm 
 
 ## Thực hành mở rộng: debug `POST /topups` wallet → payment với correlation id
 
-Hướng dẫn setup và từng bước debug trên local (VS Code) và Docker Desktop: [ngay-3-huong-dan-debug-topup.md](ngay-3-huong-dan-debug-topup.md). Lưu ý phát hiện chính (đã chạy lab): wallet **chưa** gửi `x-correlation-id` sang payment.
+Hướng dẫn setup và từng bước debug trên local (VS Code) và Docker Desktop: [ngay-3-huong-dan-debug-topup.md](ngay-3-huong-dan-debug-topup.md). Lưu ý phát hiện chính (đã chạy lab): wallet **chưa** gửi `x-correlation-id` sang payment; hướng dẫn bám hành vi hiện tại, không sửa code.
