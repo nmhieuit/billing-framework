@@ -75,7 +75,7 @@ const post = (headers: Record<string, string>) =>
 const withHeader = await post({ [CORRELATION_HEADER]: CID });
 console.log(`gửi kèm header: handler thấy ${seenInHandler}; response header ${withHeader.headers[CORRELATION_HEADER]}`);
 console.log(`  -> giữ nguyên id của khách? ${seenInHandler === CID ? 'CÓ' : 'KHÔNG'}`);
-const without = await post({});
+await post({});
 console.log(`KHÔNG gửi header: handler thấy ${seenInHandler}`);
 console.log(`  -> khác id của khách (payment tự sinh id mới)? ${seenInHandler !== CID ? 'ĐÚNG' : 'SAI'}\n`);
 await payment.close();
