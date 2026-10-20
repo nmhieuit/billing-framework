@@ -103,3 +103,12 @@ Hướng dẫn setup và từng bước debug trên local (VS Code) và Docker D
 
 - [diagrams/runtime-request-sequence.drawio](diagrams/runtime-request-sequence.drawio): sequence diagram của `GET /wallet`. Trang 1: một request (14 bước, kèm bảng số mũi tên → hàm → file:dòng). Trang 2: hai request chồng nhau (luồng JS duy nhất, pool kết nối, ngữ cảnh riêng từng request).
 - Bằng chứng chạy thật: lab [labs/get-wallet-http-trace.ts](labs/get-wallet-http-trace.ts) (NestJS + Fastify + `GetWallet` thật, DB giả). Mở file `.drawio` bằng draw.io Desktop, app.diagrams.net hoặc extension VS Code "Draw.io Integration".
+
+
+## Sơ đồ luồng nạp tiền (draw.io, 3 sheet)
+
+[diagrams/topup-flows.drawio](diagrams/topup-flows.drawio): sheet 1 happy case; sheet 2 các kiểu trùng (cùng Idempotency-Key tuần tự và đồng thời, khác nội dung, gọi lại `POST /charges`, webhook hai lần); sheet 3 payment chậm, timeout, retry theo bậc backoff, FAILED. **Repo không có circuit breaker** (đã `grep`); sheet 3 chỉ vẽ cơ chế có thật.
+
+Bằng chứng chạy thật (code thật của repo, DB và mạng giả):
+- [labs/topup-duplicates.ts](labs/topup-duplicates.ts): RequestTopup, CreateCharge, ApplyPaymentResult với trùng lặp và đua.
+- [labs/topup-slow-payment-retry.ts](labs/topup-slow-payment-retry.ts): HttpPaymentGateway + SubmitTopup với payment chậm.

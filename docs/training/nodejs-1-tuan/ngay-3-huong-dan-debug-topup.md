@@ -232,7 +232,7 @@ services:
 - Khác với `tsx watch`, lệnh `node ...` **không tự nạp lại** khi bạn sửa code: sau khi sửa, chạy `docker compose ... restart wallet payment`.
 
 ### 4.3. Cấu hình attach trong `launch.json`
-Cấu hình `Attach to process (9229)` đã có chỉ gắn cổng, nhưng thiếu ánh xạ đường dẫn container ↔ máy. Thêm:
+Cấu hình `Attach to process (9229)` chỉ gắn cổng, không có ánh xạ đường dẫn container ↔ máy. Repo đã có sẵn hai cấu hình attach đúng ánh xạ (`.vscode/launch.json`):
 ```json
 {
   "name": "Attach wallet (Docker)",
@@ -257,12 +257,27 @@ Cấu hình `Attach to process (9229)` đã có chỉ gắn cổng, nhưng thi�
   "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
 }
 ```
-`remoteRoot: /app` khớp bind mount `../services/wallet/src:/app/services/wallet/src` (`compose.services.yml` `x-sources`). Thêm compound `"Attach wallet + payment (Docker)"` tương tự mục 3.3. [CHƯA CHẠY]
+`remoteRoot: /app` khớp bind mount `../services/wallet/src:/app/services/wallet/src` (`compose.services.yml` `x-sources`). Cùng file đã có compound **`Attach wallet + payment (Docker)`** để gắn vào cả hai container bằng một lần F5 (mục 4.5). [CHƯA CHẠY]
 
 ### 4.4. Gắn debugger
 1. Đảm bảo log container có dòng `Debugger listening on ws://0.0.0.0:9229/...`: `docker compose ... logs wallet | Select-String "Debugger"`.
 2. F5 với **Attach wallet (Docker)**; thanh debug hiện, breakpoint chuyển từ xám sang đỏ.
 3. Nếu breakpoint giữ màu xám: kiểm tra `remoteRoot`/`localRoot`, hoặc mở Debug Console xem thông báo. Chụp màn hình lỗi gửi lại.
+
+### 4.5. Debug wallet và payment cùng lúc trong Docker (compound)
+
+`.vscode/launch.json` có compound `Attach wallet + payment (Docker)` = `Attach payment (Docker)` (cổng 9230) + `Attach wallet (Docker)` (cổng 9229), `stopAll: true`. Payment gắn trước vì wallet gọi payment.
+
+Checklist tự xác nhận trên máy bạn [CHƯA CHẠY: cần Docker Desktop và VS Code]:
+1. Xem cấu hình sau khi gộp: `docker compose -f deploy/compose.local.yml -f deploy/compose.debug.yml --env-file deploy/.env config`. `wallet.command` và `payment.command` phải chứa `--inspect=0.0.0.0:9229`. Nếu không, báo lại (việc gộp `-f` với `include` chưa được kiểm chứng).
+2. Khởi động: `docker compose -f deploy/compose.local.yml -f deploy/compose.debug.yml --env-file deploy/.env up -d --build wallet payment`.
+3. Log mỗi container có `Debugger listening on ws://0.0.0.0:9229/...`: `docker compose ... logs wallet payment | Select-String "Debugger"`.
+4. Ctrl+Shift+D, chọn `Attach wallet + payment (Docker)`, F5. Panel Call Stack liệt kê **hai** phiên debug.
+5. Đặt hai breakpoint: `services/wallet/src/application/request-topup.ts:88` và `services/payment/src/application/create-charge.ts:57`.
+6. Gửi `POST /topups` (mục 5.2). Debugger dừng ở wallet; F5 tiếp tục, rồi dừng ở payment: **cả hai gắn đúng**.
+7. Shift+F5 ngắt cả hai phiên (`stopAll`). Container vẫn chạy.
+
+Xử lý sự cố: cổng 9229/9230 đã dùng (tắt stack cũ); breakpoint xám (kiểm tra `remoteRoot: /app`, hoặc đã sửa code mà chưa `docker compose ... restart wallet payment`); chỉ một phiên gắn được (container còn lại chưa chạy `--inspect`: xem bước 1 và 3). `restart: true` giúp debugger tự gắn lại khi container khởi động lại.
 
 ---
 
