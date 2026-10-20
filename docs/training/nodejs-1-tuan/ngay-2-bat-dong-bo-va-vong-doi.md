@@ -108,7 +108,7 @@ Lab chạy được, dùng **code thật** của `GetWallet` với DB giả: [la
 .\node_modules\.bin\tsx docs/training/nodejs-1-tuan/labs/get-wallet-async.ts
 ```
 
-Đường đi của `GET /wallet` trong code: Fastify (qua Nest) → `CorrelationMiddleware` (`correlation.middleware.ts:11-15`) → `CallerGuard.canActivate` (`caller.guard.ts`, **đồng bộ**) → `WalletsController.get` (`wallets.controller.ts:42-45`) → `GetWallet.execute` (`get-wallet.ts:35-41`, `async`) → `uow.run` (`unit-of-work.ts:22-40`) → `accounts.find` (`account.repository.ts:16-23`) → SQL qua socket (I/O).
+Đường đi của `GET /wallet` trong code: Fastify (qua Nest) → `CorrelationMiddleware` (`correlation.middleware.ts:11-15`) → `CallerGuard.canActivate` (`caller.guard.ts`, **đồng bộ**) → `WalletsController.get` (`wallets.controller.ts:42-45`) → `GetWallet.execute` (`get-wallet.ts:11-17`, `async`) → `uow.run` (`unit-of-work.ts:22-40`) → `accounts.find` (`account.repository.ts:16-23`) → SQL qua socket (I/O).
 
 Thứ tự in ra [ĐÃ CHẠY 4 lần, ổn định]:
 
@@ -138,7 +138,7 @@ Lab: [labs/event-loop-restaurant.ts](labs/event-loop-restaurant.ts). Kịch bả
 
 Kịch bản 2 [ĐÃ CHẠY 3 lần]: nối 100000 bước bằng microtask thì timer 0ms chạy sau khi xong 100000/100000 bước (bị chặn hoàn toàn); nối bằng `setImmediate` thì timer chen vào sau 8–171 bước (số bước thay đổi mỗi lần chạy).
 
-Trong repo: phần sau `await` là microtask (`get-wallet.ts:36→39`); `Worker` đặt tick kế tiếp bằng `setTimeout` (macrotask, `worker.ts:38-40`) để nhường lượt cho HTTP và consumer.
+Trong repo: phần sau `await` là microtask (`get-wallet.ts:12→15`); `Worker` đặt tick kế tiếp bằng `setTimeout` (macrotask, `worker.ts:38-40`) để nhường lượt cho HTTP và consumer.
 
 
 ## Bổ sung: các hàm bất đồng bộ trong luồng nạp tiền thật (wallet → payment)

@@ -97,3 +97,9 @@ Tự lần: nguyên nhân thường gặp trong repo này là gì? Bạn kiểm 
 ## Thực hành mở rộng: debug `POST /topups` wallet → payment với correlation id
 
 Hướng dẫn setup và từng bước debug trên local (VS Code) và Docker Desktop: [ngay-3-huong-dan-debug-topup.md](ngay-3-huong-dan-debug-topup.md). Lưu ý phát hiện chính (đã chạy lab): wallet **chưa** gửi `x-correlation-id` sang payment; hướng dẫn bám hành vi hiện tại, không sửa code.
+
+
+## Sơ đồ runtime (draw.io)
+
+- [diagrams/runtime-request-sequence.drawio](diagrams/runtime-request-sequence.drawio): sequence diagram của `GET /wallet`. Trang 1: một request (14 bước, kèm bảng số mũi tên → hàm → file:dòng). Trang 2: hai request chồng nhau (luồng JS duy nhất, pool kết nối, ngữ cảnh riêng từng request).
+- Bằng chứng chạy thật: lab [labs/get-wallet-http-trace.ts](labs/get-wallet-http-trace.ts) (NestJS + Fastify + `GetWallet` thật, DB giả). Mở file `.drawio` bằng draw.io Desktop, app.diagrams.net hoặc extension VS Code "Draw.io Integration".
