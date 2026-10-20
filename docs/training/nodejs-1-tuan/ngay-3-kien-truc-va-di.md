@@ -92,3 +92,8 @@ Tự lần: nguyên nhân thường gặp trong repo này là gì? Bạn kiểm 
 ## Câu hỏi còn mở (cho đội dev)
 - Vì sao payment dùng Fastify thuần còn wallet dùng NestJS? (ADR-0003 `docs/adr/0003-nestjs-wallet-fastify-payment.vi.md` — tác giả **chưa đọc**; đọc nó là bài tập về nhà.)
 - `Account.apply` có `case 'ADJUSTMENT'` — quy tắc cụ thể chưa đọc hết (`account.ts:75-`).
+
+
+## Thực hành mở rộng: debug `POST /topups` wallet → payment với correlation id
+
+Hướng dẫn setup và từng bước debug trên local (VS Code) và Docker Desktop: [ngay-3-huong-dan-debug-topup.md](ngay-3-huong-dan-debug-topup.md). Lưu ý phát hiện chính (đã chạy lab): wallet **chưa** gửi `x-correlation-id` sang payment; hướng dẫn bám hành vi hiện tại, không sửa code.

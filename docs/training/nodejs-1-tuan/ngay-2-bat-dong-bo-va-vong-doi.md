@@ -122,3 +122,64 @@ Thứ tự in ra [ĐÃ CHẠY 4 lần, ổn định]:
 | 6 | `req1`/`req2: nhận kết quả` | phần code sau `await` (microtask) |
 
 Ghi chú: ở file này `nextTick` in **sau** microtask vì file là module ESM có top-level `await`, đang chạy bên trong một job microtask. Trong callback I/O thông thường của Node, `nextTick` chạy **trước** promise microtask. Đây là quan sát từ lab + hiểu biết về Node, chưa kiểm chứng riêng trong callback I/O.
+
+
+## Bổ sung: "nhà hàng một đầu bếp" — thứ tự của mọi lệnh runtime
+
+Lab: [labs/event-loop-restaurant.ts](labs/event-loop-restaurant.ts). Kịch bản 1 chạy trong callback I/O (giống request HTTP đến). Thứ tự [ĐÃ CHẠY 3 lần, ổn định]:
+
+| # | Lệnh | Loại |
+| - | ---- | ---- |
+| 1 | code đồng bộ trong callback (kể cả phần trước `await` đầu tiên) | đồng bộ |
+| 2 | `process.nextTick` | nextTick |
+| 3 | `Promise.then`, `queueMicrotask`, phần sau `await`, microtask do microtask sinh ra | microtask |
+| 4 | `setImmediate` | macrotask (pha check) |
+| 5 | `setTimeout(…, 0)` | macrotask (pha timers) |
+
+Kịch bản 2 [ĐÃ CHẠY 3 lần]: nối 100000 bước bằng microtask thì timer 0ms chạy sau khi xong 100000/100000 bước (bị chặn hoàn toàn); nối bằng `setImmediate` thì timer chen vào sau 8–171 bước (số bước thay đổi mỗi lần chạy).
+
+Trong repo: phần sau `await` là microtask (`get-wallet.ts:36→39`); `Worker` đặt tick kế tiếp bằng `setTimeout` (macrotask, `worker.ts:38-40`) để nhường lượt cho HTTP và consumer.
+
+
+## Bổ sung: các hàm bất đồng bộ trong luồng nạp tiền thật (wallet → payment)
+
+Lab chạy được, dùng code thật `RequestTopup`, `InlineTopupSubmitter`, `createShutdownHandler`: [labs/topup-async-flow.ts](labs/topup-async-flow.ts).
+
+**Phát hiện [ĐÃ CHẠY `grep` trên mã nguồn không phải test]:** `process.nextTick`, `queueMicrotask`, `setImmediate`, `setInterval` **không có ở đâu trong code production** (`packages/`, `services/`, `db/`, `tools/`, không tính file test). Riêng `setImmediate` có trong code test và công cụ đo hiệu năng (xem mục "Rà soát wallet" bên dưới). Repo chỉ dùng `await`, `.then/.catch/.finally`, `new Promise`, `Promise.race/allSettled`, `setTimeout`, `AbortSignal`.
+
+| Công cụ | Chỗ dùng thật trong luồng tiền | Vai trò |
+| ------- | ------------------------------ | ------- |
+| `await` | `request-topup.ts:80,85`; `http-payment-gateway.ts:22`; `deliver-due-webhooks.ts:52,61,63` | chờ DB/HTTP; phần sau `await` là microtask |
+| `.catch/.finally` | `inline-topup-submitter.ts:18-30` | việc nền "gửi sang payment" không được làm hỏng request, không để lại rejection chưa xử lý |
+| `.then(ok, err)` | `lifecycle.ts:38` | sau khi `stop()` xong thì `exit(0)`, lỗi thì `exit(1)` |
+| `.then(task, task)` | `client.ts:185` | xếp hàng tác vụ tuần tự (chuỗi promise làm hàng đợi) |
+| `new Promise` + `setTimeout` | `main.ts:44-46` (cả hai service), `client.ts:165-167`, `payment/app.ts:24` | tạo hạn chót; sleep |
+| `Promise.race` | `main.ts:48`, `client.ts:163` | "xong hoặc hết giờ, cái nào trước" |
+| `Promise.allSettled` | `inline-topup-submitter.ts:35`, `consumer.ts:193`, `background-runs.ts:30` | chờ mọi việc đang chạy dù có lỗi |
+| `setTimeout` (loop) | `worker.ts:39` | nhường lượt giữa các tick |
+| `AbortSignal.timeout` | `http-payment-gateway.ts:34`, `http-webhook-sender.ts:31` | hạn chót cho `fetch` |
+
+Kết quả lab [ĐÃ CHẠY]: client nhận `202` ngay sau `COMMIT`, ~60ms **trước** khi payment trả lời; payment chết thì client vẫn nhận `202` và lỗi chỉ được log; khi tắt dịch vụ, `drain()` chờ lần gửi đang chạy rồi `.then` mới gọi `exit(0)`.
+
+
+## Bổ sung: rà soát riêng wallet — mỗi hàm xuất hiện ở đâu, dùng để làm gì
+
+Lab chạy được, dùng code thật `StartManualReconciliation`, `BackgroundRuns`, `Worker`, `createShutdownHandler`: [labs/wallet-async-patterns.ts](labs/wallet-async-patterns.ts).
+
+Kết quả `grep` toàn repo [ĐÃ CHẠY], gồm cả test:
+
+| Hàm | Production wallet | Test / công cụ |
+| --- | ----------------- | -------------- |
+| `process.nextTick` | không có | không có |
+| `queueMicrotask` | không có | không có |
+| `setImmediate` | không có | `lifecycle.test.ts:4` (`flush`), `tests/perf/support/load-driver.ts:66` (`yieldToEventLoop`) |
+| `setTimeout` | `worker.ts:39`, `main.ts:45` | rất nhiều `sleep` trong test tích hợp |
+| `.then` | `main.ts:27`, `lifecycle.ts:38` | `inline-topup-submitter.test.ts:38` |
+| `await` | khắp nơi | khắp nơi |
+
+Ba mẫu thật của wallet:
+
+1. **`POST /reconciliations`** (`start-manual-reconciliation.ts:18-27`): `await run.begin(...)` rồi `background.submit(...)` **không await**, trả `{runId, status: 'RUNNING'}`. `BackgroundRuns.drain()` (`background-runs.ts:30`) chờ lượt đang chạy khi tắt dịch vụ.
+2. **`Worker` + `AbortSignal`** (`bootstrap.ts:212-226`): giữa các tenant kiểm tra `signal.aborted`; tenant đang xử lý vẫn được làm xong, `stop()` đợi nó (`worker.ts:49`).
+3. **`setImmediate` làm "flush" trong test** (`lifecycle.test.ts:4`): chờ một macrotask đảm bảo mọi microtask đã chạy xong. Lab [ĐÃ CHẠY]: chuỗi `stop()` có 3 tầng `await` thì chờ 1 microtask thì `exit()` **chưa** được gọi, chờ `setImmediate` thì đã gọi.
+4. **`setImmediate` trong công cụ đo tải** (`load-driver.ts:65-66`, comment của repo): "Nhường event loop một macrotask: lỗi tức thì liên tục (chỉ microtask) sẽ không làm đói timer/I/O."
