@@ -12,7 +12,7 @@ nhóm **tiền/ledger/idempotency** rồi **messaging/outbox/DLQ**.
 | ---- | ------ | ---- |
 | 1 | Công cụ, hệ sinh thái, cú pháp JS/TS nền tảng | [ngay-1](ngay-1-cong-cu-va-cu-phap.md) |
 | 2 | Bất đồng bộ, event loop, vòng đời process | [ngay-2](ngay-2-bat-dong-bo-va-vong-doi.md) |
-| 3 | Kiến trúc 4 lớp, DI, ranh giới package | [ngay-3](ngay-3-kien-truc-va-di.md) |
+| 3 | Kiến trúc 4 lớp, DI, ranh giới package; thực hành debug top-up | [ngay-3](ngay-3-kien-truc-va-di.md), [debug top-up](ngay-3-huong-dan-debug-topup.md) |
 | 4 | Dữ liệu, tiền, ledger, idempotency | [ngay-4](ngay-4-du-lieu-tien-ledger.md) |
 | 5 | Messaging, outbox, DLQ | [ngay-5](ngay-5-messaging-outbox-dlq.md) |
 | 6 | Debug và quan sát | [ngay-6](ngay-6-debug-va-quan-sat.md) |
