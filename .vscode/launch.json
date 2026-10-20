@@ -2,14 +2,56 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Debug wallet-service (envFile)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/services/wallet",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx"
+      ],
+      "program": "${workspaceFolder}/services/wallet/src/main.ts",
+      "envFile": "${workspaceFolder}/deploy/wallet.debug.env",
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Debug payment-service (envFile)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/services/payment",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx"
+      ],
+      "program": "${workspaceFolder}/services/payment/src/main.ts",
+      "envFile": "${workspaceFolder}/deploy/payment.debug.env",
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ],
+      "console": "integratedTerminal"
+    },
+    {
       "name": "Debug current file (tsx)",
       "type": "node",
       "request": "launch",
       "cwd": "${workspaceFolder}",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["--import", "tsx"],
+      "runtimeArgs": [
+        "--import",
+        "tsx"
+      ],
       "program": "${file}",
-      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ],
       "console": "integratedTerminal"
     },
     {
@@ -18,9 +60,15 @@
       "request": "launch",
       "cwd": "${workspaceFolder}/services/payment",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["--import", "tsx"],
+      "runtimeArgs": [
+        "--import",
+        "tsx"
+      ],
       "program": "${workspaceFolder}/services/payment/src/main.ts",
-      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ],
       "console": "integratedTerminal"
     },
     {
@@ -29,9 +77,15 @@
       "request": "launch",
       "cwd": "${workspaceFolder}/services/wallet",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["--import", "tsx"],
+      "runtimeArgs": [
+        "--import",
+        "tsx"
+      ],
       "program": "${workspaceFolder}/services/wallet/src/main.ts",
-      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ],
       "console": "integratedTerminal"
     },
     {
@@ -40,10 +94,21 @@
       "request": "launch",
       "autoAttachChildProcesses": true,
       "runtimeExecutable": "pnpm",
-      "windows": { "runtimeExecutable": "pnpm.cmd" },
-      "runtimeArgs": ["exec", "vitest", "run", "${relativeFile}", "--no-file-parallelism"],
+      "windows": {
+        "runtimeExecutable": "pnpm.cmd"
+      },
+      "runtimeArgs": [
+        "exec",
+        "vitest",
+        "run",
+        "${relativeFile}",
+        "--no-file-parallelism"
+      ],
       "cwd": "${workspaceFolder}",
-      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ],
       "console": "integratedTerminal"
     },
     {
@@ -52,10 +117,23 @@
       "request": "launch",
       "autoAttachChildProcesses": true,
       "runtimeExecutable": "pnpm",
-      "windows": { "runtimeExecutable": "pnpm.cmd" },
-      "runtimeArgs": ["exec", "vitest", "run", "--config", "vitest.integration.config.ts", "${relativeFile}", "--no-file-parallelism"],
+      "windows": {
+        "runtimeExecutable": "pnpm.cmd"
+      },
+      "runtimeArgs": [
+        "exec",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.integration.config.ts",
+        "${relativeFile}",
+        "--no-file-parallelism"
+      ],
       "cwd": "${workspaceFolder}",
-      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ],
       "console": "integratedTerminal"
     },
     {
@@ -63,7 +141,48 @@
       "type": "node",
       "request": "attach",
       "port": 9229,
-      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ]
+    },
+    {
+      "name": "Attach wallet (Docker)",
+      "type": "node",
+      "request": "attach",
+      "address": "localhost",
+      "port": 9229,
+      "localRoot": "${workspaceFolder}",
+      "remoteRoot": "/app",
+      "restart": true,
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ]
+    },
+    {
+      "name": "Attach payment (Docker)",
+      "type": "node",
+      "request": "attach",
+      "address": "localhost",
+      "port": 9230,
+      "localRoot": "${workspaceFolder}",
+      "remoteRoot": "/app",
+      "restart": true,
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Wallet + Payment (envFile)",
+      "configurations": [
+        "Debug payment-service (envFile)",
+        "Debug wallet-service (envFile)"
+      ],
+      "stopAll": true
     }
   ]
 }
