@@ -55,7 +55,7 @@ const otherService = (service) => {
 const restrict = (patterns) => ({ 'no-restricted-imports': ['error', { patterns }] });
 
 export default [
-  { ignores: ['**/node_modules/**', '**/dist/**', 'coverage/**'] },
+  { ignores: ['**/node_modules/**', '**/dist/**', 'coverage/**', 'node-training/**'] },
   ...tseslint.configs.recommended,
   // Cấm import chéo service ở mọi file của service (kể cả composition root).
   ...SERVICES.map((service) => ({

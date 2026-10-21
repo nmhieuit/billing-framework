@@ -1,0 +1,22 @@
+{
+  "name": "node-training",
+  "private": true,
+  "type": "module",
+  "description": "Bài tập thực hành giáo trình Node.js 7 ngày (không thuộc workspace của dự án)",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2023 --skipLibCheck --types node"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "fastify": "5.12.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3"
+  }
+}
