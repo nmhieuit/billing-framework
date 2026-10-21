@@ -4,3 +4,4 @@ coverage/
 dist/
 *.sql
 .superpowers/
+node-training/
