@@ -3,6 +3,7 @@ import { buildApp } from './ex03-create-wallet.js';
 
 test('tạo ví thành công', async () => {
   const app = buildApp();
+  // payload: body JSON gửi kèm request
   const res = await app.inject({ method: 'POST', url: '/wallets', payload: { owner: 'An' } });
   expect(res.statusCode).toBe(201);
   expect(res.json()).toEqual({ id: 'w1', owner: 'An', balance: 0 });
@@ -15,6 +16,7 @@ test('id tăng dần', async () => {
   expect(second.json().id).toBe('w2');
 });
 
+// test.each: chạy cùng một test với nhiều dữ liệu khác nhau (%j hiển thị dữ liệu dạng JSON)
 test.each([[{}], [{ owner: '' }], [{ owner: 123 }]])('body %j -> 400', async (payload) => {
   const res = await buildApp().inject({ method: 'POST', url: '/wallets', payload });
   expect(res.statusCode).toBe(400);

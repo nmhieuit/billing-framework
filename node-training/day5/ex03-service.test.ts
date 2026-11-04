@@ -3,6 +3,7 @@ import { InsufficientFundsError, WithdrawService } from './ex03-service.js';
 import { InvalidAmountError, WalletNotFoundError } from './support/errors.js';
 import { InMemoryWalletRepository } from './support/wallet-repository.js';
 
+// Chuẩn bị: một kho có ví w1 (số dư 100) và một service dùng kho đó
 function setup() {
   const repo = new InMemoryWalletRepository();
   repo.save({ id: 'w1', owner: 'An', balance: 100 });
@@ -12,6 +13,7 @@ function setup() {
 test('rút tiền thành công và được lưu lại', () => {
   const { repo, service } = setup();
   expect(service.withdraw('w1', 30).balance).toBe(70);
+  // Đọc lại từ kho để chắc chắn đã được lưu
   expect(repo.findById('w1')?.balance).toBe(70);
 });
 
@@ -21,6 +23,7 @@ test('rút đúng bằng số dư', () => {
 
 test('amount không hợp lệ', () => {
   const { service } = setup();
+  // toThrow(LớpLỗi): phải ném đúng loại lỗi này
   expect(() => service.withdraw('w1', 0)).toThrow(InvalidAmountError);
   expect(() => service.withdraw('w1', 1.5)).toThrow(InvalidAmountError);
 });

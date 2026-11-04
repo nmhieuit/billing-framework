@@ -6,6 +6,7 @@ test('khách mới có số dư 0', () => {
 });
 
 test('tổng số dư', () => {
+  // 10 + 5 = 15
   expect(
     totalBalance([
       { id: '1', name: 'A', balance: 10 },

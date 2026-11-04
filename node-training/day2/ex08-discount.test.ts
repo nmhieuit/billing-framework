@@ -1,15 +1,29 @@
 import { expect, test } from 'vitest';
 import { applyDiscount } from './ex08-discount.js';
 
-// Việc của bạn: viết tối thiểu 5 test, mỗi test một tình huống, rồi xóa test "XÓA SAU KHI XONG" bên dưới.
-// Gợi ý tình huống: giảm 10%; giảm 0%; giảm 100%; làm tròn (999 giảm 50%); percent = -1; percent = 101.
-test.todo('giảm 10%');
-test.todo('giảm 0% giữ nguyên giá');
-test.todo('giảm 100% còn 0');
-test.todo('làm tròn');
-test.todo('percent âm bị từ chối');
+// Mỗi test kiểm tra một tình huống riêng của applyDiscount
 
-test('XÓA SAU KHI XONG: bạn đã viết đủ 5 test', () => {
-  void applyDiscount;
-  throw new Error('chưa viết test');
+test('giảm 10%', () => {
+  expect(applyDiscount(1000, 10)).toBe(900);
+});
+
+test('giảm 0% giữ nguyên giá', () => {
+  expect(applyDiscount(1000, 0)).toBe(1000);
+});
+
+test('giảm 100% còn 0', () => {
+  expect(applyDiscount(1000, 100)).toBe(0);
+});
+
+test('làm tròn', () => {
+  // 999 giảm 50% = 499.5, làm tròn lên thành 500
+  expect(applyDiscount(999, 50)).toBe(500);
+});
+
+test('percent âm bị từ chối', () => {
+  expect(() => applyDiscount(1000, -1)).toThrow();
+});
+
+test('percent > 100 bị từ chối', () => {
+  expect(() => applyDiscount(1000, 101)).toThrow();
 });

@@ -2,8 +2,15 @@ import { expect, test } from 'vitest';
 import { buildApp } from './ex06-topup-endpoint.js';
 
 type App = ReturnType<typeof buildApp>;
-const send = (app: App, key: string | undefined, payload: unknown) =>
-  app.inject({ method: 'POST', url: '/topups', headers: key ? { 'idempotency-key': key } : {}, payload: payload as object });
+
+// Hàm phụ: gửi POST /topups với idempotency-key (có thể bỏ trống) và body bất kỳ
+function send(app: App, key: string | undefined, payload: unknown) {
+  const headers: Record<string, string> = {};
+  if (key !== undefined) {
+    headers['idempotency-key'] = key;
+  }
+  return app.inject({ method: 'POST', url: '/topups', headers, payload: payload as object });
+}
 
 test('lần đầu: 201', async () => {
   const res = await send(buildApp(), 'k1', { amount: 100 });
@@ -22,10 +29,13 @@ test('gửi lại: trả y nguyên, không cộng thêm', async () => {
   const app = buildApp();
   const first = await send(app, 'k1', { amount: 100 });
   const again = await send(app, 'k1', { amount: 100 });
+  // Lần gửi lại phải giống hệt lần đầu
   expect(again.statusCode).toBe(first.statusCode);
   expect(again.json()).toEqual(first.json());
+  // Chỉ lần gửi lại mới có header đánh dấu
   expect(again.headers['idempotent-replayed']).toBe('true');
   expect(first.headers['idempotent-replayed']).toBeUndefined();
+  // Số dư không bị cộng 2 lần: 100 + 1 = 101
   const next = await send(app, 'k2', { amount: 1 });
   expect(next.json().balance).toBe(101);
 });

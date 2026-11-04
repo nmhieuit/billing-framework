@@ -8,10 +8,15 @@ test('key mới: chạy work', () => {
 
 test('cùng key và nội dung: không chạy lại work', () => {
   const store = createIdempotencyStore();
+  // calls đếm số lần work thật sự được gọi
   let calls = 0;
-  const work = () => ++calls;
+  function work() {
+    calls = calls + 1;
+    return calls;
+  }
   expect(store.run('k1', 'a', work)).toEqual({ result: 1, replayed: false });
   expect(store.run('k1', 'a', work)).toEqual({ result: 1, replayed: true });
+  // work chỉ được gọi đúng 1 lần
   expect(calls).toBe(1);
 });
 

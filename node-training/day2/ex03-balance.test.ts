@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 import { balanceOf } from './ex03-balance.js';
 
 test('nạp cộng, rút trừ', () => {
+  // 100 - 30 + 5 = 75
   expect(
     balanceOf([
       { id: '1', type: 'deposit', amount: 100 },

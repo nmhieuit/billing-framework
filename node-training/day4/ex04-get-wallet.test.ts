@@ -3,6 +3,7 @@ import { buildApp } from './ex04-get-wallet.js';
 
 test('đọc ví đã tạo', async () => {
   const app = buildApp();
+  // Tạo ví trước (id sẽ là w1), rồi đọc lại
   await app.inject({ method: 'POST', url: '/wallets', payload: { owner: 'An' } });
   const res = await app.inject({ method: 'GET', url: '/wallets/w1' });
   expect(res.statusCode).toBe(200);

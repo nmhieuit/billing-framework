@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 import { safeDivide } from './ex04-safe-divide.js';
 
 test('chia được', async () => {
+  // Hàm async nên phải await để lấy kết quả
   expect(await safeDivide(10, 2)).toEqual({ ok: true, value: 5 });
 });
 

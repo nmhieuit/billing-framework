@@ -5,6 +5,7 @@ test('lưu rồi đọc', () => {
   const repo = new WalletRepository();
   repo.save({ id: 'w1', owner: 'An', balance: 10 });
   expect(repo.findById('w1')).toEqual({ id: 'w1', owner: 'An', balance: 10 });
+  // id chưa lưu thì trả về undefined
   expect(repo.findById('w2')).toBeUndefined();
 });
 
@@ -20,7 +21,9 @@ test('sửa bản sao đọc ra không làm đổi dữ liệu trong kho', () =>
   const repo = new WalletRepository();
   repo.save({ id: 'w1', owner: 'An', balance: 10 });
   const copy = repo.findById('w1');
-  if (copy) copy.balance = 999;
+  if (copy) {
+    copy.balance = 999; // chỉ sửa bản sao
+  }
   expect(repo.findById('w1')?.balance).toBe(10);
 });
 
@@ -28,6 +31,6 @@ test('sửa đối tượng đã đưa vào save không làm đổi dữ liệu 
   const repo = new WalletRepository();
   const wallet = { id: 'w1', owner: 'An', balance: 10 };
   repo.save(wallet);
-  wallet.balance = 999;
+  wallet.balance = 999; // sửa đối tượng gốc sau khi đã save
   expect(repo.findById('w1')?.balance).toBe(10);
 });

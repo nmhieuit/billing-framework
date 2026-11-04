@@ -6,8 +6,9 @@ test('load thành công', async () => {
 });
 
 test('load thất bại -> dùng giá trị mặc định', async () => {
-  const failing = async (): Promise<number> => {
+  // Hàm tải giả luôn báo lỗi
+  async function failing(): Promise<number> {
     throw new Error('network down');
-  };
+  }
   expect(await loadOrDefault(failing, -1)).toBe(-1);
 });

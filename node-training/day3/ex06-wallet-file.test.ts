@@ -4,8 +4,10 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { loadWallet, saveWallet } from './ex06-wallet-file.js';
 
+// Tạo một thư mục tạm mới và trả về đường dẫn file có tên "name" nằm trong đó
 async function tempPath(name: string): Promise<string> {
-  return join(await mkdtemp(join(tmpdir(), 'wallet-')), name);
+  const folder = await mkdtemp(join(tmpdir(), 'wallet-'));
+  return join(folder, name);
 }
 
 test('ghi rồi đọc lại', async () => {
@@ -20,6 +22,8 @@ test('file không tồn tại -> null', async () => {
 
 test('file hỏng (JSON sai) -> vẫn ném lỗi, không giấu', async () => {
   const path = await tempPath('hong.json');
+  // Ghi nội dung không phải JSON hợp lệ
   await writeFile(path, '{ khong phai json');
+  // rejects.toThrow: Promise phải bị reject (báo lỗi)
   await expect(loadWallet(path)).rejects.toThrow();
 });

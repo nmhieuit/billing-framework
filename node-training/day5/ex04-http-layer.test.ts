@@ -3,6 +3,7 @@ import { buildApp } from './ex04-http-layer.js';
 import { InMemoryWalletRepository } from './support/wallet-repository.js';
 import { WalletService } from './support/wallet-service.js';
 
+// Chuẩn bị: service có sẵn ví của An (id là w-an), rồi dựng app trên service đó
 function setup() {
   const service = new WalletService(new InMemoryWalletRepository());
   service.open('An');
