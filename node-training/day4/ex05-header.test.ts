@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 import { buildApp } from './ex05-header.js';
 
 test('có header', async () => {
+  // headers: các header gửi kèm request
   const res = await buildApp().inject({ method: 'GET', url: '/me', headers: { 'x-customer-id': 'c1' } });
   expect(res.statusCode).toBe(200);
   expect(res.json()).toEqual({ customerId: 'c1' });

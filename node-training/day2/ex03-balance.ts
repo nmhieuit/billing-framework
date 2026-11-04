@@ -4,6 +4,14 @@
 import type { Transaction } from './transaction.js';
 
 export function balanceOf(transactions: Transaction[]): number {
-  // TODO: transactions.reduce((balance, tx) => ..., 0)
-  return NaN;
+  // reduce: gộp cả mảng thành MỘT giá trị.
+  // "balance" là kết quả tích lũy qua từng bước, bắt đầu từ 0 (tham số thứ 2 của reduce)
+  const result = transactions.reduce(function (balance, tx) {
+    if (tx.type === 'deposit') {
+      return balance + tx.amount; // nạp thì cộng
+    }
+    return balance - tx.amount; // rút thì trừ
+  }, 0);
+
+  return result;
 }

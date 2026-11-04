@@ -13,17 +13,33 @@ export function buildApp() {
   const app = Fastify();
   const wallets = new Map<string, Wallet>();
 
-  app.post('/wallets', async (request, reply) => {
+  // Tạo ví (giống bài 3)
+  app.post('/wallets', async function (request, reply) {
     const body = request.body as { owner?: unknown } | null;
-    if (typeof body?.owner !== 'string' || body.owner === '') {
+    if (body === null || typeof body.owner !== 'string' || body.owner === '') {
       return reply.code(400).send({ error: 'owner is required' });
     }
-    const wallet: Wallet = { id: `w${wallets.size + 1}`, owner: body.owner, balance: 0 };
+    const newId = 'w' + (wallets.size + 1);
+    const wallet: Wallet = { id: newId, owner: body.owner, balance: 0 };
     wallets.set(wallet.id, wallet);
     return reply.code(201).send(wallet);
   });
 
-  // TODO: app.get('/wallets/:id', ...)
+  // Đọc ví theo id trên đường dẫn
+  app.get('/wallets/:id', async function (request, reply) {
+    const params = request.params as { id: string };
+
+    // Map.get trả về ví, hoặc undefined nếu không có khóa này
+    const wallet = wallets.get(params.id);
+
+    if (wallet === undefined) {
+      // 404 = Not Found (không tìm thấy)
+      return reply.code(404).send({ error: 'wallet not found' });
+    }
+
+    // Trả về ví (mặc định mã 200)
+    return wallet;
+  });
 
   return app;
 }

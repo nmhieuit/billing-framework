@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 import { summarize } from './ex05-summary.js';
 
 test('tóm tắt các giao dịch nạp', () => {
+  // Chỉ a và c là giao dịch nạp: 2 giao dịch, tổng 150
   expect(
     summarize([
       { id: 'a', type: 'deposit', amount: 100 },

@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 import { Wallet } from './ex06-wallet.js';
 
 test('ví mới', () => {
+  // new: tạo một đối tượng từ class
   const wallet = new Wallet('An');
   expect(wallet.owner).toBe('An');
   expect(wallet.balance).toBe(0);
@@ -9,8 +10,8 @@ test('ví mới', () => {
 
 test('nạp và rút', () => {
   const wallet = new Wallet('An');
-  expect(wallet.deposit(100)).toBe(100);
-  expect(wallet.withdraw(30)).toBe(70);
+  expect(wallet.deposit(100)).toBe(100); // 0 + 100
+  expect(wallet.withdraw(30)).toBe(70); // 100 - 30
   expect(wallet.balance).toBe(70);
 });
 

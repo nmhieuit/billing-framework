@@ -1,15 +1,22 @@
 // Bài 10 (Sửa lỗi, nâng cao): yêu cầu thất bại làm "kẹt" key mãi mãi.
-// Lần gọi đầu thất bại (work ném lỗi); gọi lại cùng key, work chạy được nhưng kết quả vẫn là "thất bại cũ".
-// Chạy `pnpm test day5/ex10`, đọc lỗi. Hỏi: khi nào mới nên GHI NHỚ key? (chỉ sửa vị trí 1 dòng)
+// Lỗi gốc: ghi nhớ key TRƯỚC khi work chạy xong, nên work thất bại rồi mà key vẫn bị coi là đã xử lý.
+// Bản sửa: chỉ ghi nhớ key SAU KHI work chạy thành công (work ném lỗi thì dòng set không được chạy).
+
 export function createRunner() {
+  // key -> kết quả của lần chạy thành công
   const saved = new Map<string, unknown>();
+
   return {
-    run<T>(key: string, work: () => T): T {
+    run(key: string, work: () => unknown): unknown {
+      // Đã có kết quả thành công cho key này: dùng lại
       if (saved.has(key)) {
-        return saved.get(key) as T;
+        return saved.get(key);
       }
-      saved.set(key, undefined);
+
+      // Chạy work. Nếu work ném lỗi thì hàm dừng ngay ở dòng này, chưa lưu gì cả
       const result = work();
+
+      // Thành công mới ghi nhớ
       saved.set(key, result);
       return result;
     },

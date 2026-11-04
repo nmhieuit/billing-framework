@@ -1,6 +1,8 @@
 import { expect, test } from 'vitest';
 import { summarize } from './ex10-bug-hunt.js';
 
+// Dữ liệu mẫu: 2 charge thành công (100 + 25), 2 thất bại, 1 đang chờ.
+// Charge mới nhất (createdAt lớn nhất = 3) là 'b'
 const charges = [
   { id: 'a', amount: 100, status: 'succeeded', createdAt: 1 },
   { id: 'b', amount: 50, status: 'failed', createdAt: 3 },

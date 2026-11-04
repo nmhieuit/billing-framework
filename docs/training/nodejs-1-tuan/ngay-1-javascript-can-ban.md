@@ -538,12 +538,12 @@ Chạy cả ngày một lần: `pnpm test day1`. Lời giải: `node-training/so
 
 ## Checklist: tôi đã làm được
 
-- [ ] Chạy một file bằng `node` và nói được ý nghĩa 3 dòng đầu của một thông báo lỗi.
-- [ ] Phân biệt được `const` và `let`, ba kiểu `string` / `number` / `boolean`.
-- [ ] Viết được hàm có `return` và `if`.
-- [ ] Duyệt được mảng bằng `for...of`.
-- [ ] Đọc / ghi được thuộc tính của đối tượng và biết dùng `throw new Error`.
-- [ ] Ít nhất 6/8 bài tập xanh (ghi số bài xanh: ___ / 8).
+- [x] Chạy một file bằng `node` và nói được ý nghĩa 3 dòng đầu của một thông báo lỗi.
+- [x] Phân biệt được `const` và `let`, ba kiểu `string` / `number` / `boolean`.
+- [x] Viết được hàm có `return` và `if`.
+- [x] Duyệt được mảng bằng `for...of`.
+- [x] Đọc / ghi được thuộc tính của đối tượng và biết dùng `throw new Error`.
+- [x] Ít nhất 6/8 bài tập xanh (ghi số bài xanh: ___ / 8).
 
 ## Câu hỏi còn mở
 

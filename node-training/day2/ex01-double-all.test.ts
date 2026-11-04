@@ -9,5 +9,6 @@ test('nhân đôi từng phần tử', () => {
 test('không làm thay đổi mảng gốc', () => {
   const input = [5, 6];
   doubleAll(input);
+  // Sau khi gọi hàm, mảng gốc vẫn giữ nguyên
   expect(input).toEqual([5, 6]);
 });
