@@ -35,43 +35,64 @@ export function buildApp(deps: Deps) {
   async function submitInBackground(topup: Topup): Promise<void> {
     try {
       // Truyền bản sao để bên ngoài không sửa được topup gốc
-      const result = await deps.submit({ ...topup });
+      const topupCopy = { ...topup };
+
+      // Gọi payment (bất đồng bộ). Debug: log result để biết payment trả gì.
+      const result = await deps.submit(topupCopy);
+
+      // Nhánh created: payment đã nhận -> đổi sang PENDING. 'unavailable' thì giữ nguyên REQUESTED.
       if (result === 'created') {
-        topup.status = 'PENDING'; // 'unavailable' thì giữ nguyên REQUESTED
+        topup.status = 'PENDING';
       }
     } catch (error) {
-      // Bắt hết lỗi ngay tại đây để không bao giờ rơi ra ngoài làm crash server
-      deps.log(`submit failed: ${(error as Error).message}`);
+      // Bắt hết lỗi ngay tại đây để không bao giờ rơi ra ngoài làm crash server.
+      // Rủi ro: nếu deps.log tự ném lỗi ở dòng dưới, lỗi đó KHÔNG còn được bắt nữa.
+      const errorMessage = (error as Error).message;
+      deps.log(`submit failed: ${errorMessage}`);
     }
   }
 
-  app.post('/topups', async function (request, reply) {
+  // Route tạo topup
+  async function handleCreateTopup(request: any, reply: any) {
     const body = request.body as { amount: number };
 
-    // id tăng dần: t1, t2, ...
-    const topup: Topup = { id: 't' + (topups.size + 1), amount: body.amount, status: 'REQUESTED' };
+    // id tăng dần: t1, t2, ... (dựa vào số topup đang có trong Map)
+    const nextNumber = topups.size + 1;
+    const newId = 't' + nextNumber;
+    const topup: Topup = { id: newId, amount: body.amount, status: 'REQUESTED' };
     topups.set(topup.id, topup);
 
     // Bắt đầu job nền nhưng KHÔNG await -> không chờ, trả lời client ngay
     const job = submitInBackground(topup);
     runningJobs.add(job);
+
     // Khi job xong thì bỏ khỏi danh sách
-    job.then(function () {
+    function removeFinishedJob() {
       runningJobs.delete(job);
-    });
+    }
+    job.then(removeFinishedJob);
 
     // 202 = Accepted (đã nhận yêu cầu, đang xử lý)
-    return reply.code(202).send({ id: topup.id, status: topup.status });
-  });
+    const acceptedReply = reply.code(202);
+    return acceptedReply.send({ id: topup.id, status: topup.status });
+  }
+  app.post('/topups', handleCreateTopup);
 
-  app.get('/topups/:id', async function (request, reply) {
+  // Route xem một topup
+  async function handleGetTopup(request: any, reply: any) {
     const params = request.params as { id: string };
     const topup = topups.get(params.id);
+
+    // Nhánh không tìm thấy: trả 404
     if (topup === undefined) {
-      return reply.code(404).send({ error: 'topup not found' });
+      const notFoundReply = reply.code(404);
+      return notFoundReply.send({ error: 'topup not found' });
     }
+
+    // Nhánh tìm thấy: trả topup hiện tại (Fastify tự đổi thành JSON, mã 200)
     return topup;
-  });
+  }
+  app.get('/topups/:id', handleGetTopup);
 
   // Chờ mọi job nền đang chạy hoàn thành (dùng trong test và khi tắt server)
   async function drain(): Promise<void> {

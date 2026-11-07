@@ -34,13 +34,15 @@ export function createWalletState() {
   return {
     // Tạo topup mới, luôn bắt đầu ở trạng thái PENDING (đang chờ kết quả)
     addTopup(id: string, amount: number): void {
-      topups.set(id, { amount, status: 'PENDING' });
+      const newTopup: { amount: number; status: Status } = { amount, status: 'PENDING' };
+      topups.set(id, newTopup);
     },
 
     // Xử lý một webhook từ payment
     handleWebhook(event: WebhookEvent): 'applied' | 'duplicate' | 'ignored' {
       // Bước 1: eventId này đã xử lý rồi -> không làm gì nữa, báo 'duplicate'
-      if (seenEvents.has(event.eventId)) {
+      const alreadySeen = seenEvents.has(event.eventId);
+      if (alreadySeen) {
         return 'duplicate';
       }
 
@@ -63,13 +65,19 @@ export function createWalletState() {
 
       // Bước 5: còn lại là PENDING hoặc FAILED -> cập nhật theo kết quả mới
       // (FAILED -> SUCCEEDED khi 'succeeded' đến muộn cũng đi qua đây)
-      topup.status = event.result === 'succeeded' ? 'SUCCEEDED' : 'FAILED';
+      if (event.result === 'succeeded') {
+        topup.status = 'SUCCEEDED';
+      } else {
+        topup.status = 'FAILED';
+      }
       return 'applied';
     },
 
     // Xem trạng thái hiện tại của một topup
     statusOf(topupId: string): Status {
       const topup = topups.get(topupId);
+
+      // Nhánh topup không tồn tại: báo lỗi giống handleWebhook
       if (!topup) {
         throw new Error(`unknown topup: ${topupId}`);
       }
@@ -80,7 +88,9 @@ export function createWalletState() {
     // (tính lại mỗi lần gọi nên không bao giờ bị cộng trùng)
     balance(): number {
       let total = 0;
-      for (const topup of topups.values()) {
+      const allTopups = topups.values();
+      for (const topup of allTopups) {
+        // Chỉ topup SUCCEEDED mới được tính vào số dư
         if (topup.status === 'SUCCEEDED') {
           total += topup.amount;
         }

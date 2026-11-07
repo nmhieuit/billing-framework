@@ -20,21 +20,28 @@ export async function submitWithRetry(
 
   // Có delaysMs.length bậc chờ nên tối đa delaysMs.length + 1 lần gọi (i từ 0 đến delaysMs.length)
   for (let i = 0; i <= delaysMs.length; i = i + 1) {
+    // Đếm trước khi gọi để attempts luôn bằng số lần đã gọi
     attempts = attempts + 1;
+
+    // Gọi payment một lần. Nếu attempt() ném lỗi, lỗi đi thẳng lên nơi gọi (không có try/catch).
+    // Debug: log result và attempts ở đây để xem từng lần gọi.
     const result = await attempt();
 
-    // created hoặc rejected: có kết quả cuối cùng rồi, không thử lại nữa
+    // Nhánh created hoặc rejected: có kết quả cuối cùng rồi, không thử lại nữa
     if (result.outcome === 'created' || result.outcome === 'rejected') {
       // { ...result, attempts }: sao chép các trường của result rồi thêm trường attempts
-      return { ...result, attempts };
+      const finalResult = { ...result, attempts };
+      return finalResult;
     }
 
-    // unavailable: nếu còn bậc chờ thì chờ rồi vòng sau gọi lại
+    // Đến đây result là 'unavailable'. Nếu còn bậc chờ thì chờ rồi vòng sau gọi lại.
     if (i < delaysMs.length) {
-      await sleep(delaysMs[i]);
+      const waitMs = delaysMs[i];
+      await sleep(waitMs);
     }
   }
 
   // Hết bậc chờ mà vẫn unavailable thì bỏ cuộc
-  return { outcome: 'unavailable', attempts };
+  const gaveUpResult: ChargeOutcome & { attempts: number } = { outcome: 'unavailable', attempts };
+  return gaveUpResult;
 }
