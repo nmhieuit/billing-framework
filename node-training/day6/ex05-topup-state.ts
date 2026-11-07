@@ -24,33 +24,52 @@ export type Outcome = { outcome: 'created'; chargeId: string } | { outcome: 'rej
 
 // Tạo topup mới: đang ở trạng thái REQUESTED, được phép gọi payment ngay (nextAttemptAt = now)
 export function newTopup(id: string, amount: number, now: Date): Topup {
-  return { id, amount, status: 'REQUESTED', attempts: 0, chargeId: null, failureCode: null, nextAttemptAt: now };
+  const created: Topup = {
+    id,
+    amount,
+    status: 'REQUESTED',
+    attempts: 0, // chưa có lần thất bại nào
+    chargeId: null, // chưa có charge bên payment
+    failureCode: null, // chưa thất bại
+    nextAttemptAt: now, // được gọi payment ngay
+  };
+  return created;
 }
 
 // Hàm thuần: nhận topup cũ và kết quả, trả về topup MỚI, không sửa topup cũ
 export function applyOutcome(topup: Topup, outcome: Outcome, now: Date, delaysSeconds: number[]): Topup {
-  // payment đã nhận yêu cầu -> chuyển sang PENDING
+  // Nhánh created: payment đã nhận yêu cầu -> chuyển sang PENDING
   if (outcome.outcome === 'created') {
     // { ...topup, ... }: sao chép topup rồi ghi đè các trường liệt kê sau đó
-    return { ...topup, status: 'PENDING', chargeId: outcome.chargeId, nextAttemptAt: null };
+    const pendingTopup: Topup = { ...topup, status: 'PENDING', chargeId: outcome.chargeId, nextAttemptAt: null };
+    return pendingTopup;
   }
 
-  // payment từ chối -> thất bại hẳn, không thử lại
+  // Nhánh rejected: payment từ chối -> thất bại hẳn, không thử lại
   if (outcome.outcome === 'rejected') {
-    return { ...topup, status: 'FAILED', failureCode: 'PAYMENT_REJECTED', nextAttemptAt: null };
+    const rejectedTopup: Topup = { ...topup, status: 'FAILED', failureCode: 'PAYMENT_REJECTED', nextAttemptAt: null };
+    return rejectedTopup;
   }
 
-  // Còn lại là 'unavailable': tăng số lần thất bại
+  // Đến đây outcome là 'unavailable': tăng số lần thất bại
   const newAttempts = topup.attempts + 1;
 
-  // Còn bậc chờ -> hẹn thử lại sau delaysSeconds[newAttempts - 1] giây
+  // Nhánh còn bậc chờ -> hẹn thử lại sau delaysSeconds[newAttempts - 1] giây
   if (newAttempts <= delaysSeconds.length) {
+    // Số giây cần chờ ở lần thử lại này (lần thất bại thứ 1 dùng phần tử đầu, chỉ số 0)
     const waitSeconds = delaysSeconds[newAttempts - 1];
-    // getTime() là số mili-giây; cộng thêm giây x 1000 để ra thời điểm thử lại
-    const nextAttemptAt = new Date(now.getTime() + waitSeconds * 1000);
-    return { ...topup, attempts: newAttempts, nextAttemptAt };
+
+    // getTime() là số mili-giây tính từ 1970; cộng thêm giây x 1000 để ra thời điểm thử lại
+    const nowMs = now.getTime();
+    const waitMs = waitSeconds * 1000;
+    const nextAttemptMs = nowMs + waitMs;
+    const nextAttemptAt = new Date(nextAttemptMs);
+
+    const retryTopup: Topup = { ...topup, attempts: newAttempts, nextAttemptAt };
+    return retryTopup;
   }
 
-  // Hết bậc chờ -> bỏ cuộc (attempts giữ nguyên số lần tối đa)
-  return { ...topup, status: 'FAILED', failureCode: 'PAYMENT_UNAVAILABLE', nextAttemptAt: null };
+  // Nhánh hết bậc chờ -> bỏ cuộc (attempts giữ nguyên số lần tối đa, KHÔNG tăng lên newAttempts)
+  const unavailableTopup: Topup = { ...topup, status: 'FAILED', failureCode: 'PAYMENT_UNAVAILABLE', nextAttemptAt: null };
+  return unavailableTopup;
 }

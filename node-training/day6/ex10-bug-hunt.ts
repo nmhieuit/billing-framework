@@ -20,21 +20,31 @@ export function summarize(charges: Charge[]) {
   let latest: Charge | null = null;
 
   for (const charge of charges) {
+    // Nhánh charge thành công: cộng tiền vào tổng
     if (charge.status === 'succeeded') {
       // Lỗi 1 (đã sửa): phải CỘNG DỒN (+=), không phải gán (=) đè lên giá trị cũ
       succeededTotal = succeededTotal + charge.amount;
     }
+
+    // Nhánh charge thất bại: tăng bộ đếm
     if (charge.status === 'failed') {
       // Lỗi 2 (đã sửa): đếm status 'failed', không phải 'pending'
       failedCount = failedCount + 1;
     }
+
+    // Charge đầu tiên gặp, hoặc charge có createdAt lớn hơn charge mới nhất hiện tại -> cập nhật latest
     // Lỗi 3 (đã sửa): mới nhất = createdAt LỚN nhất, nên dùng dấu > (không phải <)
     if (latest === null || charge.createdAt > latest.createdAt) {
       latest = charge;
     }
   }
 
-  // Có charge mới nhất thì lấy id, không thì null
-  const latestId = latest === null ? null : latest.id;
-  return { succeededTotal, failedCount, latestId };
+  // Có charge mới nhất thì lấy id, không thì null (mảng rỗng)
+  let latestId: string | null = null;
+  if (latest !== null) {
+    latestId = latest.id;
+  }
+
+  const summary = { succeededTotal, failedCount, latestId };
+  return summary;
 }

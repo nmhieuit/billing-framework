@@ -13,8 +13,10 @@ export async function retryTimes<T>(task: () => Promise<T>, retries: number): Pr
   // nên tổng số lần gọi = retries + 1 (1 lần đầu + retries lần thử lại)
   for (let attempt = 0; attempt <= retries; attempt = attempt + 1) {
     try {
-      // Thành công thì trả về ngay, không thử nữa
-      return await task();
+      // Chạy task. Thành công thì trả về ngay, không thử nữa.
+      // Debug: log attempt ở đây để xem đang ở lần gọi thứ mấy.
+      const taskResult = await task();
+      return taskResult;
     } catch (error) {
       // Thất bại: ghi nhớ lỗi rồi sang vòng kế tiếp để thử lại
       lastError = error;

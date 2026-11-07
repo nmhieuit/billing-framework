@@ -16,25 +16,30 @@ test('succeeded cộng tiền', () => {
   const state = setup();
 
   // Webhook thành công -> kết quả 'applied'
-  expect(state.handleWebhook({ eventId: 'e1', topupId: 't1', result: 'succeeded' })).toBe('applied');
+  const result = state.handleWebhook({ eventId: 'e1', topupId: 't1', result: 'succeeded' });
+  expect(result).toBe('applied');
 
   // Topup chuyển sang SUCCEEDED và balance = 100
-  expect(state.statusOf('t1')).toBe('SUCCEEDED');
-  expect(state.balance()).toBe(100);
+  const status = state.statusOf('t1');
+  const balance = state.balance();
+  expect(status).toBe('SUCCEEDED');
+  expect(balance).toBe(100);
 });
 
 // Payment gửi lại CÙNG một webhook (cùng eventId) -> không được cộng tiền hai lần
 test('webhook trùng eventId: không cộng hai lần', () => {
   const state = setup();
 
-  // Lần 1: xử lý bình thường
+  // Lần 1: xử lý bình thường (kết quả không dùng tới)
   state.handleWebhook({ eventId: 'e1', topupId: 't1', result: 'succeeded' });
 
   // Lần 2: cùng eventId 'e1' -> bị nhận ra là trùng
-  expect(state.handleWebhook({ eventId: 'e1', topupId: 't1', result: 'succeeded' })).toBe('duplicate');
+  const secondResult = state.handleWebhook({ eventId: 'e1', topupId: 't1', result: 'succeeded' });
+  expect(secondResult).toBe('duplicate');
 
   // Balance vẫn là 100, không phải 200
-  expect(state.balance()).toBe(100);
+  const balance = state.balance();
+  expect(balance).toBe(100);
 });
 
 // Payment báo thất bại -> không cộng tiền
@@ -43,8 +48,10 @@ test('failed -> FAILED, không cộng tiền', () => {
 
   state.handleWebhook({ eventId: 'e1', topupId: 't2', result: 'failed' });
 
-  expect(state.statusOf('t2')).toBe('FAILED');
-  expect(state.balance()).toBe(0);
+  const status = state.statusOf('t2');
+  const balance = state.balance();
+  expect(status).toBe('FAILED');
+  expect(balance).toBe(0);
 });
 
 // Webhook đến sai thứ tự: 'failed' tới trước, 'succeeded' tới sau
@@ -56,11 +63,14 @@ test('succeeded đến muộn sau failed: vẫn được chấp nhận', () => {
   state.handleWebhook({ eventId: 'e1', topupId: 't1', result: 'failed' });
 
   // Sau đó 'succeeded' (eventId khác) đến muộn -> vẫn 'applied'
-  expect(state.handleWebhook({ eventId: 'e2', topupId: 't1', result: 'succeeded' })).toBe('applied');
+  const lateResult = state.handleWebhook({ eventId: 'e2', topupId: 't1', result: 'succeeded' });
+  expect(lateResult).toBe('applied');
 
   // Topup đổi từ FAILED sang SUCCEEDED và tiền được cộng đúng một lần
-  expect(state.statusOf('t1')).toBe('SUCCEEDED');
-  expect(state.balance()).toBe(100);
+  const status = state.statusOf('t1');
+  const balance = state.balance();
+  expect(status).toBe('SUCCEEDED');
+  expect(balance).toBe(100);
 });
 
 // Hai webhook 'succeeded' có eventId KHÁC nhau cho cùng một topup
@@ -71,8 +81,11 @@ test('succeeded khác eventId gửi lần hai: không cộng lần hai', () => {
   state.handleWebhook({ eventId: 'e1', topupId: 't1', result: 'succeeded' });
 
   // Topup đã SUCCEEDED rồi nên webhook thứ hai bị bỏ qua -> 'ignored'
-  expect(state.handleWebhook({ eventId: 'e2', topupId: 't1', result: 'succeeded' })).toBe('ignored');
-  expect(state.balance()).toBe(100);
+  const secondResult = state.handleWebhook({ eventId: 'e2', topupId: 't1', result: 'succeeded' });
+  expect(secondResult).toBe('ignored');
+
+  const balance = state.balance();
+  expect(balance).toBe(100);
 });
 
 // 'failed' đến sau khi topup đã SUCCEEDED -> không được phá trạng thái thành công
@@ -82,13 +95,21 @@ test('failed đến sau khi đã SUCCEEDED: bỏ qua', () => {
   state.handleWebhook({ eventId: 'e1', topupId: 't1', result: 'succeeded' });
 
   // Webhook 'failed' (eventId khác) bị bỏ qua
-  expect(state.handleWebhook({ eventId: 'e2', topupId: 't1', result: 'failed' })).toBe('ignored');
+  const secondResult = state.handleWebhook({ eventId: 'e2', topupId: 't1', result: 'failed' });
+  expect(secondResult).toBe('ignored');
 
   // Trạng thái vẫn là SUCCEEDED
-  expect(state.statusOf('t1')).toBe('SUCCEEDED');
+  const status = state.statusOf('t1');
+  expect(status).toBe('SUCCEEDED');
 });
 
 // Webhook nhắc tới topup không tồn tại ('zz') -> phải ném lỗi
 test('topup lạ', () => {
-  expect(() => setup().handleWebhook({ eventId: 'e1', topupId: 'zz', result: 'succeeded' })).toThrow('unknown topup: zz');
+  // Hàm gom các bước gây lỗi, để expect(...).toThrow() tự gọi và bắt lỗi
+  function handleUnknownTopup() {
+    const state = setup();
+    return state.handleWebhook({ eventId: 'e1', topupId: 'zz', result: 'succeeded' });
+  }
+
+  expect(handleUnknownTopup).toThrow('unknown topup: zz');
 });
